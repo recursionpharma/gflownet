@@ -1,8 +1,0 @@
---index-url https://${PYPI_DOWNLOAD_USERNAME}:${PYPI_DOWNLOAD_PASSWORD}@nexus.rxrx.io/repository/pypi-all/simple
-bandit
-cookiecutter
-flake8
-mypy
-roadie[cli]>=2.3.9
-safety
-yapf

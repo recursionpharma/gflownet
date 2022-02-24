@@ -1,4 +1,4 @@
-from {{cookiecutter.python_name}}.core import get_version
+from gflownet.core import get_version
 
 
 def test_get_version():

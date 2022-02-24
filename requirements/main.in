@@ -3,7 +3,3 @@
 # an optional extra package by including those dependencies in a separate file
 # in this directory with the .in extenion. Roadie will handle constructing your
 # package appropriately.
-
-{%- if cookiecutter.cli == 'y' %}
-click
-{%- endif %}
