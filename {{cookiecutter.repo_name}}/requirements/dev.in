@@ -1,0 +1,23 @@
+# These are the minimum specifications required to set up a development
+# environment and includes things like  depedencies required for testing, tools
+# for ensuring security, formatting, and static checking compliance. Feel free
+# to add anything that improves your developer experience.
+#
+# Do you like to test things in a notebook? Then, add `notebook` here. Do you
+# find yourself inspecting objects a lot in the REPL? May I suggest `pdir2`. Do
+# you like lots of colors and formatting options in your REPL, then get `rich`.
+# Remember, it doesn't pay to be too specific here, roadie can be used to
+# resolve your environment and make it reproducible for others.
+
+-c main
+
+bandit
+flake8<4; python_version<'3.8'
+flake8; python_version>='3.8'
+mypy
+pytest
+pytest-cov
+roadie
+safety
+types-pkg_resources
+yapf

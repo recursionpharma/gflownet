@@ -1,0 +1,9 @@
+# These are the minimum specifications your package will need to operate. If
+# there are heavy things that only provide limited functionality consider adding
+# an optional extra package by including those dependencies in a separate file
+# in this directory with the .in extenion. Roadie will handle constructing your
+# package appropriately.
+
+{%- if cookiecutter.cli == 'y' %}
+click
+{%- endif %}
