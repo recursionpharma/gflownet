@@ -255,14 +255,14 @@ def generate_forward_trajectory(g: Graph):
         # attributes will be reinserted into the stack until those
         # attributes are "set".
         i = stack.pop(np.random.randint(len(stack)))
-        gt = gn.copy() # This is a shallow copy
+        gt = gn.copy()  # This is a shallow copy
         if type(i) is tuple:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
             if e in gn.edges:
                 # i exists in the new graph, that means some of its attributes need to be added
                 attrs = [j for j in g.edges[i] if j not in gn.edges[e]]
                 if len(attrs) == 0:
-                    continue # If nodes are in cycles edges leading to them get stack multiple times, disregard
+                    continue  # If nodes are in cycles edges leading to them get stack multiple times, disregard
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.edges[e][attr] = g.edges[i][attr]
                 act = GraphAction(GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr,
@@ -271,12 +271,12 @@ def generate_forward_trajectory(g: Graph):
                 # i doesn't exist, add the edge
                 if e[1] not in gn.nodes:
                     # The endpoint of the edge is not in the graph, this is a AddNode action
-                    assert e[1] is None # normally we shouldn't have relabeled i[1] yet
+                    assert e[1] is None  # normally we shouldn't have relabeled i[1] yet
                     relabeling_map[i[1]] = len(relabeling_map)
                     e = e[0], relabeling_map[i[1]]
                     gn.add_node(e[1], v=g.nodes[i[1]]['v'])
                     gn.add_edge(*e)
-                    for j in g[i[1]]: # stack unadded edges/neighbours
+                    for j in g[i[1]]:  # stack unadded edges/neighbours
                         jp = relabeling_map.get(j, None)
                         if jp not in gn or (e[1], jp) not in gn.edges:
                             stack.append((i[1], j))
@@ -419,7 +419,7 @@ class GraphActionCategorical:
         # of rows of each element type for each graph in the
         # minibatch, then over the different types (since they are
         # mutually exclusive).
-        
+
         # Uniform noise
         u = [torch.rand(i.shape) for i in self.logits]
         # Gumbel noise
@@ -432,7 +432,7 @@ class GraphActionCategorical:
         # there are no corresponding logits (this can happen if e.g. a
         # graph has no edges), we don't want to accidentally take the
         # max of that type.
-        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1]) - 1e6 for i in self.logits] 
+        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1]) - 1e6 for i in self.logits]
         mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(gumbel, self.batch, mnb_max)]
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)

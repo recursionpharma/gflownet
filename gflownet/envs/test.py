@@ -12,26 +12,27 @@ import torch_geometric.nn as gnn
 import torch_geometric.data as gd
 from torch_scatter import scatter
 
+
 class Model(nn.Module):
     def __init__(self, env_ctx, num_emb=64):
         super().__init__()
         self.x2h = nn.Linear(env_ctx.num_node_dim, num_emb)
         self.e2h = nn.Linear(env_ctx.num_edge_dim, num_emb)
-        self.graph2emb = nn.ModuleList(sum([
-            # After some debugging... architecture matters, gotta have
-            # a sum somewhere to allow models to count. Most defaults
-            # are to mean/softmax.
-            [gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'), #  norm=None,
-             gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),]
-            for i in range(6)], []))
+        self.graph2emb = nn.ModuleList(
+            sum([[
+                gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'),
+                gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
+            ] for i in range(6)], []))
         h2l = lambda nl: nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(), nn.Linear(num_emb, nl))
         self.emb2add_edge = h2l(1)
         self.emb2add_node = h2l(env_ctx.num_new_node_values)
         self.emb2add_node_attr = h2l(env_ctx.num_node_attr_logits)
         self.emb2add_edge_attr = h2l(env_ctx.num_edge_attr_logits)
         self.emb2stop = h2l(1)
-        self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetNodeAttr,
-                                  GraphActionType.AddEdge, GraphActionType.SetEdgeAttr]
+        self.action_type_order = [
+            GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetNodeAttr, GraphActionType.AddEdge,
+            GraphActionType.SetEdgeAttr
+        ]
 
     def forward(self, g: gd.Batch):
         o = self.x2h(g.x)
@@ -44,19 +45,22 @@ class Model(nn.Module):
         e_row, e_col = g.edge_index[:, ::2]
         cat = GraphActionCategorical(
             g,
-            logits=[self.emb2stop(glob),
-                    self.emb2add_node(o),
-                    self.emb2add_node_attr(o),
-                    self.emb2add_edge(o[ne_row] + o[ne_col]),
-                    self.emb2add_edge_attr(o[e_row] + o[e_col]),
-                    ],
+            logits=[
+                self.emb2stop(glob),
+                self.emb2add_node(o),
+                self.emb2add_node_attr(o),
+                self.emb2add_edge(o[ne_row] + o[ne_col]),
+                self.emb2add_edge_attr(o[e_row] + o[e_col]),
+            ],
             keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
             types=self.action_type_order,
         )
         return cat
 
+
 from tqdm import tqdm
-    
+
+
 def main(smi, n_steps):
     """This trains a model to overfit producing a molecule, runs a
     generative episode and tests whether the model has successfully
@@ -74,7 +78,7 @@ def main(smi, n_steps):
     mol = Chem.MolFromSmiles(smi)
     molg = ctx.mol_to_graph(mol)
     traj = generate_forward_trajectory(molg)
-    for g,a in traj:
+    for g, a in traj:
         print(a.action, a.source, a.target, a.value, a.relabel)
     graphs = [ctx.graph_to_Data(i) for i, _ in traj]
     traj_batch = ctx.collate(graphs)
@@ -130,4 +134,3 @@ if __name__ == '__main__':
     main("C1N2C3C2C2C4OC12C34", 500)
     # More complicated mol
     #main("O=C(NC1=CC=2NC(=NC2C=C1)C=3C=CC=CC3)C4=NN(C=C4N(=O)=O)C", 2000)
-

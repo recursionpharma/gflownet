@@ -37,9 +37,10 @@ class MolBuildingEnvContext:
         # The beginning position within the input vector of each attribute
         self.atom_attr_slice = [0] + list(np.cumsum([len(self.atom_attr_values[i]) for i in self.atom_attrs]))
         # The beginning position within the logit vector of each attribute
-        self.atom_attr_logit_slice = {k: s for k, s in zip(
-            self.atom_attrs,
-            [0] + list(np.cumsum([len(self.atom_attr_values[i]) - 1 for i in self.atom_attrs])))}
+        self.atom_attr_logit_slice = {
+            k: s for k, s in zip(self.atom_attrs, [0] +
+                                 list(np.cumsum([len(self.atom_attr_values[i]) - 1 for i in self.atom_attrs])))
+        }
         # The attribute and value each logit dimension maps back to
         self.atom_attr_logit_map = [
             (k, v) for k in self.atom_attrs if k != 'v'
@@ -54,9 +55,10 @@ class MolBuildingEnvContext:
         self.bond_attr_size = sum(len(i) for i in self.bond_attr_values.values())
         self.bond_attrs = sorted(self.bond_attr_values.keys())
         self.bond_attr_slice = [0] + list(np.cumsum([len(self.bond_attr_values[i]) for i in self.bond_attrs]))
-        self.bond_attr_logit_slice = {k: s for k, s in zip(
-            self.bond_attrs,
-            [0] + list(np.cumsum([len(self.bond_attr_values[i]) - 1 for i in self.bond_attrs])))}
+        self.bond_attr_logit_slice = {
+            k: s for k, s in zip(self.bond_attrs, [0] +
+                                 list(np.cumsum([len(self.bond_attr_values[i]) - 1 for i in self.bond_attrs])))
+        }
         self.bond_attr_logit_map = [(k, v) for k in self.bond_attrs for v in self.bond_attr_values[k][1:]]
 
         # These values are used by Models to know how many inputs/logits to produce
@@ -84,7 +86,7 @@ class MolBuildingEnvContext:
             attr, val = self.bond_attr_logit_map[act_col]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction, ts: List[GraphActionType]) -> Tuple[int,int,int]:
+    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction, ts: List[GraphActionType]) -> Tuple[int, int, int]:
         """Translate a GraphAction to an index tuple"""
         if action.action is GraphActionType.Stop:
             row = col = 0
@@ -122,7 +124,8 @@ class MolBuildingEnvContext:
                 idx = self.bond_attr_values[k].index(g.edges[e][k]) if k in g.edges[e] else 0
                 edge_attr[i * 2, sl + idx] = 1
                 edge_attr[i * 2 + 1, sl + idx] = 1
-        edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
+        edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
+            (-1, 2)).T
         gc = nx.complement(g)
         non_edge_index = torch.tensor([i for i in gc.edges], dtype=torch.long).T.reshape((2, -1))
         return gd.Data(x, edge_index, edge_attr, non_edge_index=non_edge_index)
