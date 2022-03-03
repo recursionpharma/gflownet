@@ -1,13 +1,14 @@
 from collections import defaultdict
 import enum
-from typing import List
+from typing import List, Tuple
 
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
+import numpy as np
 
 import torch
 import torch_geometric.data as gd
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_max
 
 
 class Graph(nx.Graph):
@@ -148,23 +149,25 @@ class GraphBuildingEnv:
 
         elif action.action is GraphActionType.AddNode:
             if len(g) == 0:
-                assert action.source is None  # TODO: this may not be useful
-                gp.add_node(action.relabel or 0, v=action.value)
+                assert action.source == 0  # TODO: this may not be useful
+                gp.add_node(0, v=action.value)
             else:
                 assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
-                if kw and 'relabel' in kw:
-                    e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
+                if action.relabel is not None:
+                    raise ValueError('deprecated')
+                #if kw and 'relabel' in kw:
+                #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
                 assert not g.has_edge(*e)
                 gp.add_node(e[1], v=action.value)
                 gp.add_edge(*e)
 
-        elif action is GraphActionType.SetNodeAttr:
+        elif action.action is GraphActionType.SetNodeAttr:
             assert self.allow_node_attr
             assert action.source in gp.nodes
             gp.nodes[action.source][action.attr] = action.value
 
-        elif action is GraphActionType.SetEdgeAttr:
+        elif action.action is GraphActionType.SetEdgeAttr:
             assert self.allow_edge_attr
             assert g.has_edge(action.source, action.target)
             gp.edges[(action.source, action.target)][action.attr] = action.value
@@ -187,6 +190,7 @@ class GraphBuildingEnv:
         parents: List[Pair(GraphAction, Graph)]
             The list of parent-action pairs that lead to `g`.
         """
+        raise ValueError('reimplement me with GraphAction!')  # also get rid of relabel...
         parents = []
         # Count node degrees
         degree = defaultdict(int)
@@ -241,6 +245,8 @@ def generate_forward_trajectory(g: Graph):
     # Choose an arbitrary starting point, add to the stack
     stack = [np.random.randint(0, len(g.nodes))]
     traj = []
+    # This map keeps track of node labels in gn, since we have to start from 0
+    relabeling_map = {}
     while len(stack):
         # We pop from the stack until all nodes and edges have been
         # generated and their attributes have been set. Uninserted
@@ -249,57 +255,69 @@ def generate_forward_trajectory(g: Graph):
         # attributes will be reinserted into the stack until those
         # attributes are "set".
         i = stack.pop(np.random.randint(len(stack)))
+        gt = gn.copy() # This is a shallow copy
         if type(i) is tuple:  # i is an edge
-            if i in gn.edges:
+            e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
+            if e in gn.edges:
                 # i exists in the new graph, that means some of its attributes need to be added
-                attrs = [j for j in g.edges[i] if j not in gn.edges[i]]
+                attrs = [j for j in g.edges[i] if j not in gn.edges[e]]
+                if len(attrs) == 0:
+                    continue # If nodes are in cycles edges leading to them get stack multiple times, disregard
                 attr = attrs[np.random.randint(len(attrs))]
-                gn.edges[i][attr] = g.edges[i][attr]
-                traj.append(
-                    GraphAction(GraphActionType.SetEdgeAttr, source=i[0], target=i[1], attr=attr,
-                                value=g.edges[i][attr]))
+                gn.edges[e][attr] = g.edges[i][attr]
+                act = GraphAction(GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr,
+                                  value=g.edges[i][attr])
             else:
                 # i doesn't exist, add the edge
-                if i[1] not in gn.nodes:
+                if e[1] not in gn.nodes:
                     # The endpoint of the edge is not in the graph, this is a AddNode action
-                    gn.add_node(i[1], v=g.nodes[i[1]]['v'])
-                    for j in g[i[1]]:
-                        if j not in gn:
+                    assert e[1] is None # normally we shouldn't have relabeled i[1] yet
+                    relabeling_map[i[1]] = len(relabeling_map)
+                    e = e[0], relabeling_map[i[1]]
+                    gn.add_node(e[1], v=g.nodes[i[1]]['v'])
+                    gn.add_edge(*e)
+                    for j in g[i[1]]: # stack unadded edges/neighbours
+                        jp = relabeling_map.get(j, None)
+                        if jp not in gn or (e[1], jp) not in gn.edges:
                             stack.append((i[1], j))
-                    gn.add_edge(*i)
-                    traj.append(
-                        GraphAction(GraphActionType.AddNode, source=i[0], value=g.nodes[i[1]]['v'], relabel=i[1]))
-                    if len(gn.nodes[i[1]]) < len(g.nodes[i[1]]):
+                    act = GraphAction(GraphActionType.AddNode, source=e[0], value=g.nodes[i[1]]['v'])
+                    if len(gn.nodes[e[1]]) < len(g.nodes[i[1]]):
                         stack.append(i[1])  # we still have attributes to add to node i[1]
                 else:
                     # The endpoint is in the graph, this is an AddEdge action
-                    gn.add_edge(*i)
-                    traj.append(GraphAction(GraphActionType.AddEdge, source=i[0], target=i[1]))
+                    gn.add_edge(*e)
+                    act = GraphAction(GraphActionType.AddEdge, source=e[0], target=e[1])
 
-            if len(gn.edges[i]) < len(g.edges[i]):
+            if len(gn.edges[e]) < len(g.edges[i]):
                 stack.append(i)  # we still have attributes to add to edge i
         else:  # i is a node
+            n = relabeling_map.get(i, 0)
             if i not in gn.nodes:
                 # i doesn't exist yet, this should only happen for the first node
                 assert len(gn.nodes) == 0
-                traj.append(GraphAction(GraphActionType.AddNode, source=None, value=g.nodes[i]['v'], relabel=i))
-                gn.add_node(i, v=g.nodes[i]['v'])
+                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v'])
+                relabeling_map[i] = len(relabeling_map)
+                gn.add_node(0, v=g.nodes[i]['v'])
                 for j in g[i]:  # For every neighbour of node i
                     if j not in gn:
                         stack.append((i, j))  # push the (i,j) edge onto the stack
             else:
                 # i exists, meaning we have attributes left to add
-                attrs = [j for j in g.nodes[i] if j not in gn.nodes[i]]
+                attrs = [j for j in g.nodes[i] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
-                gn.nodes[i][attr] = g.nodes[i][attr]
-                traj.append((env.set_node_attr, i, attr, g.nodes[i][attr]))
-            if len(gn.nodes[i]) < len(g.nodes[i]):
+                source = relabeling_map[i]
+                gn.nodes[n][attr] = g.nodes[i][attr]
+                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[i][attr])
+            if len(gn.nodes[n]) < len(g.nodes[i]):
                 stack.append(i)  # we still have attributes to add to node i
+        traj.append((gt, act))
+    traj.append((gn, GraphAction(GraphActionType.Stop)))
     return traj
 
 
 class GraphActionCategorical:
-    def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType]):
+    def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType],
+                 deduplicate_edge_index=True):
         """A multi-type Categorical compatible with generating structured actions.
         
         What is meant by type here is that there are multiple types of
@@ -334,7 +352,9 @@ class GraphActionCategorical:
             object, this logit tensor would have shape `(k, m)`)
         types: List[GraphActionType]
            The action type each logit corresponds to.
-
+        deduplicate_edge_index: bool, default=True
+           If true, this means that the 'edge_index' keys have been reduced 
+           by e_i[::2] (presumably because the graphs are undirected)
         """
         # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
         # TODO: cuda-ize
@@ -362,6 +382,11 @@ class GraphActionCategorical:
         self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs) for k in keys]
         self.logprobs = None
 
+        if deduplicate_edge_index and 'edge_index' in keys:
+            idx = keys.index('edge_index')
+            self.batch[idx] = self.batch[idx][::2]
+            self.slice[idx] = self.slice[idx].div(2, rounding_mode='trunc')
+
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:
@@ -371,22 +396,30 @@ class GraphActionCategorical:
         maxl = torch.cat(
             [scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
             dim=1).max(1).values
+        #print('maxl', maxl.shape, maxl)
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).exp() for i, b in zip(self.logits, self.batch)]
+        exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
+        #print([i.log().min() for i in exp_logits])
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
             scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='sum').sum(1)
             for i, b in zip(exp_logits, self.batch)
         ]).log()
+        #print('logZ', logZ)
         # log probabilities is log(exp(logit) / Z)
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
         return self.logprobs
 
-    def sample(self) -> List[tuple[int, int, int]]:
+    def sample(self) -> List[Tuple[int, int, int]]:
         # Use the Gumbel trick to sample categoricals
         # i.e. if X ~ argmax(logits - log(-log(uniform(logits.shape))))
         # then  p(X = i) = exp(logits[i]) / Z
+        # Here we have to do the argmax first over the variable number
+        # of rows of each element type for each graph in the
+        # minibatch, then over the different types (since they are
+        # mutually exclusive).
+        
         # Uniform noise
         u = [torch.rand(i.shape) for i in self.logits]
         # Gumbel noise
@@ -394,8 +427,13 @@ class GraphActionCategorical:
         # scatter_max and .max create a (values, indices) pair
         # These logits are 2d (num_obj_of_type, num_actions_of_type),
         # first reduce-max over the batch, which preserves the
-        # columns, so we get (minibatch_size, num_actions_of_type)
-        mnb_max = [scatter_max(i, b, dim=0) for i, b in zip(gumbel, self.batch)]
+        # columns, so we get (minibatch_size, num_actions_of_type).
+        # First we prefill `out` with very negative values in case
+        # there are no corresponding logits (this can happen if e.g. a
+        # graph has no edges), we don't want to accidentally take the
+        # max of that type.
+        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1]) - 1e6 for i in self.logits] 
+        mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(gumbel, self.batch, mnb_max)]
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
         col_max = [values.max(1) for values, idx in mnb_max]
@@ -418,6 +456,7 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return actions
 
-    def log_prob(self, actions: List[tuple[int, int, int]]):
+    def log_prob(self, actions: List[Tuple[int, int, int]]):
+        """The log-probability of a list of action tuples"""
         logprobs = self.logsoftmax()
         return torch.stack([logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in enumerate(actions)])
