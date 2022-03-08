@@ -90,6 +90,7 @@ def main(smi, n_steps):
         logprob = fwd_cat.log_prob(actions)
         loss = -logprob.mean()
         if not i % 100:
+            print(fwd_cat.logits)
             print(logprob.exp())
             print(loss)
         loss.backward()

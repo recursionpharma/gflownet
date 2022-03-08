@@ -82,7 +82,11 @@ class GraphAction:
         self.target = target
         self.attr = attr
         self.value = value
-        self.relabel = relabel
+        self.relabel = relabel # TODO: deprecate this?
+
+    def __repr__(self):
+        attrs = ', '.join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
+        return f"<{self.action}, {attrs}>"
 
 
 class GraphBuildingEnv:
@@ -236,6 +240,29 @@ class GraphBuildingEnv:
                     continue
                 add_parent((self.set_node_attr, i, k, g.nodes[i][k]), graph_without_node_attr(g, i, k))
         return parents
+
+    def count_backward_transitions(self, g: Graph):
+        """Counts the number of parents of g without checking for isomorphisms"""
+        c = 0
+        for a, b in g.edges:
+            if g.degree[a] > 1 and g.degree[b] > 1 and len(g.edges[(a, b)]) == 0:
+                # Can only remove edges connected to non-leaves and without
+                # attributes (the agent has to remove the attrs, then remove
+                # the edge). Removal cannot disconnect the graph.
+                new_g = graph_without_edge(g, (a, b))
+                if nx.algorithms.is_connected(new_g):
+                    c += 1
+            c += len(g.edges[(a, b)]) # One action per edge attr
+        for i in g.nodes:
+            if g.degree[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
+                c += 1
+            c += len(g.nodes[i]) - 1 # One action per node attr, except 'v'
+            if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
+                # special case if last node in graph
+                c += 1
+        return c
+            
+                
 
 
 def generate_forward_trajectory(g: Graph):
@@ -395,18 +422,15 @@ class GraphActionCategorical:
         # compute max
         maxl = torch.cat(
             [scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
-            dim=1).max(1).values
-        #print('maxl', maxl.shape, maxl)
+            dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
-        #print([i.log().min() for i in exp_logits])
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
             scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='sum').sum(1)
             for i, b in zip(exp_logits, self.batch)
         ]).log()
-        #print('logZ', logZ)
         # log probabilities is log(exp(logit) / Z)
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
         return self.logprobs
