@@ -82,7 +82,7 @@ class GraphAction:
         self.target = target
         self.attr = attr
         self.value = value
-        self.relabel = relabel # TODO: deprecate this?
+        self.relabel = relabel  # TODO: deprecate this?
 
     def __repr__(self):
         attrs = ', '.join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
@@ -160,7 +160,7 @@ class GraphBuildingEnv:
                 e = [action.source, max(g.nodes) + 1]
                 if action.relabel is not None:
                     raise ValueError('deprecated')
-                #if kw and 'relabel' in kw:
+                # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
                 assert not g.has_edge(*e)
                 gp.add_node(e[1], v=action.value)
@@ -169,11 +169,13 @@ class GraphBuildingEnv:
         elif action.action is GraphActionType.SetNodeAttr:
             assert self.allow_node_attr
             assert action.source in gp.nodes
+            assert action.attr not in gp.nodes[action.source]
             gp.nodes[action.source][action.attr] = action.value
 
         elif action.action is GraphActionType.SetEdgeAttr:
             assert self.allow_edge_attr
             assert g.has_edge(action.source, action.target)
+            assert action.attr not in gp.edges[(action.source, action.target)]
             gp.edges[(action.source, action.target)][action.attr] = action.value
         else:
             # TODO: backward actions if we want to support MCMC-GFN style algorithms
@@ -188,7 +190,7 @@ class GraphBuildingEnv:
         ----------
         g: Graph
             graph
-        
+
         Returns
         -------
         parents: List[Pair(GraphAction, Graph)]
@@ -252,17 +254,15 @@ class GraphBuildingEnv:
                 new_g = graph_without_edge(g, (a, b))
                 if nx.algorithms.is_connected(new_g):
                     c += 1
-            c += len(g.edges[(a, b)]) # One action per edge attr
+            c += len(g.edges[(a, b)])  # One action per edge attr
         for i in g.nodes:
             if g.degree[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
                 c += 1
-            c += len(g.nodes[i]) - 1 # One action per node attr, except 'v'
+            c += len(g.nodes[i]) - 1  # One action per node attr, except 'v'
             if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
                 # special case if last node in graph
                 c += 1
         return c
-            
-                
 
 
 def generate_forward_trajectory(g: Graph):
@@ -332,7 +332,7 @@ def generate_forward_trajectory(g: Graph):
                 # i exists, meaning we have attributes left to add
                 attrs = [j for j in g.nodes[i] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
-                source = relabeling_map[i]
+                relabeling_map[i]
                 gn.nodes[n][attr] = g.nodes[i][attr]
                 act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[i][attr])
             if len(gn.nodes[n]) < len(g.nodes[i]):
@@ -346,7 +346,7 @@ class GraphActionCategorical:
     def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType],
                  deduplicate_edge_index=True):
         """A multi-type Categorical compatible with generating structured actions.
-        
+
         What is meant by type here is that there are multiple types of
         mutually exclusive actions, e.g. AddNode and AddEdge are
         mutually exclusive, but since their logits will be produced by

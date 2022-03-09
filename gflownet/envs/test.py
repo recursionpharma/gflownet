@@ -3,14 +3,14 @@ This test shows an example of how to setup a model and environment.
 It trains a model to overfit generating one single molecule.
 """
 
-from graph_building_env import GraphBuildingEnv, GraphActionType, GraphActionCategorical, generate_forward_trajectory, Graph
+from tqdm import tqdm
+from graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv, generate_forward_trajectory
 from mol_building_env import MolBuildingEnvContext
 
 import torch
 import torch.nn as nn
 import torch_geometric.nn as gnn
 import torch_geometric.data as gd
-from torch_scatter import scatter
 
 
 class Model(nn.Module):
@@ -23,7 +23,10 @@ class Model(nn.Module):
                 gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'),
                 gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
             ] for i in range(6)], []))
-        h2l = lambda nl: nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(), nn.Linear(num_emb, nl))
+
+        def h2l(nl):
+            return nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(), nn.Linear(num_emb, nl))
+
         self.emb2add_edge = h2l(1)
         self.emb2add_node = h2l(env_ctx.num_new_node_values)
         self.emb2add_node_attr = h2l(env_ctx.num_node_attr_logits)
@@ -56,9 +59,6 @@ class Model(nn.Module):
             types=self.action_type_order,
         )
         return cat
-
-
-from tqdm import tqdm
 
 
 def main(smi, n_steps):

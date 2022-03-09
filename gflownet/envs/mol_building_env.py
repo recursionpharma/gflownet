@@ -1,25 +1,21 @@
 from typing import List, Tuple
 
-from graph_building_env import Graph, GraphAction, GraphActionType
+from .graph_building_env import Graph, GraphAction, GraphActionType
 
 import rdkit.Chem as Chem
-from rdkit.Chem import AllChem
 from rdkit.Chem.rdchem import ChiralType, BondType
 import numpy as np
 import networkx as nx
 
 import torch
-import torch.nn as nn
-import torch_geometric.nn as gnn
 import torch_geometric.data as gd
-from torch_scatter import scatter
 
 
 class MolBuildingEnvContext:
     """A specification of what is being generated for a GraphBuildingEnv
 
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
-    
+
     """
     def __init__(self, atoms=['H', 'C', 'N', 'O', 'F']):
         # idx 0 has to coincide with the default value
@@ -70,7 +66,7 @@ class MolBuildingEnvContext:
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], t: GraphActionType):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
-        _, act_row, act_col = [i.item() for i in action_idx]
+        _, act_row, act_col = [int(i) for i in action_idx]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -174,3 +170,12 @@ class MolBuildingEnvContext:
         mp.CommitBatchEdit()
         Chem.SanitizeMol(mp)
         return mp
+
+    def is_sane(self, g):
+        try:
+            mol = self.graph_to_mol(g)
+        except:
+            return False
+        if mol is None:
+            return False
+        return True
