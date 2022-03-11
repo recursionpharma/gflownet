@@ -1,3 +1,4 @@
+import copy
 from collections import defaultdict
 import enum
 from typing import List, Tuple
@@ -246,8 +247,9 @@ class GraphBuildingEnv:
     def count_backward_transitions(self, g: Graph):
         """Counts the number of parents of g without checking for isomorphisms"""
         c = 0
+        deg = [g.degree[i] for i in range(len(g.nodes))]
         for a, b in g.edges:
-            if g.degree[a] > 1 and g.degree[b] > 1 and len(g.edges[(a, b)]) == 0:
+            if deg[a] > 1 and deg[b] > 1 and len(g.edges[(a, b)]) == 0:
                 # Can only remove edges connected to non-leaves and without
                 # attributes (the agent has to remove the attrs, then remove
                 # the edge). Removal cannot disconnect the graph.
@@ -256,14 +258,13 @@ class GraphBuildingEnv:
                     c += 1
             c += len(g.edges[(a, b)])  # One action per edge attr
         for i in g.nodes:
-            if g.degree[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
+            if deg[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
                 c += 1
             c += len(g.nodes[i]) - 1  # One action per node attr, except 'v'
             if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
                 # special case if last node in graph
                 c += 1
         return c
-
 
 def generate_forward_trajectory(g: Graph):
     """Sample (uniformly) a trajectory that generates `g`"""
@@ -318,12 +319,12 @@ def generate_forward_trajectory(g: Graph):
             if len(gn.edges[e]) < len(g.edges[i]):
                 stack.append(i)  # we still have attributes to add to edge i
         else:  # i is a node
-            n = relabeling_map.get(i, 0)
-            if i not in gn.nodes:
+            n = relabeling_map.get(i, None)
+            if n not in gn.nodes:
                 # i doesn't exist yet, this should only happen for the first node
                 assert len(gn.nodes) == 0
                 act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v'])
-                relabeling_map[i] = len(relabeling_map)
+                n = relabeling_map[i] = len(relabeling_map)
                 gn.add_node(0, v=g.nodes[i]['v'])
                 for j in g[i]:  # For every neighbour of node i
                     if j not in gn:
@@ -332,7 +333,6 @@ def generate_forward_trajectory(g: Graph):
                 # i exists, meaning we have attributes left to add
                 attrs = [j for j in g.nodes[i] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
-                relabeling_map[i]
                 gn.nodes[n][attr] = g.nodes[i][attr]
                 act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[i][attr])
             if len(gn.nodes[n]) < len(g.nodes[i]):
@@ -389,6 +389,7 @@ class GraphActionCategorical:
         # The logits
         self.logits = logits
         self.types = types
+        self.dev = dev = self.g.x.device
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
@@ -403,17 +404,17 @@ class GraphActionCategorical:
         self.batch = [
             getattr(graphs, f'{k}_batch' if k != 'x' else 'batch') if k is not None
             # None signals a global logit rather than a per-instance logit
-            else torch.arange(graphs.num_graphs) for k in keys
+            else torch.arange(graphs.num_graphs, device=dev) for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
-        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs) for k in keys]
+        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs, device=dev) for k in keys]
         self.logprobs = None
 
         if deduplicate_edge_index and 'edge_index' in keys:
             idx = keys.index('edge_index')
             self.batch[idx] = self.batch[idx][::2]
             self.slice[idx] = self.slice[idx].div(2, rounding_mode='trunc')
-
+    
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:
@@ -445,7 +446,7 @@ class GraphActionCategorical:
         # mutually exclusive).
 
         # Uniform noise
-        u = [torch.rand(i.shape) for i in self.logits]
+        u = [torch.rand(i.shape, device=self.dev) for i in self.logits]
         # Gumbel noise
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
         # scatter_max and .max create a (values, indices) pair
@@ -456,7 +457,7 @@ class GraphActionCategorical:
         # there are no corresponding logits (this can happen if e.g. a
         # graph has no edges), we don't want to accidentally take the
         # max of that type.
-        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1]) - 1e6 for i in self.logits]
+        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1], device=self.dev) - 1e6 for i in self.logits]
         mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(gumbel, self.batch, mnb_max)]
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)

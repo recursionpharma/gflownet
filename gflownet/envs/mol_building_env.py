@@ -17,7 +17,7 @@ class MolBuildingEnvContext:
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
 
     """
-    def __init__(self, atoms=['H', 'C', 'N', 'O', 'F']):
+    def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
             'v': atoms,
@@ -63,6 +63,7 @@ class MolBuildingEnvContext:
         self.num_node_dim = self.atom_attr_size + 1
         self.num_edge_attr_logits = len(self.bond_attr_logit_map)
         self.num_edge_dim = self.bond_attr_size
+        self.num_cond_dim = num_cond_dim
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], t: GraphActionType):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
@@ -111,13 +112,15 @@ class MolBuildingEnvContext:
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
         for i, n in enumerate(g.nodes):
+            ad = g.nodes[n]
             for k, sl in zip(self.atom_attrs, self.atom_attr_slice):
-                idx = self.atom_attr_values[k].index(g.nodes[n][k]) if k in g.nodes[n] else 0
+                idx = self.atom_attr_values[k].index(ad[k]) if k in ad else 0
                 x[i, sl + idx] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         for i, e in enumerate(g.edges):
+            ad = g.edges[e]
             for k, sl in zip(self.bond_attrs, self.bond_attr_slice):
-                idx = self.bond_attr_values[k].index(g.edges[e][k]) if k in g.edges[e] else 0
+                idx = self.bond_attr_values[k].index(ad[k]) if k in ad else 0
                 edge_attr[i * 2, sl + idx] = 1
                 edge_attr[i * 2 + 1, sl + idx] = 1
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
