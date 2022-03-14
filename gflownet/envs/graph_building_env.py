@@ -468,6 +468,8 @@ class GraphActionCategorical:
         maxs = [values for values, idx in col_max]
         # Now we need to check which type of logit has the actual max
         type_max_val, type_max_idx = torch.stack(maxs).max(0)
+        if torch.isfinite(type_max_val).logical_not_().any():
+            raise ValueError('Non finite max value in sample', (type_max_val, self.logits))
 
         # Now we can return the indices of where the actions occured
         # in the form List[(type, row, column)]

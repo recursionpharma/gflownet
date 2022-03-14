@@ -1,18 +1,20 @@
 name: qm9_test
+description: eps -60, no BN, ne 64, lr 1, seq avg
 data:
   path: /data/chem/qm9.xyz.tar
 hyperparameters:
   learning_rate: 1e-4
   global_batch_size: 32
-  num_emb: 128
+  num_emb: 64
+  tb_epsilon: -60
 searcher:
   name: single
   metric: validation_loss
   max_length:
-      batches: 10000
+      batches: 20000
   smaller_is_better: true
 min_validation_period:
-  batches: 1000
+  batches: 500
 entrypoint: qm9:QM9Trial
 checkpoint_policy: best
 checkpoint_storage:
@@ -39,5 +41,5 @@ resources:
   resource_pool: dgx-pool
   agent_label: ampere
   priority: 1
-profiling:
-  enabled: true
+#profiling:
+#  enabled: true

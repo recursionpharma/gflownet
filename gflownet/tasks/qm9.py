@@ -42,7 +42,7 @@ class QM9Dataset(Dataset):
         return len(self.idcs)
 
     def __getitem__(self, idx):
-        return self.df['SMILES'][self.idcs[idx]], self.df['gap'][self.idcs[idx]]
+        return self.df['SMILES'][self.idcs[idx]], np.exp(-self.df['gap'][self.idcs[idx]] / 0.6221)
 
     
 class Model(nn.Module):
@@ -55,10 +55,13 @@ class Model(nn.Module):
             sum([[
                 gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
                 gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'),
+                #nn.BatchNorm1d(num_emb, affine=False),
             ] for i in range(6)], []))
 
         def h2l(nl):
-            return nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(), nn.Linear(num_emb, nl))
+            return nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(),
+                                 nn.Linear(num_emb, num_emb), nn.LeakyReLU(),
+                                 nn.Linear(num_emb, nl))
 
         self.emb2add_edge = h2l(1)
         self.emb2add_node = h2l(env_ctx.num_new_node_values)
@@ -66,7 +69,9 @@ class Model(nn.Module):
         self.emb2set_edge_attr = h2l(env_ctx.num_edge_attr_logits)
         self.emb2stop = h2l(1)
         self.emb2reward = h2l(1)
-        self.o2o = gnn.TransformerConv(num_emb, num_emb, edge_dim=None)
+        self.o2o = nn.Sequential(
+            gnn.TransformerConv(num_emb, num_emb, edge_dim=None),
+            gnn.TransformerConv(num_emb, num_emb, edge_dim=None))
         #self.logZ = nn.Parameter(torch.tensor([initial_Z_guess], dtype=torch.float))
         self.logZ = nn.Sequential(nn.Linear(env_ctx.num_cond_dim, num_emb * 2), nn.LeakyReLU(), nn.Linear(num_emb * 2, 1))
         self.action_type_order = [
@@ -76,25 +81,34 @@ class Model(nn.Module):
             GraphActionType.AddEdge,
             GraphActionType.SetEdgeAttr
         ]
+        self._xinfo = {}
 
     def forward(self, g: gd.Batch, cond: torch.tensor):
         o = self.x2h(g.x)
         e = self.e2h(g.edge_attr)
         c = self.c2h(cond)
-        for layer in self.graph2emb:
-            o = layer(o, g.edge_index, e)
+        for i, layer in enumerate(self.graph2emb):
+            if isinstance(layer, nn.BatchNorm1d):
+                o = layer(o)
+            else:
+                o = layer(o, g.edge_index, e)
+            self._xinfo[f'layer {i}'] = (o.min(), o.mean(), o.max())
         num_total_nodes = g.x.shape[0]
         # Augment the edges with a new edge to the conditioning
         # information node. This new node is connected to every node
         # within its graph.
+        u, v = torch.arange(num_total_nodes, device=o.device), g.batch + num_total_nodes
         aug_edge_index = torch.cat(
             [g.edge_index,
-             torch.stack([torch.arange(num_total_nodes, device=o.device), g.batch + num_total_nodes])],
+             torch.stack([u, v]),
+             torch.stack([v, u])],
             1)
         # Cat the node embedding to o
         o = torch.cat([o, c], 0)
         # Do a forward pass, and remove the extraneous `c` we just concatenated
-        o = self.o2o(o, aug_edge_index)[:-c.shape[0]]
+        for layer in self.o2o:
+            o = layer(o, aug_edge_index)
+        o = o[:-c.shape[0]]
         glob = gnn.global_mean_pool(o, g.batch)
         ne_row, ne_col = g.non_edge_index
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
@@ -111,6 +125,8 @@ class Model(nn.Module):
             keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
             types=self.action_type_order,
         )
+        for i, l in enumerate(cat.logits):
+            self._xinfo[f'logit {i}'] = (l.min(), l.mean(), l.max()) if l.shape[0] > 0 else (0,0,0)
         return cat, self.emb2reward(glob)
 
 
@@ -127,7 +143,8 @@ class QM9Trial(PyTorchTrial):
             num_emb=context.get_hparam('num_emb')))
         self.opt = context.wrap_optimizer(
             torch.optim.Adam(self.model.parameters(), context.get_hparam('learning_rate')))
-        self.tb = TrajectoryBalance(self.rng, random_action_prob=0.01, max_nodes=9)
+        self.tb = TrajectoryBalance(self.rng, random_action_prob=0.01, max_nodes=9,
+                                    epsilon=context.get_hparam('tb_epsilon'))
         
 
     def build_training_data_loader(self) -> DataLoader:
@@ -160,7 +177,8 @@ class QM9Trial(PyTorchTrial):
         return {'loss': loss,
                 'avg_online_loss': avg_online_loss,
                 'avg_offline_loss': avg_offline_loss,
-                'reward_loss': off_info['reward_losses'].mean().item()}
+                'reward_loss': off_info['reward_losses'].mean().item(),
+                'unnorm_traj_losses': off_info['unnorm_traj_losses'].mean().item()}
 
     def evaluate_batch(self, batch: Tuple[List[str], torch.Tensor]) -> Dict[str, Any]:
         if not hasattr(self.model, 'device'):
@@ -175,7 +193,8 @@ class QM9Trial(PyTorchTrial):
                                              self.model, graphs, rewards,
                                              cond_info=cond_info)
         return {'validation_loss': losses.mean().item(),
-                'reward_loss': info['reward_losses'].mean().item()}
+                'reward_loss': info['reward_losses'].mean().item(),
+                'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
 
     
 def main():
@@ -204,7 +223,7 @@ def main():
         graphs = [ctx.mol_to_graph(Chem.MolFromSmiles(df['SMILES'][i])) for i in idcs]
         temp = rng.gamma(1.5, 1.5, mb_size * 2).astype(np.float32)
         cond_info = torch.tensor(temp, device=dev).reshape((-1, 1))
-        rewards = torch.tensor([1 / df['gap'][i] ** beta for i, beta in zip(idcs, temp[:mb_size])], device=dev)
+        rewards = torch.tensor([df['gap'][i] ** beta for i, beta in zip(idcs, temp[:mb_size])], device=dev)
         offline_losses = tb.compute_data_losses(env, ctx, model, graphs, rewards, cond_info=cond_info[:mb_size])
         t1 = time.time()
         # and some online data
