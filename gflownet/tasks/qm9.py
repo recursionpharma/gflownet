@@ -55,7 +55,6 @@ class Model(nn.Module):
             sum([[
                 gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
                 gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'),
-                #nn.BatchNorm1d(num_emb, affine=False),
             ] for i in range(6)], []))
 
         def h2l(nl):
@@ -72,7 +71,6 @@ class Model(nn.Module):
         self.o2o = nn.Sequential(
             gnn.TransformerConv(num_emb, num_emb, edge_dim=None),
             gnn.TransformerConv(num_emb, num_emb, edge_dim=None))
-        #self.logZ = nn.Parameter(torch.tensor([initial_Z_guess], dtype=torch.float))
         self.logZ = nn.Sequential(nn.Linear(env_ctx.num_cond_dim, num_emb * 2), nn.LeakyReLU(), nn.Linear(num_emb * 2, 1))
         self.action_type_order = [
             GraphActionType.Stop,
@@ -107,9 +105,13 @@ class Model(nn.Module):
         o = torch.cat([o, c], 0)
         # Do a forward pass, and remove the extraneous `c` we just concatenated
         for layer in self.o2o:
-            o = layer(o, aug_edge_index)
-        o = o[:-c.shape[0]]
-        glob = gnn.global_mean_pool(o, g.batch)
+            o = o + layer(o, aug_edge_index)
+        if 0:
+            o = o[:-c.shape[0]]
+            glob = gnn.global_mean_pool(o, g.batch)
+        else:
+            glob = gnn.global_mean_pool(o, torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0))
+            o = o[:-c.shape[0]]
         ne_row, ne_col = g.non_edge_index
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
         e_row, e_col = g.edge_index[:, ::2]
@@ -145,6 +147,7 @@ class QM9Trial(PyTorchTrial):
             torch.optim.Adam(self.model.parameters(), context.get_hparam('learning_rate')))
         self.tb = TrajectoryBalance(self.rng, random_action_prob=0.01, max_nodes=9,
                                     epsilon=context.get_hparam('tb_epsilon'))
+        self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
         
 
     def build_training_data_loader(self) -> DataLoader:

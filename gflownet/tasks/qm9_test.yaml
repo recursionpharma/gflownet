@@ -1,5 +1,5 @@
 name: qm9_test
-description: eps -60, no BN, ne 64, lr 1, seq avg
+description: eps -60, no BN, ne 64, lr 1, seq avg, R MSE training
 data:
   path: /data/chem/qm9.xyz.tar
 hyperparameters:
@@ -7,6 +7,7 @@ hyperparameters:
   global_batch_size: 32
   num_emb: 64
   tb_epsilon: -60
+  reward_loss_multiplier: 10
 searcher:
   name: single
   metric: validation_loss

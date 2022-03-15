@@ -4,7 +4,7 @@ from itertools import count
 import torch
 from torch_scatter import scatter
 
-from gflownet.envs.graph_building_env import GraphActionType, generate_forward_trajectory
+from gflownet.envs.graph_building_env import Graph, GraphActionType, generate_forward_trajectory
 
 
 class TrajectoryBalance:
@@ -23,6 +23,7 @@ class TrajectoryBalance:
         self.max_nodes = max_nodes
         self.rng = rng
         self.epsilon = epsilon
+        self.reward_loss_multiplier = 1
 
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
@@ -36,7 +37,7 @@ class TrajectoryBalance:
             col = self.rng.choice(cat.logits[which].shape[1])
             actions[i] = (which, row, col)
 
-    def sample_model_losses(self, env, ctx, model, n, cond_info=None):
+    def sample_model_losses(self, env, ctx, model, n, cond_info=None, generated_molecules=None):
         if cond_info is None:
             loss_items = [([model.logZ], []) for i in range(n)]
         else:
@@ -54,7 +55,8 @@ class TrajectoryBalance:
         epsilon = torch.tensor([self.epsilon], device=dev).float()
         for t in (range(self.max_len) if self.max_len is not None else count(0)):
             torch_graphs = [ctx.graph_to_Data(i) for i in not_done(graphs)]
-            fwd_cat, log_reward_preds = model(ctx.collate(torch_graphs).to(dev), cond_info)
+            not_done_mask = torch.tensor(done, device=dev).logical_not()
+            fwd_cat, log_reward_preds = model(ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
             actions = fwd_cat.sample()
             self._corrupt_actions(actions, fwd_cat)
             graph_actions = [
@@ -66,6 +68,7 @@ class TrajectoryBalance:
                 li[0].append(lp.unsqueeze(0))
                 if ga.action is GraphActionType.Stop:
                     done[i] = True
+                    #print('done', i, t)
                 else:
                     try:
                         gp = env.step(graphs[i], ga)
@@ -74,8 +77,10 @@ class TrajectoryBalance:
                             li[1].append(torch.tensor([1 / env.count_backward_transitions(gp)], device=dev).log())
                         else:
                             done[i] = True
+                            final_rewards[i] = gp
                         graphs[i] = gp
                     except AssertionError:
+                        #print('fail', i, t)
                         done[i] = True
                         final_rewards[i] = illegal_action_logreward
                 if done[i] and final_rewards[i] is None:
@@ -85,8 +90,22 @@ class TrajectoryBalance:
                         final_rewards[i] = log_reward_preds[j].detach()
             if all(done):
                 break
+        graphs_to_fill = []
+        idx_to_fill = []
+        for i, r in enumerate(final_rewards):
+            if isinstance(r, Graph):
+                graphs_to_fill.append(r)
+                idx_to_fill.append(i)
+        if len(graphs_to_fill):
+            with torch.no_grad():
+                _, log_reward_preds = model(ctx.collate([ctx.graph_to_Data(i) for i in graphs_to_fill]).to(dev), cond_info[torch.tensor(idx_to_fill, device=dev)])
+            for i, r in zip(idx_to_fill, log_reward_preds):
+                final_rewards[i] = r
+        
         losses = []
         for i in range(n):
+            if generated_molecules is not None:
+                generated_molecules[i] = (graphs[i], final_rewards[i])
             loss_items[i][1].append(final_rewards[i])
             numerator = torch.logaddexp(sum(loss_items[i][0]), epsilon)
             denominator = torch.logaddexp(sum(loss_items[i][1]), epsilon)
@@ -114,9 +133,9 @@ class TrajectoryBalance:
         ], device=model.device)
         log_p_B = (1 / num_backward).log()
         if cond_info is None:
+            # TODO: redo this
             Z_minus_r = torch.stack([model.logZ - r for r in rewards.log()]).flatten()
         else:
-            #Z_minus_r = model.logZ(cond_info)[:, 0] - rewards.log()
             Z = model.logZ(cond_info)[:, 0]
             
         numerator = Z + scatter(log_prob, batch_idx, dim=0, dim_size=len(trajs), reduce='sum')
@@ -128,6 +147,7 @@ class TrajectoryBalance:
         traj_losses = traj_losses / lens
         info = {'unnorm_traj_losses': unnorm}
         if self.bootstrap_own_reward:
-            info['reward_losses'] = reward_losses = (rewards.log() - log_reward_preds).pow(2)
-            traj_losses = traj_losses + reward_losses
+            info['reward_losses'] = reward_losses = (rewards - log_reward_preds.exp()).pow(2)
+            #info['reward_losses'] = reward_losses = (rewards.log() - log_reward_preds).pow(2)
+            traj_losses = traj_losses + reward_losses * self.reward_loss_multiplier
         return traj_losses, info
