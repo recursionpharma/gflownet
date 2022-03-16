@@ -1,4 +1,5 @@
 import tarfile
+import time
 import pandas as pd
 import numpy as np
 from typing import Tuple, List, Any, Dict
@@ -8,6 +9,7 @@ from rdkit import RDLogger
 
 from determined.pytorch import DataLoader, PyTorchTrial, PyTorchTrialContext
 import torch
+import torch.multiprocessing as mp
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
@@ -135,7 +137,7 @@ class Model(nn.Module):
 class QM9Trial(PyTorchTrial):
     def __init__(self, context: PyTorchTrialContext) -> None:
         self.context = context
-
+        mp.set_start_method('spawn')
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
@@ -145,10 +147,18 @@ class QM9Trial(PyTorchTrial):
             num_emb=context.get_hparam('num_emb')))
         self.opt = context.wrap_optimizer(
             torch.optim.Adam(self.model.parameters(), context.get_hparam('learning_rate')))
-        self.tb = TrajectoryBalance(self.rng, random_action_prob=0.01, max_nodes=9,
+        self.tb = TrajectoryBalance(self.env, self.ctx, self.rng, random_action_prob=0.01, max_nodes=9,
                                     epsilon=context.get_hparam('tb_epsilon'))
         self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
-        
+        self.temperature_sample_dist = context.get_hparam('temperature_sample_dist')
+        self.temperature_dist_params = eval(context.get_hparam('temperature_dist_params'))
+
+    def _sample_temperatures(self, n):
+        if self.temperature_sample_dist == 'gamma':
+            return self.rng.gamma(*self.temperature_dist_params, n).astype(np.float32)
+        elif self.temperature_sample_dist == 'uniform':
+            return self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+        raise ValueError(self.temperature_sample_dist)
 
     def build_training_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['path'], train=True)
@@ -163,20 +173,28 @@ class QM9Trial(PyTorchTrial):
             self.model.device = self.context.to_device(torch.ones(1)).device
         smiles, flat_rewards = batch
         mb_size = len(smiles)
+        t = [time.time()]
         graphs = [self.ctx.mol_to_graph(Chem.MolFromSmiles(s)) for s in smiles]
-        temp = self.rng.gamma(1.5, 1.5, mb_size * 2).astype(np.float32)
+        temp = self._sample_temperatures(mb_size * 2)
         cond_info = self.context.to_device(torch.tensor(temp).reshape((-1, 1)))
         rewards = flat_rewards ** cond_info[:mb_size, 0]
+        t += [time.time()]
         offline_losses, off_info = self.tb.compute_data_losses(
             self.env, self.ctx, self.model, graphs, rewards, cond_info=cond_info[:mb_size])
+        t += [time.time()]
         online_losses = self.tb.sample_model_losses(
             self.env, self.ctx, self.model, mb_size, cond_info=cond_info[mb_size:])
+        t += [time.time()]
         avg_online_loss = online_losses.mean()
         avg_offline_loss = offline_losses.mean()
         loss = (avg_offline_loss + avg_online_loss) / 2
         
         self.context.backward(loss)
-        self.context.step_optimizer(self.opt)
+        self.context.step_optimizer(
+            self.opt,
+            clip_grads=lambda params: torch.nn.utils.clip_grad_value_(params, 1))
+        t += [time.time()]
+        #print(' '.join(f"{t[i+1]-t[i]:.3f}" for i in range(len(t)-1)))
         return {'loss': loss,
                 'avg_online_loss': avg_online_loss,
                 'avg_offline_loss': avg_offline_loss,
@@ -189,7 +207,7 @@ class QM9Trial(PyTorchTrial):
         smiles, flat_rewards = batch
         mb_size = len(smiles)
         graphs = [self.ctx.mol_to_graph(Chem.MolFromSmiles(s)) for s in smiles]
-        temp = self.rng.gamma(1.5, 1.5, mb_size).astype(np.float32)
+        temp = self._sample_temperatures(mb_size)
         cond_info = self.context.to_device(torch.tensor(temp).reshape((-1, 1)))
         rewards = flat_rewards ** cond_info[:, 0]
         losses, info = self.tb.compute_data_losses(self.env, self.ctx,
@@ -199,46 +217,60 @@ class QM9Trial(PyTorchTrial):
                 'reward_loss': info['reward_losses'].mean().item(),
                 'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
 
+class DummyContext:
+
+    def __init__(self, hps, device):
+        self.hps = hps
+        self.dev = device
     
-def main():
-    import time
-    RDLogger.DisableLog('rdApp.*')
-    rng = np.random.default_rng(142857)
-    env = GraphBuildingEnv()
-    ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=1)
-    dev = torch.device('cpu')
-    model = Model(ctx, num_emb=128) # , initial_Z_guess=8)
-    model.to(dev)
-    model.device = dev
-    mb_size = 64
-    # Was Adam failing? Why?
-    opt = torch.optim.Adam(model.parameters(), 1e-4, weight_decay=1e-5)
-    #opt = torch.optim.SGD(model.parameters(), 1e-4, momentum=0.9, dampening=0.9)
+    def wrap_model(self, model):
+        return model.to(self.dev)
 
-    tb = TrajectoryBalance(rng, random_action_prob=0.01, max_nodes=9)
-    df = load_qm9_data()
-    train_idcs = rng.choice(len(df), size=int(len(df) * 0.9), replace=False)
+    def wrap_optimizer(self, opt):
+        return opt
 
-    for i in range(1000):
-        # Train on some offline data
-        t0 = time.time()
-        idcs = rng.choice(train_idcs, mb_size)
-        graphs = [ctx.mol_to_graph(Chem.MolFromSmiles(df['SMILES'][i])) for i in idcs]
-        temp = rng.gamma(1.5, 1.5, mb_size * 2).astype(np.float32)
-        cond_info = torch.tensor(temp, device=dev).reshape((-1, 1))
-        rewards = torch.tensor([df['gap'][i] ** beta for i, beta in zip(idcs, temp[:mb_size])], device=dev)
-        offline_losses = tb.compute_data_losses(env, ctx, model, graphs, rewards, cond_info=cond_info[:mb_size])
-        t1 = time.time()
-        # and some online data
-        online_losses = tb.sample_model_losses(env, ctx, model, mb_size, cond_info=cond_info[mb_size:])
-        loss = (online_losses.mean() + offline_losses.mean()) / 2
-        t2 = time.time()
+    def get_hparam(self, hp):
+        return self.hps[hp]
+
+    def get_data_config(self):
+        return {'path': '/data/chem/qm9.xyz.tar'}
+
+    def get_per_slot_batch_size(self):
+        return self.hps['global_batch_size']
+
+    def to_device(self, x):
+        return x.to(self.dev)
+
+    def backward(self, loss):
         loss.backward()
+
+    def step_optimizer(self, opt):
         opt.step()
         opt.zero_grad()
-        t3 = time.time()
-        print(loss.item(), f'{t1-t0:.2f} {t2-t1:.2f} {t3-t2:.2f}')
+    
+def main():
+    hps = {
+        'learning_rate': 1e-4,
+        'global_batch_size': 64,
+        'num_emb': 64,
+        'tb_epsilon': -60,
+        'reward_loss_multiplier': 1,
+        'temperature_sample_dist': 'uniform',
+        'temperature_dist_params': '(0.5, 8)',
+    }
+    dummy_context = DummyContext(hps, torch.device('cuda'))
+    trial = QM9Trial(dummy_context)
 
+    train_dl = trial.build_training_data_loader()
+    #valid_dl = trial.build_validation_data_loader()
+
+    for epoch in range(10):
+        for it, batch in enumerate(train_dl):
+            batch = (batch[0], batch[1].to(dummy_context.dev))
+            trial.train_batch(batch, epoch, it)
+            if it >= 10:
+                break
+        break
 
 if __name__ == '__main__':
     main()

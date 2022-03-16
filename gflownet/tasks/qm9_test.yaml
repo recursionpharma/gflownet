@@ -3,11 +3,15 @@ description: eps -60, no BN, ne 64, lr 1, seq avg, R MSE training
 data:
   path: /data/chem/qm9.xyz.tar
 hyperparameters:
-  learning_rate: 1e-4
+  learning_rate: 3e-4
   global_batch_size: 32
-  num_emb: 64
+  num_emb: 128
   tb_epsilon: -60
-  reward_loss_multiplier: 10
+  reward_loss_multiplier: 1
+  #temperature_sample_dist: gamma
+  #temperature_dist_params: (1.5, 1.5)
+  temperature_sample_dist: uniform
+  temperature_dist_params: (0.5, 8)
 searcher:
   name: single
   metric: validation_loss
