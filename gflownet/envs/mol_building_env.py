@@ -102,8 +102,13 @@ class MolBuildingEnvContext:
                    (g.non_edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
             col = 0
         elif action.action is GraphActionType.SetEdgeAttr:
-            row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
-                   (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
+            # so no need for a double check.
+            #row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
+            #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
+            # Because edges are duplicated but logits aren't, divide by two
+            row = row.div(2, rounding_mode='floor')
             col = self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr]
         return [ts.index(action.action), row, col]
 

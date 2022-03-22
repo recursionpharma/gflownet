@@ -266,7 +266,7 @@ class GraphBuildingEnv:
                 c += 1
         return c
 
-def generate_forward_trajectory(g: Graph):
+def generate_forward_trajectory(g: Graph, max_nodes: int=None):
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
@@ -283,6 +283,7 @@ def generate_forward_trajectory(g: Graph):
         # attributes will be reinserted into the stack until those
         # attributes are "set".
         i = stack.pop(np.random.randint(len(stack)))
+        
         gt = gn.copy()  # This is a shallow copy
         if type(i) is tuple:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
@@ -327,7 +328,7 @@ def generate_forward_trajectory(g: Graph):
                 n = relabeling_map[i] = len(relabeling_map)
                 gn.add_node(0, v=g.nodes[i]['v'])
                 for j in g[i]:  # For every neighbour of node i
-                    if j not in gn:
+                    if relabeling_map.get(j, None) not in gn:
                         stack.append((i, j))  # push the (i,j) edge onto the stack
             else:
                 # i exists, meaning we have attributes left to add
@@ -413,7 +414,7 @@ class GraphActionCategorical:
         if deduplicate_edge_index and 'edge_index' in keys:
             idx = keys.index('edge_index')
             self.batch[idx] = self.batch[idx][::2]
-            self.slice[idx] = self.slice[idx].div(2, rounding_mode='trunc')
+            self.slice[idx] = self.slice[idx].div(2, rounding_mode='floor')
     
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
