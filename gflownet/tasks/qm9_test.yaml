@@ -1,19 +1,32 @@
 name: qm9_test
-description: eps -60, no BN, ne 64, lr 1, seq avg, R MSE training
+description: parallel DL, bs 64, lr3, unit reward, beta temp
 data:
-  path: /data/chem/qm9.xyz.tar
+  h5_path: /data/chem/qm9/qm9.h5
+  path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  learning_rate: 3e-4
-  global_batch_size: 32
-  num_emb: 128
+  learning_rate: 2e-4
+#    type: double
+#    minval: 1e-4
+#    maxval: 3e-4
+#    count: 3
+  global_batch_size: 128
+  num_emb: 16
+#    type: categorical
+#    vals:
+#      - 32
+#      - 64
+#      - 128
   tb_epsilon: -60
   reward_loss_multiplier: 1
-  #temperature_sample_dist: gamma
-  #temperature_dist_params: (1.5, 1.5)
-  temperature_sample_dist: uniform
-  temperature_dist_params: (0.5, 8)
+  temperature_sample_dist: gamma
+  temperature_dist_params: (1.5, 1.5)
+  #temperature_sample_dist: beta
+  #temperature_dist_params: (1.25, 2)
+  #temperature_sample_dist: uniform
+  #temperature_dist_params: (0.5, 8)
+  num_data_loader_workers: 6
 searcher:
-  name: single
+  name: single #grid
   metric: validation_loss
   max_length:
       batches: 20000
@@ -46,5 +59,6 @@ resources:
   resource_pool: dgx-pool
   agent_label: ampere
   priority: 1
+  slots_per_trial: 1
 #profiling:
 #  enabled: true
