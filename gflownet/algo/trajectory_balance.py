@@ -27,7 +27,6 @@ class TrajectoryBalance:
         self.rng = rng
         self.epsilon = epsilon
         self.reward_loss_multiplier = 1
-        self.pool = TrajectoryBuildingPool(64, env, ctx)
 
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
@@ -40,11 +39,25 @@ class TrajectoryBalance:
             row = self.rng.choice(n_in_batch[which])
             col = self.rng.choice(cat.logits[which].shape[1])
             actions[i] = (which, row, col)
+            
+    def sample_temperatures(self, n):
+        if self.temperature_sample_dist == 'gamma':
+            return self.rng.gamma(*self.temperature_dist_params, n).astype(np.float32)
+        elif self.temperature_sample_dist == 'uniform':
+            return self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+        elif self.temperature_sample_dist == 'beta':
+            return self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
 
-    def sample_model_losses(self, env, ctx, model, n, cond_info=None, generated_molecules=None):
+    def sample_model_losses(self, env, ctx, model, n,
+                            cond_info=None,
+                            generated_molecules=None,
+                            trajectories=None):
+        dev = model.device
         if cond_info is None:
             loss_items = [([model.logZ], []) for i in range(n)]
         else:
+            if cond_info == 'sample':
+                cond_info = torch.tensor(self.sample_temperatures(n), device=dev).unsqueeze(1)
             logZ_pred = model.logZ(cond_info)
             loss_items = [([logZ_pred[i]], []) for i in range(n)]
         graphs = [env.new() for i in range(n)]
@@ -54,7 +67,6 @@ class TrajectoryBalance:
             return [l[i] for i in range(n) if not done[i]]
 
         final_rewards = [None] * n
-        dev = model.device
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         epsilon = torch.tensor([self.epsilon], device=dev).float()
         for t in (range(self.max_len) if self.max_len is not None else count(0)):
@@ -70,18 +82,22 @@ class TrajectoryBalance:
             for i, j, li, lp, ga in zip(not_done(list(range(n))), range(n), not_done(loss_items), log_probs,
                                         graph_actions):
                 li[0].append(lp.unsqueeze(0))
+                if trajectories is not None:
+                    trajectories[i][0].append((graphs[i], ga))
                 if ga.action is GraphActionType.Stop:
                     done[i] = True
                     #print('done', i, t)
                 else:
                     try:
+                        # env.step can raise AssertionError
                         gp = env.step(graphs[i], ga)
-                        if self.max_nodes is None or len(gp.nodes) < self.max_nodes:
-                            # P_B
-                            li[1].append(torch.tensor([1 / env.count_backward_transitions(gp)], device=dev).log())
-                        else:
-                            done[i] = True
-                            final_rewards[i] = gp
+                        if self.max_nodes is not None:
+                            assert len(gp.nodes) <= self.max_nodes
+                        # P_B
+                        li[1].append(torch.tensor([1 / env.count_backward_transitions(gp)], device=dev).log())
+                        #else:
+                        #    done[i] = True
+                        #    final_rewards[i] = gp
                         graphs[i] = gp
                     except AssertionError:
                         #print('fail', i, t)
@@ -101,6 +117,7 @@ class TrajectoryBalance:
                 graphs_to_fill.append(r)
                 idx_to_fill.append(i)
         if len(graphs_to_fill):
+            # TODO: making addnode illegal beyond max_nodes made this deprecated?
             with torch.no_grad():
                 _, log_reward_preds = model(ctx.collate([ctx.graph_to_Data(i) for i in graphs_to_fill]).to(dev), cond_info[torch.tensor(idx_to_fill, device=dev)])
             for i, r in zip(idx_to_fill, log_reward_preds):
@@ -110,14 +127,71 @@ class TrajectoryBalance:
         for i in range(n):
             if generated_molecules is not None:
                 generated_molecules[i] = (graphs[i], final_rewards[i])
+            if trajectories is not None:
+                trajectories[i][1] = final_rewards[i].exp()
+                trajectories[i][2] = cond_info[i]
             loss_items[i][1].append(final_rewards[i])
             numerator = torch.logaddexp(sum(loss_items[i][0]), epsilon)
             denominator = torch.logaddexp(sum(loss_items[i][1]), epsilon)
-            #print(sum(loss_items[i][0]), sum(loss_items[i][1]), numerator, denominator)
             losses.append((numerator - denominator).pow(2) / len(loss_items[i][0]))
-            #losses.append(torch.stack(loss_items[i]).sum().pow(2))
         return torch.stack(losses)
 
+    def compute_batch_losses(self, model, batch, rewards, cond_info, num_bootstrap=None):
+        dev = model.device
+        num_trajs = batch.traj_lens.shape[0]
+        epsilon = torch.tensor([self.epsilon], device=dev).float()
+        
+        batch_idx = torch.arange(batch.traj_lens.shape[0], device=dev).repeat_interleave(batch.traj_lens)
+        final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
+        
+        fwd_cat, log_reward_preds = model(batch, cond_info[batch_idx])
+        
+        log_reward_preds = log_reward_preds[final_graph_idx, 0]
+        log_prob = fwd_cat.log_prob(batch.actions)
+        log_p_B = (1 / batch.num_backward).log()
+        if cond_info is None:
+            # TODO: redo this
+            Z_minus_r = torch.stack([model.logZ - r for r in rewards.log()]).flatten()
+        else:
+            Z = model.logZ(cond_info)[:, 0]
+            #Z_eps = 0.01
+            #Z = Z * Z_eps + (1 - Z_eps) * Z.detach()
+            #print(np.round(Z.data.exp().cpu().numpy(), 2), Z.mean().item())
+        #print(np.round(fwd_cat.logits[0].flatten().data.cpu().numpy(), 2), Z.mean().item())
+            
+        numerator = Z + scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        denominator = rewards.log() + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum') 
+        numerator = torch.logaddexp(numerator, epsilon)
+        denominator = torch.logaddexp(denominator, epsilon)
+        if 1:
+            # Instead of being rude to the model and giving a
+            # logreward of -100 what if we say, whatever you think the
+            # logprobablity of this trajectory is it should be smaller
+            # (thus the `numerator - 0.1`). Why 0.1? Intuition, and
+            # also 1 didn't appear to work as well.
+            mask = (rewards < 1e-30).float()
+            denominator = denominator * (1 - mask) + mask * (numerator.detach() - 10)
+        unnorm = traj_losses = (numerator - denominator).pow(2)
+        traj_losses = traj_losses / batch.traj_lens
+        info = {'unnorm_traj_losses': unnorm,
+                'invalid_trajectories': mask.mean() * 2}
+        if self.bootstrap_own_reward:
+            num_bootstrap = num_bootstrap or len(rewards)
+            #print('rewards')
+            #print(rewards[:num_bootstrap])
+            #print(log_reward_preds[:num_bootstrap].exp())
+            reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
+            #reward_losses = abs(rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp())
+            info['reward_losses'] = reward_losses
+            #import pdb; pdb.set_trace()
+            #info['reward_losses'] = reward_losses = (rewards.log() - log_reward_preds).pow(2)
+            #traj_losses = traj_losses + reward_losses * self.reward_loss_multiplier
+        #print('compute_batch_losses', ' '.join(f"{t[i+1]-t[i]:.3f}" for i in range(len(t)-1)))
+        #print(traj_losses.shape)
+        if not torch.isfinite(traj_losses).all():
+            raise ValueError('loss is not finite')
+        return traj_losses, info
+        
     def compute_data_losses(self, env, ctx, model, graphs, rewards, cond_info=None):
         t = [time.time()]
         epsilon = torch.tensor([self.epsilon], device=model.device).float()
