@@ -18,21 +18,21 @@ import torch.multiprocessing as mp
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--save_path", default='results/example_branincurrin_h32_l.pkl.gz', type=str)
+parser.add_argument("--save_path", default='results/example_branincurrin.pkl.gz', type=str)
 parser.add_argument("--device", default='cpu', type=str)
 parser.add_argument("--progress", action='store_true') # Shows a tqdm bar
 
 # GFN
 parser.add_argument("--method", default='flownet_tb', type=str)
-parser.add_argument("--learning_rate", default=1e-4, help="Learning rate", type=float)
+parser.add_argument("--learning_rate", default=1e-2, help="Learning rate", type=float)
 parser.add_argument("--opt", default='adam', type=str)
 parser.add_argument("--adam_beta1", default=0.9, type=float)
 parser.add_argument("--adam_beta2", default=0.999, type=float)
 parser.add_argument("--momentum", default=0.9, type=float)
-parser.add_argument("--mbsize", default=32, help="Minibatch size", type=int)
-parser.add_argument("--n_hid", default=256, type=int)
+parser.add_argument("--mbsize", default=128, help="Minibatch size", type=int)
+parser.add_argument("--n_hid", default=64, type=int)
 parser.add_argument("--n_layers", default=3, type=int)
-parser.add_argument("--n_train_steps", default=10000, type=int)
+parser.add_argument("--n_train_steps", default=5000, type=int)
 
 # Measurement
 parser.add_argument("--n_distr_measurements", default=50, type=int)
@@ -70,7 +70,7 @@ def branin(x):
 
 class GridEnv:
 
-    def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None, allow_backward=False,
+    def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None,
                  obs_type='one-hot'):
         self.horizon = horizon
         self.start = [xrange[0]] * ndim
@@ -81,9 +81,6 @@ class GridEnv:
             if funcs is None else funcs)
         self.num_cond_dim = len(self.funcs) + 1
         self.xspace = np.linspace(*xrange, horizon)
-        self.allow_backward = allow_backward  # If true then this is a
-                                              # MCMC ergodic env,
-                                              # otherwise a DAG
         self._true_density = None
         self.obs_type = obs_type
         if obs_type == 'one-hot':
@@ -120,9 +117,6 @@ class GridEnv:
         self._step = 0
         self.coefficients = np.random.dirichlet([1.5]*len(self.funcs)) if coefs is None else coefs
         self.temperature = np.random.gamma(2,1) if temp is None else temp
-        #self.temperature = np.random.uniform(0.5,8) if temp is None else temp
-        #self.coefficients = np.ones(2) / 2
-        #self.temperature = 1
         self.cond_obs = np.concatenate([self.coefficients, [self.temperature]])
         return self.obs(), self.s2r(self._state), self._state
 
@@ -141,12 +135,8 @@ class GridEnv:
                 actions += [i]
         return parents, actions
 
-    def step(self, a, s=None):
-        if self.allow_backward:
-            return self.step_chain(a, s)
-        return self.step_dag(a, s)
 
-    def step_dag(self, a, s=None):
+    def step(self, a, s=None):
         _s = s
         s = (self._state if s is None else s) + 0
         if a < self.ndim:
@@ -157,22 +147,6 @@ class GridEnv:
             self._state = s
             self._step += 1
         return self.obs(s), 0 if not done else self.s2r(s), done, s
-
-    def step_chain(self, a, s=None):
-        _s = s
-        s = (self._state if s is None else s) + 0
-        sc = s + 0
-        if a < self.ndim:
-            s[a] = min(s[a]+1, self.horizon-1)
-        if a >= self.ndim:
-            s[a-self.ndim] = max(s[a-self.ndim]-1,0)
-
-        reverse_a = ((a + self.ndim) % (2 * self.ndim)) if any(sc != s) else a
-
-        if _s is None:
-            self._state = s
-            self._step += 1
-        return self.obs(s), self.func(self.s2x(s)), s, reverse_a
 
 
     def state_info(self):
@@ -284,20 +258,6 @@ class FlowNet_TBAgent:
         log_ratio = numerator - denominator
         return log_ratio
 
-    def get_traj_mass_from(self, trajs):
-        traj_rs = torch.stack([i[0][2] for i in trajs])
-        traj_obs = torch.stack([i[5] for t in trajs for i in t])
-        traj_act = torch.stack([i[6] for t in trajs for i in t])[:, 0]
-        traj_idx = torch.tensor(sum(([i] * len(t) for i,t in enumerate(trajs)), []))
-        traj_cond_obs = torch.stack([i[0][7] for i in trajs])
-        traj_num_back = torch.tensor([len(i[0]) for t in trajs for i in t]).float()
-        cat = Categorical(logits=self.model(traj_obs))
-        logp = cat.log_prob(traj_act)
-        Z = self.Z(traj_cond_obs)[:, 0]
-        self._Z = Z.detach().numpy().reshape(-1)
-        losses = Z.index_add(0, traj_idx, logp - (1/traj_num_back).log()) - traj_rs[:, 0].log()
-        return losses
-
     def learn_from(self, it, batch):
         if type(batch) is list:
             log_ratio = torch.stack(batch, 0)
@@ -387,10 +347,6 @@ def main(args):
     
     opt = make_opt(agent.model.parameters(), args)
     optZ = make_opt(agent.Z.parameters(), args)
-    def lr(n_steps):
-        r = n_steps / args.n_train_steps
-        return ((1 - r) + r * 0.01)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr)
               
     # We want to test our model on a series of conditional configurations
     cond_confs = [
@@ -432,7 +388,6 @@ def main(args):
         opt.zero_grad()
         optZ.step()
         optZ.zero_grad()
-        #scheduler.step()
         if t == args.n_train_steps:
             stop_event.set()
         backprop_barrier.wait() # Trigger barrier passing
@@ -452,7 +407,8 @@ def main(args):
                'args':args}
     if args.save_path is not None:
         root = os.path.split(args.save_path)[0]
-        os.makedirs(root, exist_ok=True)
+        if len(root):
+            os.makedirs(root, exist_ok=True)
         pickle.dump(results, gzip.open(args.save_path, 'wb'))
     else:
         return results
