@@ -4,7 +4,9 @@ import numpy as np
 from itertools import count
 
 import torch
+import torch.nn as nn
 import torch.multiprocessing as mp
+import torch_geometric.data as gd
 from torch_scatter import scatter
 
 from gflownet.envs.graph_building_env import Graph, GraphActionType, generate_forward_trajectory
@@ -18,6 +20,8 @@ class TrajectoryBalance:
     """
     def __init__(self, env, ctx, rng, max_len=None, random_action_prob=None, max_nodes=None,
                  epsilon=-60):
+        self.ctx = ctx
+        self.env = env
         self.max_len = max_len
         self.random_action_prob = random_action_prob
         self.illegal_action_logreward = -100
@@ -40,29 +44,42 @@ class TrajectoryBalance:
             col = self.rng.choice(cat.logits[which].shape[1])
             actions[i] = (which, row, col)
             
-    def sample_temperatures(self, n):
-        if self.temperature_sample_dist == 'gamma':
-            return self.rng.gamma(*self.temperature_dist_params, n).astype(np.float32)
-        elif self.temperature_sample_dist == 'uniform':
-            return self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-        elif self.temperature_sample_dist == 'beta':
-            return self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-
-    def sample_model_losses(self, env, ctx, model, n,
-                            cond_info=None,
-                            generated_molecules=None,
-                            trajectories=None):
+    def create_training_data_from_own_samples(self, model, n, cond_info):
+        """Generate trajectories by sampling a model
+        
+        Parameters
+        ----------
+        model: nn.Module
+           The model being sampled
+        graphs: List[Graph]
+            List of N Graph endpoints
+        cond_info: torch.tensor
+            Conditional information, shape (N, n_info)
+        Returns
+        -------
+        data: List[Dict]
+           A list of trajectories. Each trajectory is a dict with keys
+           - trajs: List[Tuple[Graph, GraphAction]]
+           - reward_pred: float, -100 if an illegal action is taken, predicted R(x) if bootstrapping, None otherwise
+           - fwd_logprob: log Z + sum logprobs P_F
+           - bck_logprob: sum logprobs P_B
+           - logZ: predicted log Z
+           - loss: predicted loss (if bootstrapping)
+        """
+        ctx = self.ctx
+        env = self.env
         dev = model.device
-        if cond_info is None:
-            loss_items = [([model.logZ], []) for i in range(n)]
-        else:
-            if cond_info == 'sample':
-                cond_info = torch.tensor(self.sample_temperatures(n), device=dev).unsqueeze(1)
-            logZ_pred = model.logZ(cond_info)
-            loss_items = [([logZ_pred[i]], []) for i in range(n)]
+        cond_info = cond_info.to(dev)
+        logZ_pred = model.logZ(cond_info)
+        # This will be returned as training data
+        data = [{'traj': [], 'reward_pred': None} for i in range(n)]
+        # Let's also keep track of trajectory statistics according to the model
+        fwd_logprob = [[logZ_pred[i]] for i in range(n)]
+        zero = torch.tensor([0], device=dev).float()
+        bck_logprob = [[zero] for i in range(n)] # zero in case there is a single invalid action
+        
         graphs = [env.new() for i in range(n)]
         done = [False] * n
-
         def not_done(l):
             return [l[i] for i in range(n) if not done[i]]
 
@@ -70,97 +87,154 @@ class TrajectoryBalance:
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         epsilon = torch.tensor([self.epsilon], device=dev).float()
         for t in (range(self.max_len) if self.max_len is not None else count(0)):
+            # Construct graphs for the trajectories that aren't yet done
             torch_graphs = [ctx.graph_to_Data(i) for i in not_done(graphs)]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
+            # Forward pass to get GraphActionCategorical
             fwd_cat, log_reward_preds = model(ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
             actions = fwd_cat.sample()
             self._corrupt_actions(actions, fwd_cat)
             graph_actions = [
-                ctx.aidx_to_GraphAction(g, a, model.action_type_order[a[0]]) for g, a in zip(torch_graphs, actions)
+                ctx.aidx_to_GraphAction(g, a, model.action_type_order[a[0]])
+                for g, a in zip(torch_graphs, actions)
             ]
             log_probs = fwd_cat.log_prob(actions)
-            for i, j, li, lp, ga in zip(not_done(list(range(n))), range(n), not_done(loss_items), log_probs,
-                                        graph_actions):
-                li[0].append(lp.unsqueeze(0))
-                if trajectories is not None:
-                    trajectories[i][0].append((graphs[i], ga))
+            for i, j, ga in zip(not_done(list(range(n))), range(n), graph_actions):
+                # Step each trajectory, and accumulate statistics
+                fwd_logprob[i].append(log_probs[j].unsqueeze(0))
+                data[i]['traj'].append((graphs[i], ga))
                 if ga.action is GraphActionType.Stop:
                     done[i] = True
-                    #print('done', i, t)
                 else:
                     try:
-                        # env.step can raise AssertionError
+                        # env.step can raise AssertionError if the action is illegal
                         gp = env.step(graphs[i], ga)
                         if self.max_nodes is not None:
                             assert len(gp.nodes) <= self.max_nodes
-                        # P_B
-                        li[1].append(torch.tensor([1 / env.count_backward_transitions(gp)], device=dev).log())
-                        #else:
-                        #    done[i] = True
-                        #    final_rewards[i] = gp
+                        # P_B = uniform backward
+                        n_back = env.count_backward_transitions(gp)
+                        bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
                         graphs[i] = gp
                     except AssertionError:
-                        #print('fail', i, t)
                         done[i] = True
-                        final_rewards[i] = illegal_action_logreward
-                if done[i] and final_rewards[i] is None:
+                        data[i]['reward_pred'] = illegal_action_logreward.exp()
+                if done[i] and data[i]['reward_pred'] is None:
+                    # If we're not done and we haven't performed an illegal action
                     if self.sanitize_samples and not ctx.is_sane(graphs[i]):
-                        final_rewards[i] = illegal_action_logreward
+                        # check if the graph is sane (e.g. RDKit can
+                        # construct a molecule from it) otherwise
+                        # treat the done action as illegal
+                        data[i]['reward_pred'] = illegal_action_logreward.exp()
                     elif self.bootstrap_own_reward:
-                        final_rewards[i] = log_reward_preds[j].detach()
+                        # if we're bootstrapping, extract reward prediction
+                        data[i]['reward_pred'] = log_reward_preds[j].detach().exp()
             if all(done):
                 break
-        graphs_to_fill = []
-        idx_to_fill = []
-        for i, r in enumerate(final_rewards):
-            if isinstance(r, Graph):
-                graphs_to_fill.append(r)
-                idx_to_fill.append(i)
-        if len(graphs_to_fill):
-            # TODO: making addnode illegal beyond max_nodes made this deprecated?
-            with torch.no_grad():
-                _, log_reward_preds = model(ctx.collate([ctx.graph_to_Data(i) for i in graphs_to_fill]).to(dev), cond_info[torch.tensor(idx_to_fill, device=dev)])
-            for i, r in zip(idx_to_fill, log_reward_preds):
-                final_rewards[i] = r
-        
-        losses = []
         for i in range(n):
-            if generated_molecules is not None:
-                generated_molecules[i] = (graphs[i], final_rewards[i])
-            if trajectories is not None:
-                trajectories[i][1] = final_rewards[i].exp()
-                trajectories[i][2] = cond_info[i]
-            loss_items[i][1].append(final_rewards[i])
-            numerator = torch.logaddexp(sum(loss_items[i][0]), epsilon)
-            denominator = torch.logaddexp(sum(loss_items[i][1]), epsilon)
-            losses.append((numerator - denominator).pow(2) / len(loss_items[i][0]))
-        return torch.stack(losses)
+            # If we're not bootstrapping, we could query the reward
+            # model here, but this is expensive/impractical.  Instead
+            # just report forward and backward flows
+            data[i]['logZ'] = fwd_logprob[i][0].item()
+            data[i]['fwd_logprob'] = sum(fwd_logprob[i])
+            data[i]['bck_logprob'] = sum(bck_logprob[i])
+            if self.bootstrap_own_reward:
+                # If we are bootstrapping, we can report the theoretical loss as well
+                numerator = torch.logaddexp(data[i]['fwd_logprob'], epsilon)
+                denominator = torch.logaddexp(data[i]['bck_logprob'] + data[i]['reward_pred'].log(), epsilon)
+                data[i]['loss'] = (numerator - denominator).pow(2) / len(fwd_logprob[i])
+        return data
 
-    def compute_batch_losses(self, model, batch, rewards, cond_info, num_bootstrap=None):
+    def create_training_data_from_graphs(self, graphs):
+        """Generate trajectories from known endpoints
+        
+        Parameters
+        ----------
+        graphs: List[Graph]
+            List of Graph endpoints
+
+        Returns
+        -------
+        trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
+           A list of trajectories.
+        """
+        return [{'traj': generate_forward_trajectory(i)} for i in graphs]
+
+    def construct_batch(self, trajs, cond_info, rewards, action_type_order):
+        """Construct a batch from a list of trajectories and their information
+        
+        Parameters
+        ----------
+        trajs: List[List[tuple[Graph, GraphAction]]]
+            A list of N trajectories.
+        cond_info: torch.Tensor
+            The conditional info that is considered for each trajectory. Shape (N, n_info)
+        rewards: torch.Tensor
+            The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
+        action_type_order: List[GraphActionType]
+            The order in which models output graph action logits.
+
+        Returns
+        -------
+        batch: gd.Batch
+             A (CPU) Batch object with relevant attributes added
+        """
+        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
+        actions = [self.ctx.GraphAction_to_aidx(g, a, action_type_order)
+                   for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])]
+        num_backward = torch.tensor([
+            # Count the number of backward transitions from s_{t+1},
+            # unless t+1 = T is the last time step
+            self.env.count_backward_transitions(tj['traj'][i + 1][0]) if i + 1 < len(tj['traj']) else 1
+            for tj in trajs for i in range(len(tj['traj']))
+        ])
+        batch = self.ctx.collate(torch_graphs)
+        batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
+        batch.num_backward = num_backward
+        batch.actions = torch.tensor(actions)
+        batch.rewards = rewards
+        batch.cond_info = cond_info
+        return batch
+
+    def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap:int=0):
+        """Compute the losses over trajectories contained in the batch
+
+        Parameters
+        ----------
+        model: nn.Module
+           A GNN taking in a batch of graphs as input as per constructed by `self.construct_batch`.
+           Must have a `logZ` attribute, itself a model, which predicts log of Z(cond_info)
+        batch: gd.Batch
+          batch of graphs inputs as per constructed by `self.construct_batch`
+        num_bootstrap: int
+          the number of trajectories for which the reward loss is computed. Ignored if 0.        
+        """
         dev = model.device
+        # A single trajectory is comprised of many graphs
         num_trajs = batch.traj_lens.shape[0]
         epsilon = torch.tensor([self.epsilon], device=dev).float()
-        
+        rewards = batch.rewards
+        cond_info = batch.cond_info
+
+        # This index says which trajectory each graph belongs to, so
+        # it will look like [0,0,0,0,1,1,1,2,...] if trajectory 0 is
+        # of length 4, trajectory 1 of length 3, and so on.
         batch_idx = torch.arange(batch.traj_lens.shape[0], device=dev).repeat_interleave(batch.traj_lens)
+        # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
-        
+
+        # Forward pass of the model, returns a GraphActionCategorical and the optional bootstrap predictions
         fwd_cat, log_reward_preds = model(batch, cond_info[batch_idx])
-        
+
+        # Retreive the reward predictions for the full graphs,
+        # i.e. the final graph of each trajectory
         log_reward_preds = log_reward_preds[final_graph_idx, 0]
+        # Compute trajectory balance objective
+        Z = model.logZ(cond_info)[:, 0]
         log_prob = fwd_cat.log_prob(batch.actions)
         log_p_B = (1 / batch.num_backward).log()
-        if cond_info is None:
-            # TODO: redo this
-            Z_minus_r = torch.stack([model.logZ - r for r in rewards.log()]).flatten()
-        else:
-            Z = model.logZ(cond_info)[:, 0]
-            #Z_eps = 0.01
-            #Z = Z * Z_eps + (1 - Z_eps) * Z.detach()
-            #print(np.round(Z.data.exp().cpu().numpy(), 2), Z.mean().item())
-        #print(np.round(fwd_cat.logits[0].flatten().data.cpu().numpy(), 2), Z.mean().item())
-            
         numerator = Z + scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-        denominator = rewards.log() + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum') 
+        denominator = rewards.log() + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        # Numerical stability epsilon
         numerator = torch.logaddexp(numerator, epsilon)
         denominator = torch.logaddexp(denominator, epsilon)
         if 1:
@@ -170,183 +244,20 @@ class TrajectoryBalance:
             # (thus the `numerator - 0.1`). Why 0.1? Intuition, and
             # also 1 didn't appear to work as well.
             mask = (rewards < 1e-30).float()
-            denominator = denominator * (1 - mask) + mask * (numerator.detach() - 10)
+            #denominator = denominator * (1 - mask) + mask * (numerator.detach() - 10)
+            
         unnorm = traj_losses = (numerator - denominator).pow(2)
+        # Normalize losses by trajectory length
         traj_losses = traj_losses / batch.traj_lens
         info = {'unnorm_traj_losses': unnorm,
                 'invalid_trajectories': mask.mean() * 2}
+        
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)
-            #print('rewards')
-            #print(rewards[:num_bootstrap])
-            #print(log_reward_preds[:num_bootstrap].exp())
             reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
-            #reward_losses = abs(rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp())
             info['reward_losses'] = reward_losses
-            #import pdb; pdb.set_trace()
-            #info['reward_losses'] = reward_losses = (rewards.log() - log_reward_preds).pow(2)
-            #traj_losses = traj_losses + reward_losses * self.reward_loss_multiplier
-        #print('compute_batch_losses', ' '.join(f"{t[i+1]-t[i]:.3f}" for i in range(len(t)-1)))
-        #print(traj_losses.shape)
+            
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
         return traj_losses, info
-        
-    def compute_data_losses(self, env, ctx, model, graphs, rewards, cond_info=None):
-        t = [time.time()]
-        epsilon = torch.tensor([self.epsilon], device=model.device).float()
-        if 1:
-            trajs = [generate_forward_trajectory(i) for i in graphs]
-            torch_graphs = [ctx.graph_to_Data(i[0]) for tj in trajs for i in tj]
-            actions = [i[1] for tj in trajs for i in tj]
-            actions = [ctx.GraphAction_to_aidx(g, a, model.action_type_order) for g, a in zip(torch_graphs, actions)]
-            num_backward = torch.tensor([
-                env.count_backward_transitions(tj[i + 1][0]) if tj[i][1].action is not GraphActionType.Stop else 1
-                for tj in trajs
-                for i in range(len(tj))
-            ], device=model.device)
-            t += [time.time()]
-            batch = ctx.collate(torch_graphs).to(model.device)
-        else:
-            trajs, torch_graphs, actions, num_backward = self.pool.build_batch(graphs, rewards, model.action_type_order)
-            t += [time.time()]
-            batch = ctx.collate(torch_graphs)
-        t += [time.time()]
-        batch_idx = torch.tensor(sum(([i] * len(trajs[i]) for i in range(len(trajs))), []), device=model.device)
-        final_graph_idx = torch.tensor(np.cumsum([len(i) for i in trajs]) - 1, device=model.device)
-        fwd_cat, log_reward_preds = model(batch, cond_info[batch_idx])
-        t += [time.time()]
-        log_reward_preds = log_reward_preds[final_graph_idx, 0]
-        log_prob = fwd_cat.log_prob(actions)
-        t += [time.time()]
-        log_p_B = (1 / num_backward).log()
-        if cond_info is None:
-            # TODO: redo this
-            Z_minus_r = torch.stack([model.logZ - r for r in rewards.log()]).flatten()
-        else:
-            Z = model.logZ(cond_info)[:, 0]
-            
-        numerator = Z + scatter(log_prob, batch_idx, dim=0, dim_size=len(trajs), reduce='sum')
-        denominator = rewards.log() + scatter(log_p_B, batch_idx, dim=0, dim_size=len(trajs), reduce='sum') 
-        numerator = torch.logaddexp(numerator, epsilon)
-        denominator = torch.logaddexp(denominator, epsilon)
-        lens = torch.tensor([len(t) for t in trajs], device=model.device)
-        unnorm = traj_losses = (numerator - denominator).pow(2)
-        traj_losses = traj_losses / lens
-        info = {'unnorm_traj_losses': unnorm}
-        if self.bootstrap_own_reward:
-            info['reward_losses'] = reward_losses = (rewards - log_reward_preds.exp()).pow(2)
-            #info['reward_losses'] = reward_losses = (rewards.log() - log_reward_preds).pow(2)
-            traj_losses = traj_losses + reward_losses * self.reward_loss_multiplier
-        t += [time.time()]
-        #print('compute_data_losses', ' '.join(f"{t[i+1]-t[i]:.3f}" for i in range(len(t)-1)))
-        return traj_losses, info
-
-def _trajectory_building_process(qin, qout, pid, env, ctx, pq):
-    np.random.seed(pid)
-    refs = []
-    time_here = 0
-    torch_graph = None
-    asd = None
-    while True:
-        try:
-            msg = pq.get(block=False)
-            if msg == 'stop':
-                break
-            elif msg == 'free':
-                qout.put(time_here)
-                time_here = 0
-                refs = []
-        except queue.Empty:
-            pass
-        try:
-            msg = qin.get(timeout=0.005)
-        except queue.Empty:
-            continue
-        if msg is None:
-            break
-        t0 = time.time()
-        action, idx, arg = msg
-        #print(f'[{pid}]', action, idx, arg)
-        if action == 'make_graph':
-            (g, a), action_type_order = arg
-            torch_graph = ctx.graph_to_Data(g)
-            action = ctx.GraphAction_to_aidx(torch_graph, a, action_type_order)
-            asd = torch_graph = torch_graph.cuda()
-            # We must hold on to this and delete it in this process
-            refs.append(torch_graph)
-            qout.put((idx, (torch_graph, action, env.count_backward_transitions(g))))
-        elif action == 'test':
-            if asd is not None:
-                qout.put((idx, (asd.x, asd.edge_index, asd.edge_attr, asd.non_edge_index)))
-            else:
-                qout.put((idx, None))
-        t1 = time.time()
-        time_here += t1-t0
-    
-class TrajectoryBuildingPool:
-
-    def __init__(self, num_processes, env, ctx):
-        self.env = env
-        self.ctx = ctx
-        self.num = num_processes
-        # Global work queues
-        self.qin = mp.Queue()
-        self.qout = mp.Queue()
-        # This queue is used per-process (e.g. to stop them or free data)
-        self.pq = [mp.Queue() for i in range(self.num)]
-        self.procs = [mp.Process(target=_trajectory_building_process,
-                                 args=(self.qin, self.qout, i, env, ctx, self.pq[i]),
-                                 daemon=True)
-                      for i in range(self.num)]
-        for p in self.procs:
-            p.start()
-        self.time_in_proc = 0
-        
-    def map(self, action, args):
-        for idx, a in enumerate(args):
-            self.qin.put((action, idx, a))
-        results = [None] * len(args)
-        for i in range(len(args)):
-            idx, res = self.qout.get()
-            results[idx] = res
-        return results
-
-    def free(self):
-        self.time_in_proc = 0
-        for i in range(self.num):
-            self.pq[i].put('free') # Free the last batch
-        for i in range(self.num):
-            self.time_in_proc += self.qout.get()
-        print('time_in_proc', self.time_in_proc / self.num)
-
-    def build_batch(self, graphs, rewards, action_type_order):
-        t = [time.time()]
-        self.free()
-        trajs = [generate_forward_trajectory(i) for i in graphs]
-        t += [time.time()]
-        data = self.map('test', [(i, action_type_order) for tj in trajs for i in tj])
-        t += [time.time()]
-        self.free()
-        print('test', t[-1] - t[-2])
-        data = self.map('make_graph', [(i, action_type_order) for tj in trajs for i in tj])
-        torch_graphs, actions, num_back = zip(*data)
-        t += [time.time()]
-        stop_idx = action_type_order.index(GraphActionType.Stop)
-        num_backward = torch.tensor(
-            [num_back[i + 1] if actions[i][0] != stop_idx else 1
-             for i in range(len(num_back))], device=torch.device('cuda'))
-        t += [time.time()]
-        print('build_batch', ' '.join(f"{t[i+1]-t[i]:.3f}" for i in range(len(t)-1)))
-        return trajs, torch_graphs, actions, num_backward
-        
-        
-    def __del__(self):
-        print('deleting pools')
-        for i in range(self.num):
-            self.pq[i].put('stop')
-        for i in range(self.num):
-            self.qin.put(None)
-        for i in range(self.num):
-            self.procs[i].join()
         

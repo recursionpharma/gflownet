@@ -1,16 +1,16 @@
 name: qm9_test
-description: parallel DL, bs 64, lr3, unit reward, beta temp
+description: Z adam
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  learning_rate: 2e-4
+  learning_rate: 5e-4
 #    type: double
 #    minval: 1e-4
 #    maxval: 3e-4
 #    count: 3
   global_batch_size: 128
-  num_emb: 16
+  num_emb: 64
 #    type: categorical
 #    vals:
 #      - 32
@@ -29,7 +29,7 @@ searcher:
   name: single #grid
   metric: validation_loss
   max_length:
-      batches: 20000
+      batches: 50000
   smaller_is_better: true
 min_validation_period:
   batches: 500

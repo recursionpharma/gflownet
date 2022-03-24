@@ -108,6 +108,7 @@ class GraphBuildingEnv:
         """A graph building environment instance
 
         Parameters
+        ----------
         allow_add_edge: bool
             if True, allows this action and computes AddEdge parents (i.e. if False, this env only allows for tree generation)
         allow_node_attr: bool
