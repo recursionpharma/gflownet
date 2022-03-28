@@ -1,22 +1,39 @@
 name: qm9_test
-description: Z adam
+description: R=1, Z lr sched
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  learning_rate: 5e-4
-#    type: double
+  learning_rate: #1e-4
+    type: categorical
+    vals:
+      - 1e-5
+      - 1e-4
+      #- 3e-4
 #    minval: 1e-4
 #    maxval: 3e-4
 #    count: 3
-  global_batch_size: 128
-  num_emb: 64
-#    type: categorical
-#    vals:
-#      - 32
-#      - 64
-#      - 128
-  tb_epsilon: -60
+  global_batch_size: 32
+  num_emb: #256
+    type: categorical
+    vals:
+      - 32
+      - 64
+      - 128
+  momentum:
+    type: categorical
+    vals:
+      - 0.9
+      - 0.95
+      #- 0.995
+  Z_lr_decay:
+    type: categorical
+    vals:
+      - 1000
+      - 2000
+      - 10000
+  tb_epsilon: None
+  weight_decay: 1e-6
   reward_loss_multiplier: 1
   temperature_sample_dist: gamma
   temperature_dist_params: (1.5, 1.5)
@@ -24,9 +41,9 @@ hyperparameters:
   #temperature_dist_params: (1.25, 2)
   #temperature_sample_dist: uniform
   #temperature_dist_params: (0.5, 8)
-  num_data_loader_workers: 6
+  num_data_loader_workers: 4
 searcher:
-  name: single #grid
+  name: grid
   metric: validation_loss
   max_length:
       batches: 50000
@@ -36,6 +53,7 @@ min_validation_period:
 entrypoint: qm9:QM9Trial
 checkpoint_policy: best
 checkpoint_storage:
+  save_trial_best: 1
   host_path: /mnt/bh1/scratch/det_checkpoints
   type: shared_fs
 bind_mounts:

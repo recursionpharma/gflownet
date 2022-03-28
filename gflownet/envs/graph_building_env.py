@@ -315,6 +315,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int=None):
                         stack.append(i[1])  # we still have attributes to add to node i[1]
                 else:
                     # The endpoint is in the graph, this is an AddEdge action
+                    assert e[0] in gn.nodes
                     gn.add_edge(*e)
                     act = GraphAction(GraphActionType.AddEdge, source=e[0], target=e[1])
 

@@ -7,14 +7,16 @@ import numpy as np
 from typing import Tuple, List, Any, Dict
 
 import rdkit.Chem as Chem
+from rdkit.Chem import QED
 from rdkit import RDLogger
 
-from determined.pytorch import DataLoader, PyTorchTrial, PyTorchTrialContext
+from determined.pytorch import DataLoader, PyTorchTrial, PyTorchTrialContext, LRScheduler
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
+from torch_geometric.utils import add_self_loops
 from torch.utils.data import Dataset, IterableDataset
 
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionType, GraphActionCategorical
@@ -167,15 +169,17 @@ def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
 class Model(nn.Module):
     def __init__(self, env_ctx, num_emb=64):
         super().__init__()
+         # TODO: these are hyperparameters:
+        num_heads = 4
+        self.num_layers = 6
+        
         self.x2h = mlp(env_ctx.num_node_dim, num_emb, num_emb, 2)
         self.e2h = mlp(env_ctx.num_edge_dim, num_emb, num_emb, 2)
         self.c2h = mlp(env_ctx.num_cond_dim, num_emb, num_emb, 2)
-        num_heads = 4
-        self.num_layers = 6 # TODO: this is a hyperparameter
         self.graph2emb = nn.ModuleList(
             sum([[
-                gnn.GENConv(num_emb, num_emb, num_layers=3, aggr='add'),
-                gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb, heads=num_heads),
+                gnn.GENConv(num_emb, num_emb, num_layers=3, aggr='add', norm=None),
+                gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
                 nn.Linear(num_heads * num_emb, num_emb),
                 gnn.LayerNorm(num_emb),
                 mlp(num_emb, num_emb * 4, num_emb, 1),
@@ -214,14 +218,17 @@ class Model(nn.Module):
         e_p = torch.zeros((num_total_nodes * 2, e.shape[1]), device=g.x.device)
         e_p[:, 0] = 1 # Manually create a bias term
         aug_e = torch.cat([e, e_p], 0)
+        aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, 'mean')
         aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
             
         # Cat the node embedding to o
         o_0 = o = torch.cat([o, c], 0)
         for i in range(self.num_layers):
+            # Run the graph transformer forward
             gen, trans, linear, norm1, ff, norm2 = self.graph2emb[i * 6: (i+1) * 6]
-            o = norm1(o + linear(trans(gen(o, aug_edge_index, aug_e), aug_edge_index, aug_e)))
-            o = norm2(o + ff(o))
+            agg = gen(o, aug_edge_index, aug_e)
+            o = norm1(o + linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e)), aug_batch)
+            o = norm2(o + ff(o), aug_batch)
             
         glob = torch.cat([gnn.global_mean_pool(o[:-c.shape[0]], g.batch), o[-c.shape[0]:], c], 1)
         o = o[:-c.shape[0]]
@@ -279,14 +286,23 @@ class QM9Trial(PyTorchTrial):
         
         model = Model(self.ctx, num_emb=context.get_hparam('num_emb'))
         self.model = context.wrap_model(model)
-        # TODO: is this necessary? Also should be tunable hyperparameters
+        # Separate Z parameters from non-Z to allow for LR decay on the former
         Z_params = list(model.logZ.parameters())
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = context.wrap_optimizer(
-            torch.optim.Adam(non_Z_params, context.get_hparam('learning_rate')))
+            torch.optim.Adam(non_Z_params,
+                             context.get_hparam('learning_rate'),
+                             (context.get_hparam('momentum'), 0.999),
+                             weight_decay=context.get_hparam('weight_decay')))
+        
         self.opt_Z = context.wrap_optimizer(
-            torch.optim.Adam(Z_params, context.get_hparam('learning_rate')))
-            #torch.optim.SGD(Z_params, context.get_hparam('learning_rate') * 0.1))
+            torch.optim.Adam(Z_params, context.get_hparam('learning_rate'),
+                             (0.9,0.999)))
+        self.Z_lr_sched = self.context.wrap_lr_scheduler(
+            torch.optim.lr_scheduler.LambdaLR(
+                self.opt_Z, lambda steps: 2 ** (-steps / context.get_hparam('Z_lr_decay'))),
+            LRScheduler.StepMode.STEP_EVERY_BATCH)
+            
         self.tb = TrajectoryBalance(self.env, self.ctx, self.rng, random_action_prob=0.01, max_nodes=9,
                                     epsilon=context.get_hparam('tb_epsilon'))
         self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
@@ -307,7 +323,7 @@ class QM9Trial(PyTorchTrial):
     
     def build_validation_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=False)
-        iterator = QM9SamplingIterator(data, self.model, self.mb_size * 2, self.ctx, self.tb, self.task,
+        iterator = QM9SamplingIterator(data, self.model, self.mb_size, self.ctx, self.tb, self.task,
                                        ratio=1, stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
 
@@ -322,12 +338,14 @@ class QM9Trial(PyTorchTrial):
         self.context.backward(loss)
         self.context.step_optimizer(
             self.opt,
-            clip_grads=lambda params: torch.nn.utils.clip_grad_value_(params, 10))
+            #clip_grads=lambda params: torch.nn.utils.clip_grad_value_(params, 1))
+            clip_grads=lambda params: torch.nn.utils.clip_grad_norm_(params, 10))
         self.context.step_optimizer(self.opt_Z)
         return {'loss': loss.item(),
                 'avg_online_loss': avg_online_loss.item(),
                 'avg_offline_loss': avg_offline_loss.item(),
                 'reward_loss': reward_losses.item(),
+                'logZ': info['logZ'],
                 'invalid_trajectories': info['invalid_trajectories'].item(),
                 'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
 
@@ -380,13 +398,14 @@ class DummyContext:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'learning_rate': 2e-4,
-        'global_batch_size': 64,
-        'num_emb': 64,
-        'tb_epsilon': -60,
+        'learning_rate': 1e-4,
+        'global_batch_size': 32,
+        'num_emb': 128,
+        'tb_epsilon': None,
         'reward_loss_multiplier': 1,
         'temperature_sample_dist': 'gamma',
         'temperature_dist_params': '(1.5, 1.5)',
+        'weight_decay': 1e-8,
         'num_data_loader_workers': 4,
     }
     dummy_context = DummyContext(hps, torch.device('cuda'))
@@ -399,16 +418,16 @@ def main():
         t0 = time.time()
         for it, batch in enumerate(train_dl):
             t1 = time.time()
-            print('load', t1-t0)
+            #print('load', t1-t0)
             batch = batch.to(dummy_context.dev, non_blocking=True)
             t2 = time.time()
-            print('transfer', t2-t1)
+            #print('transfer', t2-t1)
             r = trial.train_batch(batch, epoch, it)
             print(it, ' '.join(f"{k}: {v:.4f}" for k, v in r.items()))
             t0 = t3 = time.time()
-            print('train', t3-t2)
+            #print('train', t3-t2)
             if not it % 200:
-                torch.save({'models_state_dict': [trial.model.state_dict()]}, open('temp.pt', 'wb'))
+                torch.save({'models_state_dict': [trial.model.state_dict()]}, open('../temp_256.pt', 'wb'))
         # Somewhere, use valid_dl to
         # trial.evaluate_batch(batch)
 

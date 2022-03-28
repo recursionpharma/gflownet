@@ -31,10 +31,14 @@ class TrajectoryBalance:
         self.rng = rng
         self.epsilon = epsilon
         self.reward_loss_multiplier = 1
+        self.reward_loss_is_mae = True
+        self.tb_loss_is_mae = True
 
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
         # Should this be a method of GraphActionCategorical?
+        if self.random_action_prob <= 0:
+            return
         corrupted, = (np.random.uniform(size=len(actions)) < self.random_action_prob).nonzero()
         for i in corrupted:
             n_in_batch = [(b == i).sum().item() for b in cat.batch]
@@ -74,15 +78,21 @@ class TrajectoryBalance:
         # This will be returned as training data
         data = [{'traj': [], 'reward_pred': None} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
-        fwd_logprob = [[logZ_pred[i]] for i in range(n)]
         zero = torch.tensor([0], device=dev).float()
+        fwd_logprob = [[] for i in range(n)]
         bck_logprob = [[zero] for i in range(n)] # zero in case there is a single invalid action
         
         graphs = [env.new() for i in range(n)]
         done = [False] * n
         def not_done(l):
-            return [l[i] for i in range(n) if not done[i]]
+            return [e for i, e in enumerate(l) if not done[i]]
 
+        # TODO report these stats:
+        mol_too_big = 0
+        mol_not_sane = 0
+        invalid_act = 0
+        logprob_of_illegal = []
+        
         final_rewards = [None] * n
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         epsilon = torch.tensor([self.epsilon], device=dev).float()
@@ -99,23 +109,28 @@ class TrajectoryBalance:
                 for g, a in zip(torch_graphs, actions)
             ]
             log_probs = fwd_cat.log_prob(actions)
-            for i, j, ga in zip(not_done(list(range(n))), range(n), graph_actions):
+            for i, j in zip(not_done(range(n)), range(n)):
                 # Step each trajectory, and accumulate statistics
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
-                data[i]['traj'].append((graphs[i], ga))
-                if ga.action is GraphActionType.Stop:
+                data[i]['traj'].append((graphs[i], graph_actions[j]))
+                if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
                 else:
+                    gp = graphs[i]
                     try:
                         # env.step can raise AssertionError if the action is illegal
-                        gp = env.step(graphs[i], ga)
+                        gp = env.step(graphs[i], graph_actions[j])
                         if self.max_nodes is not None:
                             assert len(gp.nodes) <= self.max_nodes
                         # P_B = uniform backward
                         n_back = env.count_backward_transitions(gp)
                         bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
                         graphs[i] = gp
-                    except AssertionError:
+                    except AssertionError as e:
+                        if len(gp.nodes) > self.max_nodes:
+                            mol_too_big += 1
+                        else:
+                            invalid_act += 1
                         done[i] = True
                         data[i]['reward_pred'] = illegal_action_logreward.exp()
                 if done[i] and data[i]['reward_pred'] is None:
@@ -124,22 +139,26 @@ class TrajectoryBalance:
                         # check if the graph is sane (e.g. RDKit can
                         # construct a molecule from it) otherwise
                         # treat the done action as illegal
+                        mol_not_sane += 1
                         data[i]['reward_pred'] = illegal_action_logreward.exp()
                     elif self.bootstrap_own_reward:
                         # if we're bootstrapping, extract reward prediction
                         data[i]['reward_pred'] = log_reward_preds[j].detach().exp()
             if all(done):
                 break
+            
         for i in range(n):
             # If we're not bootstrapping, we could query the reward
             # model here, but this is expensive/impractical.  Instead
             # just report forward and backward flows
-            data[i]['logZ'] = fwd_logprob[i][0].item()
+            if data[i]['reward_pred'] < 1e-30:
+                logprob_of_illegal.append(sum(fwd_logprob[i]).item())
+            data[i]['logZ'] = logZ_pred[i].item()
             data[i]['fwd_logprob'] = sum(fwd_logprob[i])
             data[i]['bck_logprob'] = sum(bck_logprob[i])
             if self.bootstrap_own_reward:
                 # If we are bootstrapping, we can report the theoretical loss as well
-                numerator = torch.logaddexp(data[i]['fwd_logprob'], epsilon)
+                numerator = torch.logaddexp(data[i]['fwd_logprob'] + logZ_pred[i], epsilon)
                 denominator = torch.logaddexp(data[i]['bck_logprob'] + data[i]['reward_pred'].log(), epsilon)
                 data[i]['loss'] = (numerator - denominator).pow(2) / len(fwd_logprob[i])
         return data
@@ -211,7 +230,6 @@ class TrajectoryBalance:
         dev = model.device
         # A single trajectory is comprised of many graphs
         num_trajs = batch.traj_lens.shape[0]
-        epsilon = torch.tensor([self.epsilon], device=dev).float()
         rewards = batch.rewards
         cond_info = batch.cond_info
 
@@ -232,29 +250,41 @@ class TrajectoryBalance:
         Z = model.logZ(cond_info)[:, 0]
         log_prob = fwd_cat.log_prob(batch.actions)
         log_p_B = (1 / batch.num_backward).log()
+        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev))
         numerator = Z + scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-        denominator = rewards.log() + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-        # Numerical stability epsilon
-        numerator = torch.logaddexp(numerator, epsilon)
-        denominator = torch.logaddexp(denominator, epsilon)
-        if 1:
+        denominator = Rp + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        
+        invalid_mask = (rewards < 1e-30).float()
+        if self.epsilon is not None:
+            # Numerical stability epsilon
+            epsilon = torch.tensor([self.epsilon], device=dev).float()
+            numerator = torch.logaddexp(numerator, epsilon)
+            denominator = torch.logaddexp(denominator, epsilon)
+        if self.mask_invalid_rewards:
             # Instead of being rude to the model and giving a
             # logreward of -100 what if we say, whatever you think the
-            # logprobablity of this trajectory is it should be smaller
+            # logprobablity of this trajetcory is it should be smaller
             # (thus the `numerator - 0.1`). Why 0.1? Intuition, and
             # also 1 didn't appear to work as well.
-            mask = (rewards < 1e-30).float()
-            #denominator = denominator * (1 - mask) + mask * (numerator.detach() - 10)
+            denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 10)
+
+        if self.tb_loss_is_mae:
+            unnorm = traj_losses = abs(numerator - denominator)
+        else:
+            unnorm = traj_losses = (numerator - denominator).pow(2)
             
-        unnorm = traj_losses = (numerator - denominator).pow(2)
         # Normalize losses by trajectory length
         traj_losses = traj_losses / batch.traj_lens
         info = {'unnorm_traj_losses': unnorm,
-                'invalid_trajectories': mask.mean() * 2}
+                'invalid_trajectories': invalid_mask.mean() * 2,
+                'logZ': Z[0].item()}
         
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)
-            reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
+            if self.reward_loss_is_mae:
+                reward_losses = abs(rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp())
+            else:
+                reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
             info['reward_losses'] = reward_losses
             
         if not torch.isfinite(traj_losses).all():
