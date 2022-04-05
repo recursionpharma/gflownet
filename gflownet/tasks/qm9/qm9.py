@@ -374,6 +374,9 @@ class DummyContext:
     def wrap_optimizer(self, opt):
         return opt
 
+    def wrap_lr_scheduler(self, sc, *a, **kw):
+        return sc
+
     def get_hparam(self, hp):
         return self.hps[hp]
 
@@ -406,7 +409,9 @@ def main():
         'temperature_sample_dist': 'gamma',
         'temperature_dist_params': '(1.5, 1.5)',
         'weight_decay': 1e-8,
-        'num_data_loader_workers': 4,
+        'num_data_loader_workers': 0,
+        'momentum': 0.9,
+        'Z_lr_decay': 10000,
     }
     dummy_context = DummyContext(hps, torch.device('cuda'))
     trial = QM9Trial(dummy_context)

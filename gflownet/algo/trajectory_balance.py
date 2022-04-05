@@ -33,6 +33,7 @@ class TrajectoryBalance:
         self.reward_loss_multiplier = 1
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = True
+        self.mask_invalid_rewards = False
 
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
@@ -95,7 +96,8 @@ class TrajectoryBalance:
         
         final_rewards = [None] * n
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
-        epsilon = torch.tensor([self.epsilon], device=dev).float()
+        if self.epsilon is not None:
+            epsilon = torch.tensor([self.epsilon], device=dev).float()
         for t in (range(self.max_len) if self.max_len is not None else count(0)):
             # Construct graphs for the trajectories that aren't yet done
             torch_graphs = [ctx.graph_to_Data(i) for i in not_done(graphs)]
@@ -156,7 +158,7 @@ class TrajectoryBalance:
             data[i]['logZ'] = logZ_pred[i].item()
             data[i]['fwd_logprob'] = sum(fwd_logprob[i])
             data[i]['bck_logprob'] = sum(bck_logprob[i])
-            if self.bootstrap_own_reward:
+            if self.bootstrap_own_reward and self.epsilon is not None:
                 # If we are bootstrapping, we can report the theoretical loss as well
                 numerator = torch.logaddexp(data[i]['fwd_logprob'] + logZ_pred[i], epsilon)
                 denominator = torch.logaddexp(data[i]['bck_logprob'] + data[i]['reward_pred'].log(), epsilon)
