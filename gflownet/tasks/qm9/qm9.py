@@ -1,3 +1,4 @@
+import copy
 import os
 import signal
 import tarfile
@@ -355,8 +356,8 @@ class QM9Trial(PyTorchTrial):
             # TODO
         }
         hps = {
-            # This {**a, **b} notation overrides a[k] with b[k] if k
-            # is a key of both dicts 
+            # This c = {**a, **b} notation overrides a[k] with b[k] in
+            # c if k is a key of both dicts
             **default_hps,
             **context.get_hparams(), 
         }
@@ -375,10 +376,8 @@ class QM9Trial(PyTorchTrial):
         
         self.sampling_tau = context.get_hparam('sampling_tau')
         if self.sampling_tau > 0:
-            self.sampling_model = Model(self.ctx, num_emb=context.get_hparam('num_emb'))
+            self.sampling_model = context.wrap_model(copy.deepcopy(model))
             self.sampling_model.device = torch.device('cuda')
-            for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
-                b.data = a.data.clone()
             
         # Separate Z parameters from non-Z to allow for LR decay on the former
         Z_params = list(model.logZ.parameters())
@@ -503,6 +502,9 @@ class DummyContext:
     def wrap_lr_scheduler(self, sc, *a, **kw):
         return sc
 
+    def get_hparams(self):
+        return self.hps
+    
     def get_hparam(self, hp):
         return self.hps[hp]
 
