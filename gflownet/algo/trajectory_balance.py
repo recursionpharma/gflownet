@@ -38,6 +38,7 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.sample_temp = 1
 
+
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
         # Should this be a method of GraphActionCategorical?
@@ -100,6 +101,8 @@ class TrajectoryBalance:
         
         final_rewards = [None] * n
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
+        if self.epsilon is not None:
+            epsilon = torch.tensor([self.epsilon], device=dev).float()
         for t in (range(self.max_len) if self.max_len is not None else count(0)):
             # Construct graphs for the trajectories that aren't yet done
             torch_graphs = [ctx.graph_to_Data(i) for i in not_done(graphs)]
@@ -173,7 +176,6 @@ class TrajectoryBalance:
                 numerator = data[i]['fwd_logprob'] + logZ_pred[i]
                 denominator = data[i]['bck_logprob'] + data[i]['reward_pred'].log()
                 if self.epsilon is not None:
-                    epsilon = torch.tensor([self.epsilon], device=dev).float()
                     numerator = torch.logaddexp(numerator, epsilon)
                     denominator = torch.logaddexp(denominator, epsilon)
                 data[i]['loss'] = (numerator - denominator).pow(2)
