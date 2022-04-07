@@ -1,6 +1,7 @@
 import os
 import signal
 import tarfile
+import threading
 import time
 import pandas as pd
 import numpy as np
@@ -60,12 +61,80 @@ class QM9Dataset(Dataset):
         elif self._rtrans == 'unit':
             return 1 - (r - self._min) / (self._gap + 1e-4)
 
+    def inverse_reward_transform(self, rp):
+        if self._rtrans == 'exp':
+            return -np.log(rp) * self._gap + self._min
+        elif self._rtrans == 'unit':
+            return (1 - rp) * (self._gap + 1e-4) + self._min
+
     def __len__(self):
         return len(self.idcs)
 
     def __getitem__(self, idx):
         return (self.df['SMILES'][self.idcs[idx]], self.reward_transform(self.df['gap'][self.idcs[idx]]))
 
+
+class MPModelPlaceholder:
+    """This class can be used as a Model in a worker process, and
+    translates calls to queries to the main process"""
+    def __init__(self, in_queues, out_queues):
+        self.qs = in_queues, out_queues
+        self.device = torch.device('cpu')
+        self._is_init = False
+
+    def _check_init(self):
+        if self._is_init: return
+        info = torch.utils.data.get_worker_info()
+        self.in_queue = self.qs[0][info.id]
+        self.out_queue = self.qs[1][info.id]
+        self._is_init = True
+
+    def logZ(self, cond_info):
+        self._check_init()
+        self.in_queue.put(('logZ', cond_info))
+        return self.out_queue.get()
+
+    def __call__(self, batch, cond_info):
+        self._check_init()
+        self.in_queue.put(('call', batch, cond_info))
+        return self.out_queue.get()
+
+class MPModelProxy:
+    """This manages the placeholder models, looks for calls and passes
+    them to the main model. Starts its own (daemon) thread."""
+    def __init__(self, model, num_workers):
+        self.in_queues = [mp.Queue() for i in range(num_workers)]
+        self.out_queues = [mp.Queue() for i in range(num_workers)]
+        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
+        self.placeholder.action_type_order = model.action_type_order
+        self.model = model
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def __del__(self):
+        self.stop.set()
+
+    def run(self):
+        while not self.stop.is_set():
+            for qi, q in enumerate(self.in_queues):
+                try:
+                    r = q.get(True, 1e-5)
+                except:
+                    continue
+                if r[0] == 'logZ':
+                    x = r[1]
+                    with torch.no_grad():
+                        r = self.model.logZ(x.to(self.model.device)).data.cpu()
+                    self.out_queues[qi].put(r)
+                elif r[0] == 'call':
+                    x, c = r[1:]
+                    with torch.no_grad():
+                        cat, pr = self.model(x.to(self.model.device), c.to(self.model.device))
+                    cat.to(torch.device('cpu'))
+                    pr = pr.data.cpu()
+                    self.out_queues[qi].put((cat, pr))
+                    
     
 class QM9SamplingIterator(IterableDataset):
     """This class allows us to parallelise and train faster. 
@@ -99,7 +168,6 @@ class QM9SamplingIterator(IterableDataset):
         """
         self._data = qm9_dataset
         self.model = model
-        self.model.device = next(model.parameters()).device
         self.batch_size = batch_size
         self.offline_batch_size = int(np.ceil(batch_size * ratio))
         self.online_batch_size = int(np.floor(batch_size * (1 - ratio)))
@@ -142,24 +210,30 @@ class QM9SamplingIterator(IterableDataset):
         wid = (worker_info.id if worker_info is not None else 0)
         self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + wid)
         for idcs in self._idx_iterator():
+            num_offline = idcs.shape[0] # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
-            cond_info = self.task.sample_conditional_information(idcs.shape[0] + self.online_batch_size)
+            cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
             
             # Sample some dataset data
             smiles, flat_rewards = map(list, zip(*[self._data[i] for i in idcs]))
             graphs = [self.ctx.mol_to_graph(Chem.MolFromSmiles(s)) for s in smiles]
             trajs = self.algo.create_training_data_from_graphs(graphs)
+            # Compute rewards for off-policy data
+            rewards = self.task.cond_info_to_reward(cond_info[:num_offline], flat_rewards)
             # Sample some on-policy data
             if self.online_batch_size > 0:
-                trajs += self.algo.create_training_data_from_own_samples(
-                    self.model, self.online_batch_size, cond_info[self.offline_batch_size:])
-            # Compute rewards for on-policy data
-            flat_rewards += [i['reward_pred'].cpu().item() for i in trajs[self.offline_batch_size:]]
-            rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
+                with torch.no_grad():
+                    trajs += self.algo.create_training_data_from_own_samples(
+                        self.model, self.online_batch_size, cond_info[num_offline:])
+                # The model is trained to predict its own reward,
+                # i.e. predict the output of cond_info_to_reward
+                pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
+                rewards = torch.cat([rewards, torch.tensor(pred_reward)])
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info, rewards, self.model.action_type_order)
             batch.smiles = smiles
-            batch.pin_memory()
+            # TODO: There is a smarter way to do this
+            # batch.pin_memory()
             yield batch
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -167,31 +241,33 @@ def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
     return nn.Sequential(*sum([[nn.Linear(n[i], n[i+1]), act()] for i in range(n_layer + 1)], [])[:-1])
     
 class Model(nn.Module):
-    def __init__(self, env_ctx, num_emb=64):
+    def __init__(self, env_ctx, num_emb=64, num_layers=3):
         super().__init__()
          # TODO: these are hyperparameters:
-        num_heads = 4
-        self.num_layers = 6
+        num_heads = 2
+        self.num_layers = num_layers
         
         self.x2h = mlp(env_ctx.num_node_dim, num_emb, num_emb, 2)
         self.e2h = mlp(env_ctx.num_edge_dim, num_emb, num_emb, 2)
         self.c2h = mlp(env_ctx.num_cond_dim, num_emb, num_emb, 2)
         self.graph2emb = nn.ModuleList(
             sum([[
-                gnn.GENConv(num_emb, num_emb, num_layers=3, aggr='add', norm=None),
+                gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add', norm=None),
                 gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
                 nn.Linear(num_heads * num_emb, num_emb),
-                gnn.LayerNorm(num_emb),
+                gnn.LayerNorm(num_emb, affine=False),
                 mlp(num_emb, num_emb * 4, num_emb, 1),
-                gnn.LayerNorm(num_emb),
+                gnn.LayerNorm(num_emb, affine=False),
             ] for i in range(self.num_layers)], []))
-        self.emb2add_edge = mlp(num_emb, num_emb, 1, 2)
-        self.emb2add_node = mlp(num_emb, num_emb, env_ctx.num_new_node_values, 2)
-        self.emb2set_node_attr = mlp(num_emb, num_emb, env_ctx.num_node_attr_logits, 2)
-        self.emb2set_edge_attr = mlp(num_emb, num_emb, env_ctx.num_edge_attr_logits, 2)
-        self.emb2stop = mlp(num_emb * 3, num_emb, 1, 2)
-        self.emb2reward = mlp(num_emb * 3, num_emb, 1, 2)
-        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 3)
+        num_final = num_emb * 2
+        num_mlp_layers = 0
+        self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
+        self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
+        self.emb2set_node_attr = mlp(num_final, num_emb, env_ctx.num_node_attr_logits, num_mlp_layers)
+        self.emb2set_edge_attr = mlp(num_final, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
+        self.emb2stop = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
+        self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
+        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = [
             GraphActionType.Stop,
             GraphActionType.AddNode,
@@ -221,7 +297,7 @@ class Model(nn.Module):
         aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, 'mean')
         aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
             
-        # Cat the node embedding to o
+        # Append the conditioning information node embedding to o
         o_0 = o = torch.cat([o, c], 0)
         for i in range(self.num_layers):
             # Run the graph transformer forward
@@ -231,7 +307,7 @@ class Model(nn.Module):
             o = norm2(o + ff(o), aug_batch)
             
         glob = torch.cat([gnn.global_mean_pool(o[:-c.shape[0]], g.batch), o[-c.shape[0]:], c], 1)
-        o = o[:-c.shape[0]]
+        o_final = torch.cat([o[:-c.shape[0]], c[g.batch]], 1)
         
         ne_row, ne_col = g.non_edge_index
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
@@ -240,10 +316,10 @@ class Model(nn.Module):
             g,
             logits=[
                 self.emb2stop(glob),
-                self.emb2add_node(o),
-                self.emb2set_node_attr(o),
-                self.emb2add_edge(o[ne_row] + o[ne_col]),
-                self.emb2set_edge_attr(o[e_row] + o[e_col]),
+                self.emb2add_node(o_final),
+                self.emb2set_node_attr(o_final),
+                self.emb2add_edge(o_final[ne_row] + o_final[ne_col]),
+                self.emb2set_edge_attr(o_final[e_row] + o_final[e_col]),
             ],
             keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
             types=self.action_type_order,
@@ -275,17 +351,35 @@ class ConditionalTask:
 class QM9Trial(PyTorchTrial):
     def __init__(self, context: PyTorchTrialContext) -> None:
         self.context = context
+        default_hps = {
+            # TODO
+        }
+        hps = {
+            # This {**a, **b} notation overrides a[k] with b[k] if k
+            # is a key of both dicts 
+            **default_hps,
+            **context.get_hparams(), 
+        }
         
         self.num_workers = context.get_hparam('num_data_loader_workers')
-        if self.num_workers > 0:
-            mp.set_start_method('spawn')
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
         self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=1)
         
-        model = Model(self.ctx, num_emb=context.get_hparam('num_emb'))
+        model = Model(self.ctx,
+                      num_emb=context.get_hparam('num_emb'),
+                      num_layers=context.get_hparam('num_layers'))
         self.model = context.wrap_model(model)
+        self.model.device = torch.device('cuda')
+        
+        self.sampling_tau = context.get_hparam('sampling_tau')
+        if self.sampling_tau > 0:
+            self.sampling_model = Model(self.ctx, num_emb=context.get_hparam('num_emb'))
+            self.sampling_model.device = torch.device('cuda')
+            for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
+                b.data = a.data.clone()
+            
         # Separate Z parameters from non-Z to allow for LR decay on the former
         Z_params = list(model.logZ.parameters())
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
@@ -293,7 +387,8 @@ class QM9Trial(PyTorchTrial):
             torch.optim.Adam(non_Z_params,
                              context.get_hparam('learning_rate'),
                              (context.get_hparam('momentum'), 0.999),
-                             weight_decay=context.get_hparam('weight_decay')))
+                             weight_decay=context.get_hparam('weight_decay'),
+                             eps=context.get_hparam('adam_eps')))
         
         self.opt_Z = context.wrap_optimizer(
             torch.optim.Adam(Z_params, context.get_hparam('learning_rate'),
@@ -302,13 +397,24 @@ class QM9Trial(PyTorchTrial):
             torch.optim.lr_scheduler.LambdaLR(
                 self.opt_Z, lambda steps: 2 ** (-steps / context.get_hparam('Z_lr_decay'))),
             LRScheduler.StepMode.STEP_EVERY_BATCH)
-            
-        self.tb = TrajectoryBalance(self.env, self.ctx, self.rng, random_action_prob=0.01, max_nodes=9,
-                                    epsilon=context.get_hparam('tb_epsilon'))
+
+        eps = context.get_hparam('tb_epsilon')
+        self.tb = TrajectoryBalance(self.env, self.ctx, self.rng,
+                                    random_action_prob=context.get_hparam('random_action_prob'), 
+                                    max_nodes=9,
+                                    illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
+                                    epsilon=eval(eps) if isinstance(eps, str) else eps)
         self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
+        
         self.task = ConditionalTask(context.get_hparam('temperature_sample_dist'),
                                     eval(context.get_hparam('temperature_dist_params')))
         self.mb_size = self.context.get_per_slot_batch_size()
+        self.clip_grad_param = context.get_hparam('clip_grad_param')
+        self.clip_grad_callback = {
+            'value': (lambda params: torch.nn.utils.clip_grad_value_(params, self.clip_grad_param)),
+            'norm': (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
+            'none': (lambda x: None)
+        }[context.get_hparam('clip_grad_type')]
         # See https://docs.determined.ai/latest/training-apis/api-pytorch-advanced.html#customizing-a-reproducible-dataset
         if isinstance(context, PyTorchTrialContext):
             context.experimental.disable_dataset_reproducibility_checks()
@@ -318,12 +424,22 @@ class QM9Trial(PyTorchTrial):
     
     def build_training_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=True)
-        iterator = QM9SamplingIterator(data, self.model, self.mb_size * 2, self.ctx, self.tb, self.task)
+        if self.num_workers > 0:
+            mp_model = MPModelProxy(self.sampling_model, self.num_workers)
+            model = mp_model.placeholder
+        else:
+            model = self.sampling_model
+        iterator = QM9SamplingIterator(data, model, self.mb_size * 2, self.ctx, self.tb, self.task)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
     
     def build_validation_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=False)
-        iterator = QM9SamplingIterator(data, self.model, self.mb_size, self.ctx, self.tb, self.task,
+        if self.num_workers > 0:
+            mp_model = MPModelProxy(self.model, self.num_workers)
+            model = mp_model.placeholder
+        else:
+            model = self.model
+        iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.tb, self.task,
                                        ratio=1, stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
 
@@ -333,21 +449,28 @@ class QM9Trial(PyTorchTrial):
         losses, info = self.tb.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
         avg_offline_loss = losses[:self.mb_size].mean()
         avg_online_loss = losses[self.mb_size:].mean()
-        reward_losses = info['reward_losses'].mean()
+        reward_losses = info.get('reward_losses', torch.zeros(1)).mean()
         loss = losses.mean() + reward_losses * self.tb.reward_loss_multiplier
+        
         self.context.backward(loss)
-        self.context.step_optimizer(
-            self.opt,
-            #clip_grads=lambda params: torch.nn.utils.clip_grad_value_(params, 1))
-            clip_grads=lambda params: torch.nn.utils.clip_grad_norm_(params, 10))
-        self.context.step_optimizer(self.opt_Z)
+        self.context.step_optimizer(self.opt, clip_grads=self.clip_grad_callback)
+        self.context.step_optimizer(self.opt_Z, clip_grads=self.clip_grad_callback)
+        
+        # This isn't wrapped in self.context, would probably break the Trial API
+        # TODO: fix, in the event of multi-gpu improvements
+        if self.sampling_tau > 0:
+            for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
+                b.data.mul_(self.sampling_tau).add_(a.data * (1-self.sampling_tau))
         return {'loss': loss.item(),
                 'avg_online_loss': avg_online_loss.item(),
                 'avg_offline_loss': avg_offline_loss.item(),
                 'reward_loss': reward_losses.item(),
                 'logZ': info['logZ'],
                 'invalid_trajectories': info['invalid_trajectories'].item(),
-                'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
+                'invalid_logprob': info['invalid_logprob'].item(),
+                'invalid_losses': info['invalid_losses'].item(),
+                #'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()
+            }
 
     def evaluate_batch(self, batch: Tuple[List[str], torch.Tensor]) -> Dict[str, Any]:
         if not hasattr(self.model, 'device'):
@@ -371,6 +494,9 @@ class DummyContext:
         self.model = model
         return model.to(self.dev)
 
+    def wrap_lr_scheduler(self, sc, *a, **kw):
+        return sc
+    
     def wrap_optimizer(self, opt):
         return opt
 
@@ -398,22 +524,31 @@ class DummyContext:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'learning_rate': 1e-4,
+        'learning_rate': 1e-5,
         'global_batch_size': 32,
         'num_emb': 128,
+        'num_layers': 3,
         'tb_epsilon': None,
+        'illegal_action_logreward': -50,
         'reward_loss_multiplier': 1,
-        'temperature_sample_dist': 'gamma',
-        'temperature_dist_params': '(1.5, 1.5)',
+        'temperature_sample_dist': 'uniform',
+        'temperature_dist_params': '(.5, 8)',
         'weight_decay': 1e-8,
-        'num_data_loader_workers': 4,
+        'num_data_loader_workers': 8,
+        'momentum': 0.9,
+        'adam_eps': 1e-8,
+        'Z_lr_decay': 10000,
+        'clip_grad_type': 'norm',
+        'clip_grad_param': 10,
+        'random_action_prob': .001,
+        'sampling_tau': 0.99,
     }
     dummy_context = DummyContext(hps, torch.device('cuda'))
     trial = QM9Trial(dummy_context)
 
     train_dl = trial.build_training_data_loader()
     valid_dl = trial.build_validation_data_loader()
-
+    
     for epoch in range(10):
         t0 = time.time()
         for it, batch in enumerate(train_dl):
@@ -427,7 +562,10 @@ def main():
             t0 = t3 = time.time()
             #print('train', t3-t2)
             if not it % 200:
-                torch.save({'models_state_dict': [trial.model.state_dict()]}, open('../temp_256.pt', 'wb'))
+                torch.save({'models_state_dict': [trial.model.state_dict()], 'hps': hps},
+                           open(f'../model_state.pt', 'wb'))
+            if it == 10000:
+                break
         # Somewhere, use valid_dl to
         # trial.evaluate_batch(batch)
 

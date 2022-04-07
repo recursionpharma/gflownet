@@ -162,7 +162,7 @@ class MolBuildingEnvContext:
         mp.BeginBatchEdit()
         for i in range(len(g.nodes)):
             d = g.nodes[i]
-            a = Chem.AtomFromSmiles(d['v'])
+            a = Chem.Atom(d['v'])
             if 'chi' in d:
                 a.SetChiralTag(d['chi'])
             if 'charge' in d:
@@ -182,6 +182,7 @@ class MolBuildingEnvContext:
     def is_sane(self, g):
         try:
             mol = self.graph_to_mol(g)
+            assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
         except:
             return False
         if mol is None:
