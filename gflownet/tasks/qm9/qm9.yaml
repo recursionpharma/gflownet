@@ -1,47 +1,31 @@
 name: qm9_test
-description: R=1, Z lr sched
+description: new model
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  learning_rate: #1e-4
-    type: categorical
-    vals:
-      - 1e-5
-      - 1e-4
-      #- 3e-4
-#    minval: 1e-4
-#    maxval: 3e-4
-#    count: 3
+  adam_eps: 1e-8
+  clip_grad_type: norm
+  clip_grad_param: 10
   global_batch_size: 32
-  num_emb: #256
-    type: categorical
-    vals:
-      - 32
-      - 64
-      - 128
-  momentum:
-    type: categorical
-    vals:
-      - 0.9
-      - 0.95
-      #- 0.995
-  Z_lr_decay:
-    type: categorical
-    vals:
-      - 1000
-      - 2000
-      - 10000
-  tb_epsilon: None
-  weight_decay: 1e-6
+  illegal_action_logreward: -50
+  learning_rate: 5e-5
+  momentum: 0.9
+  num_data_loader_workers: 8
+  num_emb: 128
+  num_layers: 3
   reward_loss_multiplier: 1
-  temperature_sample_dist: gamma
-  temperature_dist_params: (1.5, 1.5)
+  random_action_prob: 0.001
+  sampling_tau: 0.99
+  temperature_sample_dist: uniform
+  temperature_dist_params: (0.5, 8)
+  tb_epsilon: None
+  weight_decay: 1e-8
+  Z_lr_decay: 100000
+  #temperature_sample_dist: gamma
+  #temperature_dist_params: (1.5, 1.5)
   #temperature_sample_dist: beta
   #temperature_dist_params: (1.25, 2)
-  #temperature_sample_dist: uniform
-  #temperature_dist_params: (0.5, 8)
-  num_data_loader_workers: 4
 searcher:
   name: grid
   metric: validation_loss
