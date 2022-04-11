@@ -406,9 +406,7 @@ class QM9Trial(PyTorchTrial):
         state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')#, map_location=torch.device('cpu'))
         gap_model.load_state_dict(state_dict)
         gap_model.cuda()
-        if self.num_workers > 0:
-            mp_model = MPModelProxy(gap_model, self.num_workers)
-            gap_model = mp_model.placeholder
+        gap_model = self._wrap_model_mp(gap_model)
         return {'mxmnet_gap': gap_model}
 
     def _wrap_model_mp(self, model):
