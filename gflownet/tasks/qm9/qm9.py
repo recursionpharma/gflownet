@@ -25,6 +25,7 @@ from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionType, 
 from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.tasks.MXMNet import model_standalone as mxmnet
 
 
 class QM9Dataset(Dataset):
@@ -90,25 +91,36 @@ class MPModelPlaceholder:
         self.out_queue = self.qs[1][info.id]
         self._is_init = True
 
-    def logZ(self, cond_info):
+    # TODO: make a generic method for this based on __getattr__
+    def logZ(self, *a):
         self._check_init()
-        self.in_queue.put(('logZ', cond_info))
+        self.in_queue.put(('logZ', *a))
         return self.out_queue.get()
 
-    def __call__(self, batch, cond_info):
+    def __call__(self, *a):
         self._check_init()
-        self.in_queue.put(('call', batch, cond_info))
+        self.in_queue.put(('__call__', *a))
         return self.out_queue.get()
 
 class MPModelProxy:
-    """This manages the placeholder models, looks for calls and passes
-    them to the main model. Starts its own (daemon) thread."""
+    """This class maintains a reference to an in-cuda-memory model, and
+    creates a `placeholder` attribute which can be safely passed to
+    multiprocessing DataLoader workers. 
+
+    This placeholder model sends messages accross multiprocessing
+    queues, which are received by this proxy instance, which calls the
+    model and sends the return value back to the worker.
+
+    Starts its own (daemon) thread. Always passes CPU tensors between
+    processes.
+
+    """
     def __init__(self, model, num_workers):
         self.in_queues = [mp.Queue() for i in range(num_workers)]
         self.out_queues = [mp.Queue() for i in range(num_workers)]
         self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
-        self.placeholder.action_type_order = model.action_type_order
         self.model = model
+        self.cuda_types = (torch.Tensor, gd.Batch, GraphActionCategorical)
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
@@ -123,18 +135,17 @@ class MPModelProxy:
                     r = q.get(True, 1e-5)
                 except:
                     continue
-                if r[0] == 'logZ':
-                    x = r[1]
-                    with torch.no_grad():
-                        r = self.model.logZ(x.to(self.model.device)).data.cpu()
-                    self.out_queues[qi].put(r)
-                elif r[0] == 'call':
-                    x, c = r[1:]
-                    with torch.no_grad():
-                        cat, pr = self.model(x.to(self.model.device), c.to(self.model.device))
-                    cat.to(torch.device('cpu'))
-                    pr = pr.data.cpu()
-                    self.out_queues[qi].put((cat, pr))
+                attr, *args = r
+                f = getattr(self.model, attr)
+                args = [i.to(self.model.device) if isinstance(i, self.cuda_types) else i
+                        for i in args]
+                result = f(*args)
+                if isinstance(result, (list, tuple)):
+                    msg = [i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i for i in result]
+                    self.out_queues[qi].put(msg)
+                else:
+                    msg = result.detach().to(torch.device('cpu')) if isinstance(result, self.cuda_types) else result
+                    self.out_queues[qi].put(msg)
                     
     
 class QM9SamplingIterator(IterableDataset):
@@ -214,22 +225,38 @@ class QM9SamplingIterator(IterableDataset):
             num_offline = idcs.shape[0] # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
             cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
+            is_valid = torch.ones(cond_info.shape[0]).bool()
             
             # Sample some dataset data
             smiles, flat_rewards = map(list, zip(*[self._data[i] for i in idcs]))
             graphs = [self.ctx.mol_to_graph(Chem.MolFromSmiles(s)) for s in smiles]
             trajs = self.algo.create_training_data_from_graphs(graphs)
-            # Compute rewards for off-policy data
-            rewards = self.task.cond_info_to_reward(cond_info[:num_offline], flat_rewards)
             # Sample some on-policy data
             if self.online_batch_size > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(
                         self.model, self.online_batch_size, cond_info[num_offline:])
-                # The model is trained to predict its own reward,
-                # i.e. predict the output of cond_info_to_reward
-                pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
-                rewards = torch.cat([rewards, torch.tensor(pred_reward)])
+                if self.algo.bootstrap_own_reward:
+                    # The model can be trained to predict its own reward,
+                    # i.e. predict the output of cond_info_to_reward
+                    pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
+                    raise ValueError('make this flat rewards')
+                else:
+                    valid_idcs = torch.tensor([i+num_offline for i in range(self.online_batch_size)
+                                               if trajs[i+num_offline]['is_valid']]).long()
+                    pred_reward = torch.zeros((self.online_batch_size))
+                    mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
+                    preds, m_is_valid = self.task.compute_flat_rewards(mols)
+                    valid_idcs = valid_idcs[m_is_valid]
+                    pred_reward[valid_idcs - num_offline] = preds
+                    is_valid[num_offline:] = False
+                    is_valid[valid_idcs] = True
+                    flat_rewards += list(pred_reward)
+                    for i in range(self.online_batch_size):
+                        trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
+            # Compute rewards
+            rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
+            rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info, rewards, self.model.action_type_order)
             batch.smiles = smiles
@@ -330,7 +357,9 @@ class Model(nn.Module):
 class ConditionalTask:
     """This class captures conditional information generation and reward transforms"""
     
-    def __init__(self, temperature_distribution, temperature_parameters):
+    def __init__(self, models, dataset, temperature_distribution, temperature_parameters):
+        self.models = models
+        self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
 
@@ -348,6 +377,18 @@ class ConditionalTask:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
         return flat_reward ** cond_info[:, 0]
+
+    def compute_flat_rewards(self, mols):
+        graphs = [mxmnet.mol2graph(i) for i in mols]
+        is_valid = torch.tensor([i is not None for i in graphs]).bool()
+        if not is_valid.any():
+            return torch.zeros((0,)), is_valid
+        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
+        batch.to(self.models['mxmnet_gap'].device)
+        preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV
+        preds[preds.isnan()] = 1
+        preds = self.dataset.reward_transform(preds).clip(1e-4, 2)
+        return preds, is_valid
     
 class QM9Trial(PyTorchTrial):
     def __init__(self, context: PyTorchTrialContext) -> None:
@@ -367,6 +408,7 @@ class QM9Trial(PyTorchTrial):
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
         self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=1)
+        self.training_data = QM9Dataset(self.context.get_data_config()['h5_path'], train=True)
         
         model = Model(self.ctx,
                       num_emb=context.get_hparam('num_emb'),
@@ -378,6 +420,8 @@ class QM9Trial(PyTorchTrial):
         if self.sampling_tau > 0:
             self.sampling_model = context.wrap_model(copy.deepcopy(model))
             self.sampling_model.device = torch.device('cuda')
+        else:
+            self.sampling_model = self.model
             
         # Separate Z parameters from non-Z to allow for LR decay on the former
         Z_params = list(model.logZ.parameters())
@@ -404,8 +448,12 @@ class QM9Trial(PyTorchTrial):
                                     illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
                                     epsilon=eval(eps) if isinstance(eps, str) else eps)
         self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
-        
-        self.task = ConditionalTask(context.get_hparam('temperature_sample_dist'),
+        self.tb.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
+
+        self.task_models = self.load_task_models()
+        self.task = ConditionalTask(self.task_models,
+                                    self.training_data,
+                                    context.get_hparam('temperature_sample_dist'),
                                     eval(context.get_hparam('temperature_dist_params')))
         self.mb_size = self.context.get_per_slot_batch_size()
         self.clip_grad_param = context.get_hparam('clip_grad_param')
@@ -420,15 +468,26 @@ class QM9Trial(PyTorchTrial):
             
     def get_batch_length(self, batch):
         return batch.traj_lens.shape[0]
+
+    def load_task_models(self):
+        gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
+        gap_model.device = torch.device('cuda')
+        state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')#, map_location=torch.device('cpu'))
+        gap_model.load_state_dict(state_dict)
+        gap_model.cuda()
+        if self.num_workers > 0:
+            mp_model = MPModelProxy(gap_model, self.num_workers)
+            gap_model = mp_model.placeholder
+        return {'mxmnet_gap': gap_model}
     
     def build_training_data_loader(self) -> DataLoader:
-        data = QM9Dataset(self.context.get_data_config()['h5_path'], train=True)
         if self.num_workers > 0:
             mp_model = MPModelProxy(self.sampling_model, self.num_workers)
             model = mp_model.placeholder
+            model.action_type_order = self.model.action_type_order
         else:
             model = self.sampling_model
-        iterator = QM9SamplingIterator(data, model, self.mb_size * 2, self.ctx, self.tb, self.task)
+        iterator = QM9SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.tb, self.task)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
     
     def build_validation_data_loader(self) -> DataLoader:
@@ -436,6 +495,7 @@ class QM9Trial(PyTorchTrial):
         if self.num_workers > 0:
             mp_model = MPModelProxy(self.model, self.num_workers)
             model = mp_model.placeholder
+            model.action_type_order = self.model.action_type_order
         else:
             model = self.model
         iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.tb, self.task,
@@ -460,6 +520,7 @@ class QM9Trial(PyTorchTrial):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1-self.sampling_tau))
+                
         return {'loss': loss.item(),
                 'avg_online_loss': avg_online_loss.item(),
                 'avg_offline_loss': avg_offline_loss.item(),
@@ -477,7 +538,7 @@ class QM9Trial(PyTorchTrial):
         losses, info = self.tb.compute_batch_losses(
             self.model, batch, num_bootstrap=len(batch.smiles))
         loss = losses.mean()
-        reward_losses = info['reward_losses'].mean()
+        reward_losses = info.get('reward_losses', torch.zeros(1)).mean()
         return {'validation_loss': loss,
                 'reward_loss': reward_losses.item(),
                 'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
@@ -529,7 +590,8 @@ class DummyContext:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'learning_rate': 1e-5,
+        'bootstrap_own_reward': False,
+        'learning_rate': 1e-4,
         'global_batch_size': 32,
         'num_emb': 128,
         'num_layers': 3,
@@ -537,7 +599,7 @@ def main():
         'illegal_action_logreward': -50,
         'reward_loss_multiplier': 1,
         'temperature_sample_dist': 'uniform',
-        'temperature_dist_params': '(.5, 8)',
+        'temperature_dist_params': '(.5, 32)',
         'weight_decay': 1e-8,
         'num_data_loader_workers': 8,
         'momentum': 0.9,
@@ -558,14 +620,14 @@ def main():
         t0 = time.time()
         for it, batch in enumerate(train_dl):
             t1 = time.time()
-            #print('load', t1-t0)
+            print('load', t1-t0)
             batch = batch.to(dummy_context.dev, non_blocking=True)
             t2 = time.time()
             #print('transfer', t2-t1)
             r = trial.train_batch(batch, epoch, it)
             print(it, ' '.join(f"{k}: {v:.4f}" for k, v in r.items()))
             t0 = t3 = time.time()
-            #print('train', t3-t2)
+            print('train', t3-t2)
             if not it % 200:
                 torch.save({'models_state_dict': [trial.model.state_dict()], 'hps': hps},
                            open(f'../model_state.pt', 'wb'))

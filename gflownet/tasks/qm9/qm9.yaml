@@ -1,24 +1,33 @@
-name: qm9_test
-description: new model
+name: qm9_mxmnet_gap
+description: MXMNet target (beta~U[0,32])
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
   adam_eps: 1e-8
+  bootstrap_own_reward: False
   clip_grad_type: norm
   clip_grad_param: 10
-  global_batch_size: 32
+  global_batch_size: 64
   illegal_action_logreward: -50
-  learning_rate: 5e-5
+  learning_rate: 1e-4
   momentum: 0.9
   num_data_loader_workers: 8
   num_emb: 128
+    # type: categorical
+    # vals:
+    #   - 128
+    #   - 256
   num_layers: 3
+    # type: categorical
+    # vals:
+    #   - 3
+    #   - 5
   reward_loss_multiplier: 1
   random_action_prob: 0.001
-  sampling_tau: 0.99
+  sampling_tau: 0
   temperature_sample_dist: uniform
-  temperature_dist_params: (0.5, 8)
+  temperature_dist_params: (0.2, 32)
   tb_epsilon: None
   weight_decay: 1e-8
   Z_lr_decay: 100000
@@ -27,10 +36,10 @@ hyperparameters:
   #temperature_sample_dist: beta
   #temperature_dist_params: (1.25, 2)
 searcher:
-  name: grid
+  name: single #grid
   metric: validation_loss
   max_length:
-      batches: 50000
+      batches: 100000
   smaller_is_better: true
 min_validation_period:
   batches: 500
@@ -38,6 +47,8 @@ entrypoint: qm9:QM9Trial
 checkpoint_policy: best
 checkpoint_storage:
   save_trial_best: 1
+  save_trial_latest: 1
+  save_experiment_best: 0
   host_path: /mnt/bh1/scratch/det_checkpoints
   type: shared_fs
 bind_mounts:

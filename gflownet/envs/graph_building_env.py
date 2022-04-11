@@ -420,6 +420,13 @@ class GraphActionCategorical:
             self.batch[idx] = self.batch[idx][::2]
             self.slice[idx] = self.slice[idx].div(2, rounding_mode='floor')
 
+    def detach(self):
+        new = copy.copy(self)
+        new.logits = [i.detach() for i in new.logits]
+        if new.logprobs is not None:
+            new.logprobs = [i.detach() for i in new.logprobs]
+        return new
+            
     def to(self, device):
         self.dev = device
         self.logits = [i.to(device) for i in self.logits]
@@ -427,6 +434,7 @@ class GraphActionCategorical:
         self.slice = [i.to(device) for i in self.slice]
         if self.logprobs is not None:
             self.logprobs = [i.to(device) for i in self.logprobs]
+        return self
     
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
