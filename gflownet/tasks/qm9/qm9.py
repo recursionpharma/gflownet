@@ -26,6 +26,7 @@ from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.tasks.MXMNet import model_standalone as mxmnet
+from gflownet.utils.multiprocessing import wrap_model_mp
 
 
 class QM9Dataset(Dataset):
@@ -76,76 +77,6 @@ class QM9Dataset(Dataset):
         return (self.df['SMILES'][self.idcs[idx]], self.reward_transform(self.df['gap'][self.idcs[idx]]))
 
 
-class MPModelPlaceholder:
-    """This class can be used as a Model in a worker process, and
-    translates calls to queries to the main process"""
-    def __init__(self, in_queues, out_queues):
-        self.qs = in_queues, out_queues
-        self.device = torch.device('cpu')
-        self._is_init = False
-
-    def _check_init(self):
-        if self._is_init: return
-        info = torch.utils.data.get_worker_info()
-        self.in_queue = self.qs[0][info.id]
-        self.out_queue = self.qs[1][info.id]
-        self._is_init = True
-
-    # TODO: make a generic method for this based on __getattr__
-    def logZ(self, *a):
-        self._check_init()
-        self.in_queue.put(('logZ', *a))
-        return self.out_queue.get()
-
-    def __call__(self, *a):
-        self._check_init()
-        self.in_queue.put(('__call__', *a))
-        return self.out_queue.get()
-
-class MPModelProxy:
-    """This class maintains a reference to an in-cuda-memory model, and
-    creates a `placeholder` attribute which can be safely passed to
-    multiprocessing DataLoader workers. 
-
-    This placeholder model sends messages accross multiprocessing
-    queues, which are received by this proxy instance, which calls the
-    model and sends the return value back to the worker.
-
-    Starts its own (daemon) thread. Always passes CPU tensors between
-    processes.
-
-    """
-    def __init__(self, model, num_workers):
-        self.in_queues = [mp.Queue() for i in range(num_workers)]
-        self.out_queues = [mp.Queue() for i in range(num_workers)]
-        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
-        self.model = model
-        self.cuda_types = (torch.Tensor, gd.Batch, GraphActionCategorical)
-        self.stop = threading.Event()
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
-
-    def __del__(self):
-        self.stop.set()
-
-    def run(self):
-        while not self.stop.is_set():
-            for qi, q in enumerate(self.in_queues):
-                try:
-                    r = q.get(True, 1e-5)
-                except:
-                    continue
-                attr, *args = r
-                f = getattr(self.model, attr)
-                args = [i.to(self.model.device) if isinstance(i, self.cuda_types) else i
-                        for i in args]
-                result = f(*args)
-                if isinstance(result, (list, tuple)):
-                    msg = [i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i for i in result]
-                    self.out_queues[qi].put(msg)
-                else:
-                    msg = result.detach().to(torch.device('cpu')) if isinstance(result, self.cuda_types) else result
-                    self.out_queues[qi].put(msg)
                     
     
 class QM9SamplingIterator(IterableDataset):
@@ -394,7 +325,7 @@ class QM9Trial(PyTorchTrial):
     def __init__(self, context: PyTorchTrialContext) -> None:
         self.context = context
         default_hps = {
-            # TODO
+            # TODO: write down default hyperparameters to reduce pollution in config files
         }
         hps = {
             # This c = {**a, **b} notation overrides a[k] with b[k] in
@@ -479,25 +410,22 @@ class QM9Trial(PyTorchTrial):
             mp_model = MPModelProxy(gap_model, self.num_workers)
             gap_model = mp_model.placeholder
         return {'mxmnet_gap': gap_model}
+
+    def _wrap_model_mp(self, model):
+        if self.num_workers > 0:
+            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+            placeholder.action_type_order = self.model.action_type_order
+            return placeholder
+        return model
     
     def build_training_data_loader(self) -> DataLoader:
-        if self.num_workers > 0:
-            mp_model = MPModelProxy(self.sampling_model, self.num_workers)
-            model = mp_model.placeholder
-            model.action_type_order = self.model.action_type_order
-        else:
-            model = self.sampling_model
+        model = self._wrap_model_mp(self.sampling_model)
         iterator = QM9SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.tb, self.task)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
     
     def build_validation_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=False)
-        if self.num_workers > 0:
-            mp_model = MPModelProxy(self.model, self.num_workers)
-            model = mp_model.placeholder
-            model.action_type_order = self.model.action_type_order
-        else:
-            model = self.model
+        model = self._wrap_model_mp(self.model)
         iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.tb, self.task,
                                        ratio=1, stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
