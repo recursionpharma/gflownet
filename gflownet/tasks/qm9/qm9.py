@@ -295,7 +295,8 @@ class Model(nn.Module):
 class ConditionalTask:
     """This class captures conditional information generation and reward transforms"""
     
-    def __init__(self, dataset, temperature_distribution, temperature_parameters):
+    def __init__(self, dataset, temperature_distribution, temperature_parameters, wrap_model=None):
+        self._wrap_model = wrap_model if wrap_model is not None else lambda x:x
         self.models = self.load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
@@ -308,7 +309,7 @@ class ConditionalTask:
         state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')
         gap_model.load_state_dict(state_dict)
         gap_model.cuda()
-        gap_model = self._wrap_model_mp(gap_model)
+        gap_model = self._wrap_model(gap_model)
         return {'mxmnet_gap': gap_model}
 
     def sample_conditional_information(self, n):
@@ -404,7 +405,8 @@ class QM9Trial(PyTorchTrial):
 
         self.task = ConditionalTask(self.training_data,
                                     context.get_hparam('temperature_sample_dist'),
-                                    eval(context.get_hparam('temperature_dist_params')))
+                                    eval(context.get_hparam('temperature_dist_params')),
+                                    wrap_model=self._wrap_model_mp)
         self.mb_size = self.context.get_per_slot_batch_size()
         self.clip_grad_param = context.get_hparam('clip_grad_param')
         self.clip_grad_callback = {
