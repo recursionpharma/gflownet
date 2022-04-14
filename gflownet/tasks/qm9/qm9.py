@@ -78,7 +78,9 @@ class QM9Dataset(Dataset):
 
 
                     
-    
+# TODO: This class could be abstracted? Either made part of
+# trajectory_balance or made into a more generic sample-model +
+# sample-dataset combinator.
 class QM9SamplingIterator(IterableDataset):
     """This class allows us to parallelise and train faster. 
 
@@ -123,9 +125,11 @@ class QM9SamplingIterator(IterableDataset):
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
         if self.stream:
+            # If we're streaming data, just sample `offline_batch_size` indices
             while True:
                 yield self.rng.integers(0, len(self._data.idcs), self.offline_batch_size)
         else:
+            # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()
             n = len(self._data.idcs)
             if worker_info is None:
@@ -173,19 +177,24 @@ class QM9SamplingIterator(IterableDataset):
                     pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
                     raise ValueError('make this flat rewards')
                 else:
+                    # Otherwise
                     valid_idcs = torch.tensor([i+num_offline for i in range(self.online_batch_size)
                                                if trajs[i+num_offline]['is_valid']]).long()
                     pred_reward = torch.zeros((self.online_batch_size))
+                    # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
+                    # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
+                    # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
                     pred_reward[valid_idcs - num_offline] = preds
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)
+                    # Override the is_valid key in case the task made some mols invalid
                     for i in range(self.online_batch_size):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
-            # Compute rewards
+            # Compute scalar rewards from conditional information & flat rewards
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
@@ -200,10 +209,8 @@ def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
     return nn.Sequential(*sum([[nn.Linear(n[i], n[i+1]), act()] for i in range(n_layer + 1)], [])[:-1])
     
 class Model(nn.Module):
-    def __init__(self, env_ctx, num_emb=64, num_layers=3):
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2):
         super().__init__()
-         # TODO: these are hyperparameters:
-        num_heads = 2
         self.num_layers = num_layers
         
         self.x2h = mlp(env_ctx.num_node_dim, num_emb, num_emb, 2)
@@ -288,11 +295,21 @@ class Model(nn.Module):
 class ConditionalTask:
     """This class captures conditional information generation and reward transforms"""
     
-    def __init__(self, models, dataset, temperature_distribution, temperature_parameters):
-        self.models = models
+    def __init__(self, dataset, temperature_distribution, temperature_parameters):
+        self.models = self.load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
+
+    def load_task_models(self):
+        gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
+        gap_model.device = torch.device('cuda')
+        # TODO: this path should be part of the config?
+        state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')
+        gap_model.load_state_dict(state_dict)
+        gap_model.cuda()
+        gap_model = self._wrap_model_mp(gap_model)
+        return {'mxmnet_gap': gap_model}
 
     def sample_conditional_information(self, n):
         beta = None
@@ -367,23 +384,25 @@ class QM9Trial(PyTorchTrial):
         self.opt_Z = context.wrap_optimizer(
             torch.optim.Adam(Z_params, context.get_hparam('learning_rate'),
                              (0.9,0.999)))
+        self.lr_sched = self.context.wrap_lr_scheduler(
+            torch.optim.lr_scheduler.LambdaLR(
+                self.opt, lambda steps: 2 ** (-steps / context.get_hparam('lr_decay'))),
+            LRScheduler.StepMode.STEP_EVERY_BATCH)
         self.Z_lr_sched = self.context.wrap_lr_scheduler(
             torch.optim.lr_scheduler.LambdaLR(
                 self.opt_Z, lambda steps: 2 ** (-steps / context.get_hparam('Z_lr_decay'))),
             LRScheduler.StepMode.STEP_EVERY_BATCH)
 
         eps = context.get_hparam('tb_epsilon')
-        self.tb = TrajectoryBalance(self.env, self.ctx, self.rng,
-                                    random_action_prob=context.get_hparam('random_action_prob'), 
-                                    max_nodes=9,
-                                    illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
-                                    epsilon=eval(eps) if isinstance(eps, str) else eps)
-        self.tb.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
-        self.tb.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng,
+                                      random_action_prob=context.get_hparam('random_action_prob'), 
+                                      max_nodes=9,
+                                      illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
+                                      epsilon=eval(eps) if isinstance(eps, str) else eps)
+        self.algo.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
+        self.algo.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
 
-        self.task_models = self.load_task_models()
-        self.task = ConditionalTask(self.task_models,
-                                    self.training_data,
+        self.task = ConditionalTask(self.training_data,
                                     context.get_hparam('temperature_sample_dist'),
                                     eval(context.get_hparam('temperature_dist_params')))
         self.mb_size = self.context.get_per_slot_batch_size()
@@ -400,15 +419,6 @@ class QM9Trial(PyTorchTrial):
     def get_batch_length(self, batch):
         return batch.traj_lens.shape[0]
 
-    def load_task_models(self):
-        gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
-        gap_model.device = torch.device('cuda')
-        state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')#, map_location=torch.device('cpu'))
-        gap_model.load_state_dict(state_dict)
-        gap_model.cuda()
-        gap_model = self._wrap_model_mp(gap_model)
-        return {'mxmnet_gap': gap_model}
-
     def _wrap_model_mp(self, model):
         if self.num_workers > 0:
             placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
@@ -418,24 +428,24 @@ class QM9Trial(PyTorchTrial):
     
     def build_training_data_loader(self) -> DataLoader:
         model = self._wrap_model_mp(self.sampling_model)
-        iterator = QM9SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.tb, self.task)
+        iterator = QM9SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
     
     def build_validation_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=False)
         model = self._wrap_model_mp(self.model)
-        iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.tb, self.task,
+        iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.algo, self.task,
                                        ratio=1, stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, torch.Tensor]:
         if not hasattr(self.model, 'device'):
             self.model.device = self.context.to_device(torch.ones(1)).device
-        losses, info = self.tb.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
+        losses, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
         avg_offline_loss = losses[:self.mb_size].mean()
         avg_online_loss = losses[self.mb_size:].mean()
         reward_losses = info.get('reward_losses', torch.zeros(1)).mean()
-        loss = losses.mean() + reward_losses * self.tb.reward_loss_multiplier
+        loss = losses.mean() + reward_losses * self.algo.reward_loss_multiplier
         
         self.context.backward(loss)
         self.context.step_optimizer(self.opt, clip_grads=self.clip_grad_callback)
@@ -455,13 +465,12 @@ class QM9Trial(PyTorchTrial):
                 'invalid_trajectories': info['invalid_trajectories'].item(),
                 'invalid_logprob': info['invalid_logprob'].item(),
                 'invalid_losses': info['invalid_losses'].item(),
-                #'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()
             }
 
     def evaluate_batch(self, batch: Tuple[List[str], torch.Tensor]) -> Dict[str, Any]:
         if not hasattr(self.model, 'device'):
             self.model.device = self.context.to_device(torch.ones(1)).device
-        losses, info = self.tb.compute_batch_losses(
+        losses, info = self.algo.compute_batch_losses(
             self.model, batch, num_bootstrap=len(batch.smiles))
         loss = losses.mean()
         reward_losses = info.get('reward_losses', torch.zeros(1)).mean()
@@ -481,6 +490,7 @@ class DummyContext:
         return model.to(self.dev)
 
     def wrap_lr_scheduler(self, sc, *a, **kw):
+        # TODO: step schedulers
         return sc
     
     def wrap_optimizer(self, opt):
@@ -530,6 +540,7 @@ def main():
         'num_data_loader_workers': 8,
         'momentum': 0.9,
         'adam_eps': 1e-8,
+        'lr_decay': 10000,
         'Z_lr_decay': 10000,
         'clip_grad_type': 'norm',
         'clip_grad_param': 10,
@@ -543,21 +554,14 @@ def main():
     valid_dl = trial.build_validation_data_loader()
     
     for epoch in range(10):
-        t0 = time.time()
         for it, batch in enumerate(train_dl):
-            t1 = time.time()
-            print('load', t1-t0)
             batch = batch.to(dummy_context.dev, non_blocking=True)
-            t2 = time.time()
-            #print('transfer', t2-t1)
             r = trial.train_batch(batch, epoch, it)
             print(it, ' '.join(f"{k}: {v:.4f}" for k, v in r.items()))
-            t0 = t3 = time.time()
-            print('train', t3-t2)
             if not it % 200:
                 torch.save({'models_state_dict': [trial.model.state_dict()], 'hps': hps},
                            open(f'../model_state.pt', 'wb'))
-            if it == 10000:
+            if it == 10000: # train_dl is an infinite iterator 
                 break
         # Somewhere, use valid_dl to
         # trial.evaluate_batch(batch)

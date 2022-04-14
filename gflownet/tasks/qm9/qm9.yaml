@@ -18,7 +18,7 @@ hyperparameters:
     # vals:
     #   - 128
     #   - 256
-  num_layers: 3
+  num_layers: 4
     # type: categorical
     # vals:
     #   - 3
@@ -30,13 +30,14 @@ hyperparameters:
   temperature_dist_params: (0.2, 32)
   tb_epsilon: None
   weight_decay: 1e-8
+  lr_decay: 100000
   Z_lr_decay: 100000
   #temperature_sample_dist: gamma
   #temperature_dist_params: (1.5, 1.5)
   #temperature_sample_dist: beta
   #temperature_dist_params: (1.25, 2)
 searcher:
-  name: single #grid
+  name: single
   metric: validation_loss
   max_length:
       batches: 100000
