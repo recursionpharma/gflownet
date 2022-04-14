@@ -53,22 +53,15 @@ checkpoint_storage:
   host_path: /mnt/bh1/scratch/det_checkpoints
   type: shared_fs
 bind_mounts:
-  - host_path: /mnt/ps/home/CORP/emmanuel.bengio/rs
-    container_path: /run/determined/workdir/rs
-  - host_path: /mnt/ps/home/CORP/emmanuel.bengio/lib/
-    container_path: /run/determined/workdir/lib/
+  - host_path: /mnt/ps/home/CORP/emmanuel.bengio/
+    container_path: /run/determined/workdir/home/
   - host_path: /mnt/bh1/data/
     container_path: /data
-  - host_path: /mnt/bh1/scratch/maciej.sypetkowski/torch_home
-    container_path: /torch_home
 environment:
-  image: gcr.io/eng-infrastructure/photosynthetic:maciek_dev
+  image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
   add_capabilities:
     - IPC_LOCK
   force_pull_image: false
-  environment_variables:
-    - TORCH_HOME=/torch_home
-    - LD_LIBRARY_PATH=/usr/local/mpi/lib/:$LD_LIBRARY_PATH
 resources:
   resource_pool: dgx-pool
   agent_label: ampere
