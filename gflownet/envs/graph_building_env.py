@@ -108,6 +108,7 @@ class GraphBuildingEnv:
         """A graph building environment instance
 
         Parameters
+        ----------
         allow_add_edge: bool
             if True, allows this action and computes AddEdge parents (i.e. if False, this env only allows for tree generation)
         allow_node_attr: bool
@@ -266,7 +267,7 @@ class GraphBuildingEnv:
                 c += 1
         return c
 
-def generate_forward_trajectory(g: Graph):
+def generate_forward_trajectory(g: Graph, max_nodes: int=None):
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
@@ -283,6 +284,7 @@ def generate_forward_trajectory(g: Graph):
         # attributes will be reinserted into the stack until those
         # attributes are "set".
         i = stack.pop(np.random.randint(len(stack)))
+        
         gt = gn.copy()  # This is a shallow copy
         if type(i) is tuple:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
@@ -313,6 +315,7 @@ def generate_forward_trajectory(g: Graph):
                         stack.append(i[1])  # we still have attributes to add to node i[1]
                 else:
                     # The endpoint is in the graph, this is an AddEdge action
+                    assert e[0] in gn.nodes
                     gn.add_edge(*e)
                     act = GraphAction(GraphActionType.AddEdge, source=e[0], target=e[1])
 
@@ -327,7 +330,7 @@ def generate_forward_trajectory(g: Graph):
                 n = relabeling_map[i] = len(relabeling_map)
                 gn.add_node(0, v=g.nodes[i]['v'])
                 for j in g[i]:  # For every neighbour of node i
-                    if j not in gn:
+                    if relabeling_map.get(j, None) not in gn:
                         stack.append((i, j))  # push the (i,j) edge onto the stack
             else:
                 # i exists, meaning we have attributes left to add
@@ -385,11 +388,13 @@ class GraphActionCategorical:
         """
         # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
         # TODO: cuda-ize
-        self.g = graphs
+        #self.g = graphs
+        self.num_graphs = graphs.num_graphs
         # The logits
         self.logits = logits
         self.types = types
-        self.dev = dev = self.g.x.device
+        self.keys = keys
+        self.dev = dev = graphs.x.device
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
@@ -413,7 +418,23 @@ class GraphActionCategorical:
         if deduplicate_edge_index and 'edge_index' in keys:
             idx = keys.index('edge_index')
             self.batch[idx] = self.batch[idx][::2]
-            self.slice[idx] = self.slice[idx].div(2, rounding_mode='trunc')
+            self.slice[idx] = self.slice[idx].div(2, rounding_mode='floor')
+
+    def detach(self):
+        new = copy.copy(self)
+        new.logits = [i.detach() for i in new.logits]
+        if new.logprobs is not None:
+            new.logprobs = [i.detach() for i in new.logprobs]
+        return new
+            
+    def to(self, device):
+        self.dev = device
+        self.logits = [i.to(device) for i in self.logits]
+        self.batch = [i.to(device) for i in self.batch]
+        self.slice = [i.to(device) for i in self.slice]
+        if self.logprobs is not None:
+            self.logprobs = [i.to(device) for i in self.logprobs]
+        return self
     
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
@@ -422,14 +443,14 @@ class GraphActionCategorical:
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
         maxl = torch.cat(
-            [scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
+            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
             dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
-            scatter(i, b, dim=0, dim_size=self.g.num_graphs, reduce='sum').sum(1)
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
             for i, b in zip(exp_logits, self.batch)
         ]).log()
         # log probabilities is log(exp(logit) / Z)
@@ -457,7 +478,7 @@ class GraphActionCategorical:
         # there are no corresponding logits (this can happen if e.g. a
         # graph has no edges), we don't want to accidentally take the
         # max of that type.
-        mnb_max = [torch.zeros(self.g.num_graphs, i.shape[1], device=self.dev) - 1e6 for i in self.logits]
+        mnb_max = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) - 1e6 for i in self.logits]
         mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(gumbel, self.batch, mnb_max)]
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
