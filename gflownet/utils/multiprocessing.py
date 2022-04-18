@@ -3,16 +3,19 @@ import threading
 import torch
 import torch.multiprocessing as mp
 
+
 class MPModelPlaceholder:
     """This class can be used as a Model in a worker process, and
     translates calls to queries to the main process"""
+
     def __init__(self, in_queues, out_queues):
         self.qs = in_queues, out_queues
         self.device = torch.device('cpu')
         self._is_init = False
 
     def _check_init(self):
-        if self._is_init: return
+        if self._is_init:
+            return
         info = torch.utils.data.get_worker_info()
         self.in_queue = self.qs[0][info.id]
         self.out_queue = self.qs[1][info.id]
@@ -29,6 +32,7 @@ class MPModelPlaceholder:
         self.in_queue.put(('__call__', *a))
         return self.out_queue.get()
 
+
 class MPModelProxy:
     """This class maintains a reference to an in-cuda-memory model, and
     creates a `placeholder` attribute which can be safely passed to
@@ -42,6 +46,7 @@ class MPModelProxy:
     processes.
 
     """
+
     def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple):
         """Construct a multiprocessing model proxy for torch DataLoaders.
 
@@ -91,7 +96,7 @@ def wrap_model_mp(model, num_workers, cast_types):
     """Construct a multiprocessing model proxy for torch DataLoaders so
     that only one process ends up making cuda calls and holding cuda
     tensors in memory.
-    
+
     Parameters
     ----------
     model: torch.Module

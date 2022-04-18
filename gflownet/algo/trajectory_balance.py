@@ -1,15 +1,13 @@
 import copy
-import time
 import numpy as np
 from itertools import count
 
 import torch
 import torch.nn as nn
-import torch.multiprocessing as mp
 import torch_geometric.data as gd
 from torch_scatter import scatter
 
-from gflownet.envs.graph_building_env import Graph, GraphActionType, GraphActionCategorical, generate_forward_trajectory
+from gflownet.envs.graph_building_env import GraphActionType, generate_forward_trajectory
 
 
 class TrajectoryBalance:
@@ -18,6 +16,7 @@ class TrajectoryBalance:
     Nikolay Malkin, Moksh Jain, Emmanuel Bengio, Chen Sun, Yoshua Bengio
     https://arxiv.org/abs/2201.13259
     """
+
     def __init__(self, env, ctx, rng, max_len=None, random_action_prob=None, max_nodes=None,
                  illegal_action_logreward=-50, epsilon=-60):
         self.ctx = ctx
@@ -38,7 +37,6 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.sample_temp = 1
 
-
     def _corrupt_actions(self, actions, cat):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
         # Should this be a method of GraphActionCategorical?
@@ -52,10 +50,10 @@ class TrajectoryBalance:
             row = self.rng.choice(n_in_batch[which])
             col = self.rng.choice(cat.logits[which].shape[1])
             actions[i] = (which, row, col)
-            
+
     def create_training_data_from_own_samples(self, model, n, cond_info):
         """Generate trajectories by sampling a model
-        
+
         Parameters
         ----------
         model: nn.Module
@@ -86,10 +84,11 @@ class TrajectoryBalance:
         # Let's also keep track of trajectory statistics according to the model
         zero = torch.tensor([0], device=dev).float()
         fwd_logprob = [[] for i in range(n)]
-        bck_logprob = [[zero] for i in range(n)] # zero in case there is a single invalid action
-        
+        bck_logprob = [[zero] for i in range(n)]  # zero in case there is a single invalid action
+
         graphs = [env.new() for i in range(n)]
         done = [False] * n
+
         def not_done(l):
             return [e for i, e in enumerate(l) if not done[i]]
 
@@ -98,8 +97,7 @@ class TrajectoryBalance:
         mol_not_sane = 0
         invalid_act = 0
         logprob_of_illegal = []
-        
-        final_rewards = [None] * n
+
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         if self.epsilon is not None:
             epsilon = torch.tensor([self.epsilon], device=dev).float()
@@ -138,14 +136,14 @@ class TrajectoryBalance:
                     elif self.bootstrap_own_reward:
                         # if we're bootstrapping, extract reward prediction
                         data[i]['reward_pred'] = log_reward_preds[j].detach().exp()
-                else: # If not done, try to step the environment
+                else:  # If not done, try to step the environment
                     gp = graphs[i]
                     try:
                         # env.step can raise AssertionError if the action is illegal
                         gp = env.step(graphs[i], graph_actions[j])
                         if self.max_nodes is not None:
                             assert len(gp.nodes) <= self.max_nodes
-                    except AssertionError as e:
+                    except AssertionError:
                         if len(gp.nodes) > self.max_nodes:
                             mol_too_big += 1
                         else:
@@ -161,7 +159,7 @@ class TrajectoryBalance:
                     graphs[i] = gp
             if all(done):
                 break
-            
+
         for i in range(n):
             # If we're not bootstrapping, we could query the reward
             # model here, but this is expensive/impractical.  Instead
@@ -184,7 +182,7 @@ class TrajectoryBalance:
 
     def create_training_data_from_graphs(self, graphs):
         """Generate trajectories from known endpoints
-        
+
         Parameters
         ----------
         graphs: List[Graph]
@@ -199,7 +197,7 @@ class TrajectoryBalance:
 
     def construct_batch(self, trajs, cond_info, rewards, action_type_order):
         """Construct a batch from a list of trajectories and their information
-        
+
         Parameters
         ----------
         trajs: List[List[tuple[Graph, GraphAction]]]
@@ -234,7 +232,7 @@ class TrajectoryBalance:
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
 
-    def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap:int=0):
+    def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):
         """Compute the losses over trajectories contained in the batch
 
         Parameters
@@ -279,13 +277,13 @@ class TrajectoryBalance:
         # Compute log numerator and denominator of the TB objective
         numerator = Z + traj_log_prob
         denominator = Rp + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-        
+
         if self.epsilon is not None:
             # Numerical stability epsilon
             epsilon = torch.tensor([self.epsilon], device=dev).float()
             numerator = torch.logaddexp(numerator, epsilon)
             denominator = torch.logaddexp(denominator, epsilon)
-            
+
         invalid_mask = 1 - batch.is_valid
         if self.mask_invalid_rewards:
             # Instead of being rude to the model and giving a
@@ -294,24 +292,23 @@ class TrajectoryBalance:
             # (thus the `numerator - 1`). Why 1? Intuition?
             denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
 
-            
         if self.tb_loss_is_mae:
             unnorm = traj_losses = abs(numerator - denominator)
         elif self.tb_loss_is_huber:
-            pass # TODO
+            pass  # TODO
         else:
             unnorm = traj_losses = (numerator - denominator).pow(2)
-            
+
         # Normalize losses by trajectory length
         if self.length_normalize_losses:
             traj_losses = traj_losses / batch.traj_lens
-            
+
         info = {'unnorm_traj_losses': unnorm,
                 'invalid_trajectories': invalid_mask.mean() * 2,
                 'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
                 'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
                 'logZ': Z.mean().item()}
-        
+
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)
             if self.reward_loss_is_mae:
@@ -319,8 +316,7 @@ class TrajectoryBalance:
             else:
                 reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
             info['reward_losses'] = reward_losses
-            
+
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
         return traj_losses, info
-        
