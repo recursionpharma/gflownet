@@ -104,6 +104,7 @@ class GraphBuildingEnv:
           if it is still default-valued (DAG property preserved)
         - we can generate a legal action for any attribute that isn't a default one.
     """
+
     def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
         """A graph building environment instance
 
@@ -267,7 +268,8 @@ class GraphBuildingEnv:
                 c += 1
         return c
 
-def generate_forward_trajectory(g: Graph, max_nodes: int=None):
+
+def generate_forward_trajectory(g: Graph, max_nodes: int = None):
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
@@ -284,7 +286,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int=None):
         # attributes will be reinserted into the stack until those
         # attributes are "set".
         i = stack.pop(np.random.randint(len(stack)))
-        
+
         gt = gn.copy()  # This is a shallow copy
         if type(i) is tuple:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
@@ -412,7 +414,8 @@ class GraphActionCategorical:
             else torch.arange(graphs.num_graphs, device=dev) for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
-        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs, device=dev) for k in keys]
+        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(
+            graphs.num_graphs, device=dev) for k in keys]
         self.logprobs = None
 
         if deduplicate_edge_index and 'edge_index' in keys:
@@ -426,7 +429,7 @@ class GraphActionCategorical:
         if new.logprobs is not None:
             new.logprobs = [i.detach() for i in new.logprobs]
         return new
-            
+
     def to(self, device):
         self.dev = device
         self.logits = [i.to(device) for i in self.logits]
@@ -435,7 +438,7 @@ class GraphActionCategorical:
         if self.logprobs is not None:
             self.logprobs = [i.to(device) for i in self.logprobs]
         return self
-    
+
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:

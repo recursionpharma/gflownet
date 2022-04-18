@@ -17,6 +17,7 @@ class MolBuildingEnvContext:
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
 
     """
+
     def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
@@ -104,7 +105,7 @@ class MolBuildingEnvContext:
         elif action.action is GraphActionType.SetEdgeAttr:
             # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
             # so no need for a double check.
-            #row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
+            # row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
             #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
             # Because edges are duplicated but logits aren't, divide by two
