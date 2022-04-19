@@ -2,7 +2,7 @@ import copy
 import tarfile
 import pandas as pd
 import numpy as np
-from typing import Tuple, List, Any, Dict
+from typing import Any, Dict
 
 import rdkit.Chem as Chem
 from rdkit import RDLogger
@@ -15,7 +15,7 @@ import torch_geometric.nn as gnn
 from torch_geometric.utils import add_self_loops
 from torch.utils.data import Dataset, IterableDataset
 
-from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionType, GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionCategorical
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.models import mxmnet
@@ -42,14 +42,13 @@ class QM9Dataset(Dataset):
 
     def load_tar(self, xyz_file):
         f = tarfile.TarFile(xyz_file, 'r')
-        labels = ['rA', 'rB', 'rC', 'mu', 'alpha', 'homo', 'lumo',
-                  'gap', 'r2', 'zpve', 'U0', 'U', 'H', 'G', 'Cv']
+        labels = ['rA', 'rB', 'rC', 'mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'U0', 'U', 'H', 'G', 'Cv']
         all_mols = []
         for pt in f:
             pt = f.extractfile(pt)
             data = pt.read().decode().splitlines()
             all_mols.append(data[-2].split()[:1] + list(map(float, data[1].split()[2:])))
-        self.df = pd.DataFrame(all_mols, columns=['SMILES']+labels)
+        self.df = pd.DataFrame(all_mols, columns=['SMILES'] + labels)
 
     def reward_transform(self, r):
         if self._rtrans == 'exp':
@@ -74,7 +73,7 @@ class QM9Dataset(Dataset):
 # trajectory_balance or made into a more generic sample-model +
 # sample-dataset combinator.
 class QM9SamplingIterator(IterableDataset):
-    """This class allows us to parallelise and train faster. 
+    """This class allows us to parallelise and train faster.
 
     By separating sampling data/the model and building torch geometric
     graphs from training the model, we can do the former in different
@@ -82,7 +81,6 @@ class QM9SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-
     def __init__(self, qm9_dataset, model, batch_size, ctx, algo, task, ratio=0.5, stream=True):
         """Parameters
         ----------
@@ -92,7 +90,7 @@ class QM9SamplingIterator(IterableDataset):
             The model we sample from (must be on CUDA already or share_memory() must be called so that
             parameters are synchronized between each worker)
         batch_size: int
-            The number of trajectories, each trajectory will be comprised of many graphs, so this is 
+            The number of trajectories, each trajectory will be comprised of many graphs, so this is
             _not_ the batch size in terms of the number of graphs (that will depend on the task)
         algo:
             The training algorithm, e.g. a TrajectoryBalance instance
@@ -130,7 +128,7 @@ class QM9SamplingIterator(IterableDataset):
             else:
                 nw = worker_info.num_workers
                 wid = worker_info.id
-                start, end = int(np.floor(n / nw * wid)), int(np.ceil(n / nw * (wid+1)))
+                start, end = int(np.floor(n / nw * wid)), int(np.ceil(n / nw * (wid + 1)))
             bs = self.offline_batch_size
             if end - start < bs:
                 yield np.arange(start, end)
@@ -162,8 +160,8 @@ class QM9SamplingIterator(IterableDataset):
             # Sample some on-policy data
             if self.online_batch_size > 0:
                 with torch.no_grad():
-                    trajs += self.algo.create_training_data_from_own_samples(
-                        self.model, self.online_batch_size, cond_info[num_offline:])
+                    trajs += self.algo.create_training_data_from_own_samples(self.model, self.online_batch_size,
+                                                                             cond_info[num_offline:])
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_reward
@@ -171,8 +169,9 @@ class QM9SamplingIterator(IterableDataset):
                     raise ValueError('make this flat rewards')
                 else:
                     # Otherwise
-                    valid_idcs = torch.tensor([i+num_offline for i in range(self.online_batch_size)
-                                               if trajs[i+num_offline]['is_valid']]).long()
+                    valid_idcs = torch.tensor([
+                        i + num_offline for i in range(self.online_batch_size) if trajs[i + num_offline]['is_valid']
+                    ]).long()
                     pred_reward = torch.zeros((self.online_batch_size))
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
@@ -200,7 +199,7 @@ class QM9SamplingIterator(IterableDataset):
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
     n = [n_in] + [n_hid] * n_layer + [n_out]
-    return nn.Sequential(*sum([[nn.Linear(n[i], n[i+1]), act()] for i in range(n_layer + 1)], [])[:-1])
+    return nn.Sequential(*sum([[nn.Linear(n[i], n[i + 1]), act()] for i in range(n_layer + 1)], [])[:-1])
 
 
 class Model(nn.Module):
@@ -240,11 +239,7 @@ class Model(nn.Module):
         # information node. This new node is connected to every node
         # within its graph.
         u, v = torch.arange(num_total_nodes, device=o.device), g.batch + num_total_nodes
-        aug_edge_index = torch.cat(
-            [g.edge_index,
-             torch.stack([u, v]),
-             torch.stack([v, u])],
-            1)
+        aug_edge_index = torch.cat([g.edge_index, torch.stack([u, v]), torch.stack([v, u])], 1)
         e_p = torch.zeros((num_total_nodes * 2, e.shape[1]), device=g.x.device)
         e_p[:, 0] = 1  # Manually create a bias term
         aug_e = torch.cat([e, e_p], 0)
@@ -252,10 +247,10 @@ class Model(nn.Module):
         aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
 
         # Append the conditioning information node embedding to o
-        o_0 = o = torch.cat([o, c], 0)
+        o = torch.cat([o, c], 0)
         for i in range(self.num_layers):
             # Run the graph transformer forward
-            gen, trans, linear, norm1, ff, norm2 = self.graph2emb[i * 6: (i+1) * 6]
+            gen, trans, linear, norm1, ff, norm2 = self.graph2emb[i * 6:(i + 1) * 6]
             agg = gen(o, aug_edge_index, aug_e)
             o = norm1(o + linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e)), aug_batch)
             o = norm2(o + ff(o), aug_batch)
@@ -283,7 +278,6 @@ class Model(nn.Module):
 
 class ConditionalTask:
     """This class captures conditional information generation and reward transforms"""
-
     def __init__(self, dataset, temperature_distribution, temperature_parameters, wrap_model=None):
         self._wrap_model = wrap_model if wrap_model is not None else lambda x: x
         self.models = self.load_task_models()
@@ -314,7 +308,7 @@ class ConditionalTask:
     def cond_info_to_reward(self, cond_info, flat_reward):
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward ** cond_info[:, 0]
+        return flat_reward**cond_info[:, 0]
 
     def compute_flat_rewards(self, mols):
         graphs = [mxmnet.mol2graph(i) for i in mols]
@@ -336,7 +330,7 @@ class QM9Trial(PyTorchTrial):
             # TODO: write down default hyperparameters to reduce pollution in config files
             'learning_rate': 1e-4,
         }
-        hps = {
+        hps = { # noqa
             # This c = {**a, **b} notation overrides a[k] with b[k] in
             # c if k is a key of both dicts
             **default_hps,
@@ -350,9 +344,7 @@ class QM9Trial(PyTorchTrial):
         self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=1)
         self.training_data = QM9Dataset(self.context.get_data_config()['h5_path'], train=True)
 
-        model = Model(self.ctx,
-                      num_emb=context.get_hparam('num_emb'),
-                      num_layers=context.get_hparam('num_layers'))
+        model = Model(self.ctx, num_emb=context.get_hparam('num_emb'), num_layers=context.get_hparam('num_layers'))
         self.model = context.wrap_model(model)
 
         self.sampling_tau = context.get_hparam('sampling_tau')
@@ -365,37 +357,28 @@ class QM9Trial(PyTorchTrial):
         Z_params = list(model.logZ.parameters())
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = context.wrap_optimizer(
-            torch.optim.Adam(non_Z_params,
-                             context.get_hparam('learning_rate'),
-                             (context.get_hparam('momentum'), 0.999),
-                             weight_decay=context.get_hparam('weight_decay'),
-                             eps=context.get_hparam('adam_eps')))
+            torch.optim.Adam(non_Z_params, context.get_hparam('learning_rate'), (context.get_hparam('momentum'), 0.999),
+                             weight_decay=context.get_hparam('weight_decay'), eps=context.get_hparam('adam_eps')))
 
         self.opt_Z = context.wrap_optimizer(
-            torch.optim.Adam(Z_params, context.get_hparam('learning_rate'),
-                             (0.9, 0.999)))
+            torch.optim.Adam(Z_params, context.get_hparam('learning_rate'), (0.9, 0.999)))
         self.lr_sched = self.context.wrap_lr_scheduler(
-            torch.optim.lr_scheduler.LambdaLR(
-                self.opt, lambda steps: 2 ** (-steps / context.get_hparam('lr_decay'))),
+            torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2**(-steps / context.get_hparam('lr_decay'))),
             LRScheduler.StepMode.STEP_EVERY_BATCH)
         self.Z_lr_sched = self.context.wrap_lr_scheduler(
-            torch.optim.lr_scheduler.LambdaLR(
-                self.opt_Z, lambda steps: 2 ** (-steps / context.get_hparam('Z_lr_decay'))),
+            torch.optim.lr_scheduler.LambdaLR(self.opt_Z, lambda steps: 2**(-steps / context.get_hparam('Z_lr_decay'))),
             LRScheduler.StepMode.STEP_EVERY_BATCH)
 
         eps = context.get_hparam('tb_epsilon')
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng,
-                                      random_action_prob=context.get_hparam('random_action_prob'),
-                                      max_nodes=9,
+                                      random_action_prob=context.get_hparam('random_action_prob'), max_nodes=9,
                                       illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
                                       epsilon=eval(eps) if isinstance(eps, str) else eps)
         self.algo.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
         self.algo.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
 
-        self.task = ConditionalTask(self.training_data,
-                                    context.get_hparam('temperature_sample_dist'),
-                                    eval(context.get_hparam('temperature_dist_params')),
-                                    wrap_model=self._wrap_model_mp)
+        self.task = ConditionalTask(self.training_data, context.get_hparam('temperature_sample_dist'),
+                                    eval(context.get_hparam('temperature_dist_params')), wrap_model=self._wrap_model_mp)
         self.mb_size = self.context.get_per_slot_batch_size()
         self.clip_grad_param = context.get_hparam('clip_grad_param')
         self.clip_grad_callback = {
@@ -403,7 +386,7 @@ class QM9Trial(PyTorchTrial):
             'norm': (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
             'none': (lambda x: None)
         }[context.get_hparam('clip_grad_type')]
-        # See https://docs.determined.ai/latest/training-apis/api-pytorch-advanced.html#customizing-a-reproducible-dataset
+        # See docs.determined.ai/latest/training-apis/api-pytorch-advanced.html#customizing-a-reproducible-dataset
         if isinstance(context, PyTorchTrialContext):
             context.experimental.disable_dataset_reproducibility_checks()
 
@@ -420,14 +403,15 @@ class QM9Trial(PyTorchTrial):
     def build_training_data_loader(self) -> DataLoader:
         model = self._wrap_model_mp(self.sampling_model)
         iterator = QM9SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task)
-        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
+        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
+                                           persistent_workers=self.num_workers > 0)
 
     def build_validation_data_loader(self) -> DataLoader:
         data = QM9Dataset(self.context.get_data_config()['h5_path'], train=False)
         model = self._wrap_model_mp(self.model)
-        iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.algo, self.task,
-                                       ratio=1, stream=False)
-        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
+        iterator = QM9SamplingIterator(data, model, self.mb_size, self.ctx, self.algo, self.task, ratio=1, stream=False)
+        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
+                                           persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, torch.Tensor]:
         losses, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
@@ -444,31 +428,32 @@ class QM9Trial(PyTorchTrial):
         # TODO: fix, in the event of multi-gpu improvements
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
-                b.data.mul_(self.sampling_tau).add_(a.data * (1-self.sampling_tau))
+                b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
 
-        return {'loss': loss.item(),
-                'avg_online_loss': avg_online_loss.item(),
-                'avg_offline_loss': avg_offline_loss.item(),
-                'reward_loss': reward_losses.item(),
-                'logZ': info['logZ'],
-                'invalid_trajectories': info['invalid_trajectories'].item(),
-                'invalid_logprob': info['invalid_logprob'].item(),
-                'invalid_losses': info['invalid_losses'].item(),
-                }
+        return {
+            'loss': loss.item(),
+            'avg_online_loss': avg_online_loss.item(),
+            'avg_offline_loss': avg_offline_loss.item(),
+            'reward_loss': reward_losses.item(),
+            'logZ': info['logZ'],
+            'invalid_trajectories': info['invalid_trajectories'].item(),
+            'invalid_logprob': info['invalid_logprob'].item(),
+            'invalid_losses': info['invalid_losses'].item(),
+        }
 
     def evaluate_batch(self, batch: gd.Batch) -> Dict[str, Any]:
-        losses, info = self.algo.compute_batch_losses(
-            self.model, batch, num_bootstrap=len(batch.smiles))
+        losses, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=len(batch.smiles))
         loss = losses.mean()
         reward_losses = info.get('reward_losses', torch.zeros(1)).mean()
-        return {'validation_loss': loss,
-                'reward_loss': reward_losses.item(),
-                'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()}
+        return {
+            'validation_loss': loss,
+            'reward_loss': reward_losses.item(),
+            'unnorm_traj_losses': info['unnorm_traj_losses'].mean().item()
+        }
 
 
 class DummyContext:
     """A Dummy context if we want to run this experiment without Determined"""
-
     def __init__(self, hps, device):
         self.hps = hps
         self.dev = device
@@ -537,7 +522,7 @@ def main():
     trial = QM9Trial(dummy_context)
 
     train_dl = trial.build_training_data_loader()
-    valid_dl = trial.build_validation_data_loader()
+    valid_dl = trial.build_validation_data_loader() # noqa
 
     for epoch in range(10):
         for it, batch in enumerate(train_dl):
@@ -545,8 +530,10 @@ def main():
             r = trial.train_batch(batch, epoch, it)
             print(it, ' '.join(f"{k}: {v:.4f}" for k, v in r.items()))
             if not it % 200:
-                torch.save({'models_state_dict': [trial.model.state_dict()], 'hps': hps},
-                           open(f'../model_state.pt', 'wb'))
+                torch.save({
+                    'models_state_dict': [trial.model.state_dict()],
+                    'hps': hps
+                }, open('../model_state.pt', 'wb'))
             if it == 10000:  # train_dl is an infinite iterator
                 break
         # Somewhere, use valid_dl to

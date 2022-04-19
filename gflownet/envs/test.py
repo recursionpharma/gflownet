@@ -4,7 +4,8 @@ It trains a model to overfit generating one single molecule.
 """
 
 from tqdm import tqdm
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv, generate_forward_trajectory
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv
+from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 
 import torch
@@ -134,4 +135,4 @@ if __name__ == '__main__':
     # Simple mol
     main("C1N2C3C2C2C4OC12C34", 500)
     # More complicated mol
-    #main("O=C(NC1=CC=2NC(=NC2C=C1)C=3C=CC=CC3)C4=NN(C=C4N(=O)=O)C", 2000)
+    # main("O=C(NC1=CC=2NC(=NC2C=C1)C=3C=CC=CC3)C4=NN(C=C4N(=O)=O)C", 2000)

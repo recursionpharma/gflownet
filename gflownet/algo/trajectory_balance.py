@@ -11,13 +11,14 @@ from torch_scatter import scatter
 
 from gflownet.envs.graph_building_env import GraphActionType, GraphActionCategorical, generate_forward_trajectory
 
-class TrajectoryBalanceModel(nn.Module):
 
+class TrajectoryBalanceModel(nn.Module):
     def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
         raise NotImplementedError()
 
     def logZ(self, cond_info: Tensor) -> Tensor:
         raise NotImplementedError()
+
 
 class TrajectoryBalance:
     """
@@ -25,7 +26,6 @@ class TrajectoryBalance:
     Nikolay Malkin, Moksh Jain, Emmanuel Bengio, Chen Sun, Yoshua Bengio
     https://arxiv.org/abs/2201.13259
     """
-
     def __init__(self, env, ctx, rng, max_len=None, random_action_prob=None, max_nodes=None,
                  illegal_action_logreward=-50, epsilon=-60):
         self.ctx = ctx
@@ -54,7 +54,7 @@ class TrajectoryBalance:
         corrupted, = (np.random.uniform(size=len(actions)) < self.random_action_prob).nonzero()
         for i in corrupted:
             n_in_batch = [(b == i).sum().item() for b in cat.batch]
-            n_each = np.float32([l.shape[1] * nb for l, nb in zip(cat.logits, n_in_batch)])
+            n_each = np.float32([logit.shape[1] * nb for logit, nb in zip(cat.logits, n_in_batch)])
             which = self.rng.choice(len(n_each), p=n_each / n_each.sum())
             row = self.rng.choice(n_in_batch[which])
             col = self.rng.choice(cat.logits[which].shape[1])
@@ -98,8 +98,8 @@ class TrajectoryBalance:
         graphs = [env.new() for i in range(n)]
         done = [False] * n
 
-        def not_done(l):
-            return [e for i, e in enumerate(l) if not done[i]]
+        def not_done(lst):
+            return [e for i, e in enumerate(lst) if not done[i]]
 
         # TODO report these stats:
         mol_too_big = 0
@@ -123,10 +123,7 @@ class TrajectoryBalance:
             else:
                 actions = fwd_cat.sample()
             self._corrupt_actions(actions, fwd_cat)
-            graph_actions = [
-                ctx.aidx_to_GraphAction(g, a)
-                for g, a in zip(torch_graphs, actions)
-            ]
+            graph_actions = [ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
             log_probs = fwd_cat.log_prob(actions)
             for i, j in zip(not_done(range(n)), range(n)):
                 # Step each trajectory, and accumulate statistics
@@ -186,7 +183,6 @@ class TrajectoryBalance:
                     numerator = torch.logaddexp(numerator, epsilon)
                     denominator = torch.logaddexp(denominator, epsilon)
                 data[i]['loss'] = (numerator - denominator).pow(2)
-        #print(mol_too_big, invalid_act, mol_not_sane)
         return data
 
     def create_training_data_from_graphs(self, graphs):
@@ -222,13 +218,15 @@ class TrajectoryBalance:
              A (CPU) Batch object with relevant attributes added
         """
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
-        actions = [self.ctx.GraphAction_to_aidx(g, a)
-                   for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])]
+        actions = [
+            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
+        ]
         num_backward = torch.tensor([
             # Count the number of backward transitions from s_{t+1},
             # unless t+1 = T is the last time step
             self.env.count_backward_transitions(tj['traj'][i + 1][0]) if i + 1 < len(tj['traj']) else 1
-            for tj in trajs for i in range(len(tj['traj']))
+            for tj in trajs
+            for i in range(len(tj['traj']))
         ])
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
@@ -250,8 +248,7 @@ class TrajectoryBalance:
         batch: gd.Batch
           batch of graphs inputs as per constructed by `self.construct_batch`
         num_bootstrap: int
-          the number of trajectories for which the reward loss is computed. Ignored if 0.        
-        """
+          the number of trajectories for which the reward loss is computed. Ignored if 0."""
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
@@ -310,11 +307,13 @@ class TrajectoryBalance:
         if self.length_normalize_losses:
             traj_losses = traj_losses / batch.traj_lens
 
-        info = {'unnorm_traj_losses': unnorm,
-                'invalid_trajectories': invalid_mask.mean() * 2,
-                'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
-                'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
-                'logZ': Z.mean().item()}
+        info = {
+            'unnorm_traj_losses': unnorm,
+            'invalid_trajectories': invalid_mask.mean() * 2,
+            'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
+            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            'logZ': Z.mean().item()
+        }
 
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)

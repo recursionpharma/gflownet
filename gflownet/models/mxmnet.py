@@ -1,4 +1,6 @@
 # type: ignore
+# flake8: noqa
+# yapf: disable
 """This code is extracted from https://github.com/zetayue/MXMNet
 
 There are some minor API fixes, plus:
@@ -56,7 +58,7 @@ class MXMNet(nn.Module):
         self.local_layers = torch.nn.ModuleList()
         for layer in range(config.n_layer):
             self.local_layers.append(Local_MP(config))
-        
+
         self.init()
 
     def init(self):
@@ -69,7 +71,7 @@ class MXMNet(nn.Module):
         value = torch.arange(row.size(0), device=row.device)
         adj_t = SparseTensor(row=col, col=row, value=value,
                              sparse_sizes=(num_nodes, num_nodes))
-        
+
         #Compute the node indices for two-hop angles
         adj_t_row = adj_t[row]
         num_triplets = adj_t_row.set_value(None).sum(dim=1).to(torch.long)
@@ -109,14 +111,14 @@ class MXMNet(nn.Module):
         edge_index_l, _ = remove_self_loops(edge_index)
         j_l, i_l = edge_index_l
         dist_l = (pos[i_l] - pos[j_l]).pow(2).sum(dim=-1).sqrt()
-        
+
         # Get the edges pairwise distances in the global layer
         row, col = radius(pos, pos, self.cutoff, batch, batch, max_num_neighbors=500)
         edge_index_g = torch.stack([row, col], dim=0)
         edge_index_g, _ = remove_self_loops(edge_index_g)
         j_g, i_g = edge_index_g
         dist_g = (pos[i_g] - pos[j_g]).pow(2).sum(dim=-1).sqrt()
-        
+
         # Compute the node indices for defining the angles
         idx_i_1, idx_j, idx_k, idx_kj, idx_ji, idx_i_2, idx_j1, idx_j2, idx_jj, idx_ji_2 = self.indices(edge_index_l, num_nodes=h.size(0))
 
@@ -137,12 +139,12 @@ class MXMNet(nn.Module):
         rbf_l = self.rbf_l(dist_l)
         sbf_1 = self.sbf(dist_l, angle_1, idx_kj)
         sbf_2 = self.sbf(dist_l, angle_2, idx_jj)
-        
+
         rbf_g = self.rbf_g_mlp(rbf_g)
         rbf_l = self.rbf_l_mlp(rbf_l)
         sbf_1 = self.sbf_1_mlp(sbf_1)
         sbf_2 = self.sbf_2_mlp(sbf_2)
-        
+
         # Perform the message passing schemes
         node_sum = 0
 
@@ -150,7 +152,7 @@ class MXMNet(nn.Module):
             h = self.global_layers[layer](h, rbf_g, edge_index_g)
             h, t = self.local_layers[layer](h, rbf_l, sbf_1, sbf_2, idx_kj, idx_ji, idx_jj, idx_ji_2, edge_index_l)
             node_sum += t
-        
+
         # Readout
         output = global_add_pool(node_sum, batch)
         return output.view(-1)
@@ -424,7 +426,7 @@ class BesselBasisLayer(torch.nn.Module):
 
 class SiLU(nn.Module):
     def __init__(self):
-        super().__init__() 
+        super().__init__()
 
     def forward(self, input):
         return silu(input)
@@ -726,7 +728,7 @@ def rdkit_conformation(mol, n=5, addHs=False):
             pos.append(list(conf.GetAtomPosition(i)))
         return torch.tensor(pos)
     return None
-    
+
 def mol2graph(mol):
     mol = AllChem.AddHs(mol)
     N = mol.GetNumAtoms()
@@ -774,10 +776,10 @@ class Global_MP(MessagePassing):
         edge_index, _ = add_self_loops(edge_index, num_nodes=h.size(0))
 
         res_h = h
-        
+
         # Integrate the Cross Layer Mapping inside the Global Message Passing
         h = self.h_mlp(h)
-        
+
         # Message Passing operation
         h = self.propagate(edge_index, x=h, num_nodes=h.size(0), edge_attr=edge_attr)
 
@@ -786,7 +788,7 @@ class Global_MP(MessagePassing):
         h = self.mlp(h) + res_h
         h = self.res2(h)
         h = self.res3(h)
-        
+
         # Message Passing operation
         h = self.propagate(edge_index, x=h, num_nodes=h.size(0), edge_attr=edge_attr)
 
@@ -837,10 +839,10 @@ class Local_MP(torch.nn.Module):
 
     def forward(self, h, rbf, sbf1, sbf2, idx_kj, idx_ji_1, idx_jj, idx_ji_2, edge_index, num_nodes=None):
         res_h = h
-        
+
         # Integrate the Cross Layer Mapping inside the Local Message Passing
         h = self.h_mlp(h)
-        
+
         # Message Passing 1
         j, i = edge_index
         m = torch.cat([h[i], h[j], rbf], dim=-1)
@@ -849,7 +851,7 @@ class Local_MP(torch.nn.Module):
         m_kj = m_kj * self.lin_rbf1(rbf)
         m_kj = m_kj[idx_kj] * self.mlp_sbf1(sbf1)
         m_kj = scatter(m_kj, idx_ji_1, dim=0, dim_size=m.size(0), reduce='add')
-        
+
         m_ji_1 = self.mlp_ji_1(m)
 
         m = m_ji_1 + m_kj
@@ -859,7 +861,7 @@ class Local_MP(torch.nn.Module):
         m_jj = m_jj * self.lin_rbf2(rbf)
         m_jj = m_jj[idx_jj] * self.mlp_sbf2(sbf2)
         m_jj = scatter(m_jj, idx_ji_2, dim=0, dim_size=m.size(0), reduce='add')
-        
+
         m_ji_2 = self.mlp_ji_2(m)
 
         m = m_ji_2 + m_jj
@@ -867,7 +869,7 @@ class Local_MP(torch.nn.Module):
         # Aggregation
         m = self.lin_rbf_out(rbf) * m
         h = scatter(m, i, dim=0, dim_size=h.size(0), reduce='add')
-        
+
         # Update function f_u
         h = self.res1(h)
         h = self.h_mlp(h) + res_h
@@ -879,4 +881,3 @@ class Local_MP(torch.nn.Module):
         y = self.y_W(y)
 
         return h, y
-
