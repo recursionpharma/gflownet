@@ -18,7 +18,7 @@ from torch.utils.data import Dataset, IterableDataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionType, GraphActionCategorical
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.tasks.MXMNet import model_standalone as mxmnet
+from gflownet.models import mxmnet
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 
 

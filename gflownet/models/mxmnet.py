@@ -1,3 +1,4 @@
+# type: ignore
 """This code is extracted from https://github.com/zetayue/MXMNet
 
 There are some minor API fixes, plus:
@@ -8,6 +9,7 @@ There are some minor API fixes, plus:
   conformation according to rdkit)
 both these functions return None if no valid conformation is found.
 """
+
 
 import math
 import torch
