@@ -2,7 +2,7 @@ import argparse
 import gzip
 import itertools
 import os
-import pickle
+import pickle  # nosec B403
 from collections import defaultdict
 from itertools import count, chain
 

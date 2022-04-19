@@ -1,3 +1,4 @@
+import ast
 import copy
 import tarfile
 import pandas as pd
@@ -373,12 +374,12 @@ class QM9Trial(PyTorchTrial):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng,
                                       random_action_prob=context.get_hparam('random_action_prob'), max_nodes=9,
                                       illegal_action_logreward=context.get_hparam('illegal_action_logreward'),
-                                      epsilon=eval(eps) if isinstance(eps, str) else eps)
+                                      epsilon=ast.literal_eval(eps) if isinstance(eps, str) else eps)
         self.algo.reward_loss_multiplier = context.get_hparam('reward_loss_multiplier')
         self.algo.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
 
         self.task = ConditionalTask(self.training_data, context.get_hparam('temperature_sample_dist'),
-                                    eval(context.get_hparam('temperature_dist_params')), wrap_model=self._wrap_model_mp)
+                                    ast.literal_eval(context.get_hparam('temperature_dist_params')), wrap_model=self._wrap_model_mp)
         self.mb_size = self.context.get_per_slot_batch_size()
         self.clip_grad_param = context.get_hparam('clip_grad_param')
         self.clip_grad_callback = {
@@ -522,7 +523,7 @@ def main():
     trial = QM9Trial(dummy_context)
 
     train_dl = trial.build_training_data_loader()
-    valid_dl = trial.build_validation_data_loader() # noqa
+    valid_dl = trial.build_validation_data_loader()  # noqa
 
     for epoch in range(10):
         for it, batch in enumerate(train_dl):
