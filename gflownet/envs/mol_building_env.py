@@ -1,6 +1,6 @@
 from typing import List, Tuple
 
-from .graph_building_env import Graph, GraphAction, GraphActionType
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType
 
 import rdkit.Chem as Chem
 from rdkit.Chem.rdchem import ChiralType, BondType
@@ -66,9 +66,20 @@ class MolBuildingEnvContext:
         self.num_edge_dim = self.bond_attr_size
         self.num_cond_dim = num_cond_dim
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], t: GraphActionType):
+        # Order in which models have to output logits
+        self.action_type_order = [
+            GraphActionType.Stop,
+            GraphActionType.AddNode,
+            GraphActionType.SetNodeAttr,
+            GraphActionType.AddEdge,
+            GraphActionType.SetEdgeAttr
+        ]
+        self.device = torch.device('cpu')
+
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
-        _, act_row, act_col = [int(i) for i in action_idx]
+        act_type, act_row, act_col = [int(i) for i in action_idx]
+        t = self.action_type_order[act_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -84,7 +95,7 @@ class MolBuildingEnvContext:
             attr, val = self.bond_attr_logit_map[act_col]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction, ts: List[GraphActionType]) -> Tuple[int, int, int]:
+    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
         """Translate a GraphAction to an index tuple"""
         if action.action is GraphActionType.Stop:
             row = col = 0
@@ -109,9 +120,10 @@ class MolBuildingEnvContext:
             #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
             # Because edges are duplicated but logits aren't, divide by two
-            row = row.div(2, rounding_mode='floor')
+            row = row.div(2, rounding_mode='floor') # type: ignore
             col = self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr]
-        return [ts.index(action.action), row, col]
+        type_idx = self.action_type_order.index(action.action)
+        return (type_idx, int(row), int(col))
 
     def graph_to_Data(self, g):
         """Convert a networkx Graph to a torch geometric Data instance"""

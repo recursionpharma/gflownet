@@ -1,7 +1,7 @@
 import copy
 from collections import defaultdict
 import enum
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Union
 
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
@@ -269,15 +269,15 @@ class GraphBuildingEnv:
         return c
 
 
-def generate_forward_trajectory(g: Graph, max_nodes: int = None):
+def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
-    stack = [np.random.randint(0, len(g.nodes))]
+    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)]
     traj = []
     # This map keeps track of node labels in gn, since we have to start from 0
-    relabeling_map = {}
+    relabeling_map: Dict[int, int] = {}
     while len(stack):
         # We pop from the stack until all nodes and edges have been
         # generated and their attributes have been set. Uninserted
@@ -288,7 +288,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
         i = stack.pop(np.random.randint(len(stack)))
 
         gt = gn.copy()  # This is a shallow copy
-        if type(i) is tuple:  # i is an edge
+        if len(i) > 1:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
             if e in gn.edges:
                 # i exists in the new graph, that means some of its attributes need to be added
@@ -314,7 +314,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
                             stack.append((i[1], j))
                     act = GraphAction(GraphActionType.AddNode, source=e[0], value=g.nodes[i[1]]['v'])
                     if len(gn.nodes[e[1]]) < len(g.nodes[i[1]]):
-                        stack.append(i[1])  # we still have attributes to add to node i[1]
+                        stack.append((i[1],))  # we still have attributes to add to node i[1]
                 else:
                     # The endpoint is in the graph, this is an AddEdge action
                     assert e[0] in gn.nodes
@@ -323,25 +323,26 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
 
             if len(gn.edges[e]) < len(g.edges[i]):
                 stack.append(i)  # we still have attributes to add to edge i
-        else:  # i is a node
-            n = relabeling_map.get(i, None)
+        else:  # i is a node, (u,)
+            u = i[0]
+            n = relabeling_map.get(u, None)
             if n not in gn.nodes:
-                # i doesn't exist yet, this should only happen for the first node
+                # u doesn't exist yet, this should only happen for the first node
                 assert len(gn.nodes) == 0
-                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v'])
-                n = relabeling_map[i] = len(relabeling_map)
-                gn.add_node(0, v=g.nodes[i]['v'])
-                for j in g[i]:  # For every neighbour of node i
+                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[u]['v'])
+                n = relabeling_map[u] = len(relabeling_map)
+                gn.add_node(0, v=g.nodes[u]['v'])
+                for j in g[u]:  # For every neighbour of node u
                     if relabeling_map.get(j, None) not in gn:
-                        stack.append((i, j))  # push the (i,j) edge onto the stack
+                        stack.append((u, j))  # push the (u,j) edge onto the stack
             else:
-                # i exists, meaning we have attributes left to add
-                attrs = [j for j in g.nodes[i] if j not in gn.nodes[n]]
+                # u exists, meaning we have attributes left to add
+                attrs = [j for j in g.nodes[u] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
-                gn.nodes[n][attr] = g.nodes[i][attr]
-                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[i][attr])
-            if len(gn.nodes[n]) < len(g.nodes[i]):
-                stack.append(i)  # we still have attributes to add to node i
+                gn.nodes[n][attr] = g.nodes[u][attr]
+                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[u][attr])
+            if len(gn.nodes[n]) < len(g.nodes[u]):
+                stack.append((u,))  # we still have attributes to add to node u
         traj.append((gt, act))
     traj.append((gn, GraphAction(GraphActionType.Stop)))
     return traj
@@ -502,7 +503,7 @@ class GraphActionCategorical:
             t = type_max_idx[i]
             # Subtract from the slice of that type and index, since the computed
             # row position is batch-wise rather graph-wise
-            actions.append((t, row_pos[t][i] - self.slice[t][i], col_max[t][1][i]))
+            actions.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
         return actions

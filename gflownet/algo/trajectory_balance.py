@@ -1,14 +1,23 @@
 import copy
 import numpy as np
 from itertools import count
+from typing import Tuple, List
 
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+from torch import Tensor
 from torch_scatter import scatter
 
-from gflownet.envs.graph_building_env import GraphActionType, generate_forward_trajectory
+from gflownet.envs.graph_building_env import GraphActionType, GraphActionCategorical, generate_forward_trajectory
 
+class TrajectoryBalanceModel(nn.Module):
+
+    def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
+        raise NotImplementedError()
+
+    def logZ(self, cond_info: Tensor) -> Tensor:
+        raise NotImplementedError()
 
 class TrajectoryBalance:
     """
@@ -51,12 +60,12 @@ class TrajectoryBalance:
             col = self.rng.choice(cat.logits[which].shape[1])
             actions[i] = (which, row, col)
 
-    def create_training_data_from_own_samples(self, model, n, cond_info):
+    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
         """Generate trajectories by sampling a model
 
         Parameters
         ----------
-        model: nn.Module
+        model: TrajectoryBalanceModel
            The model being sampled
         graphs: List[Graph]
             List of N Graph endpoints
@@ -76,15 +85,15 @@ class TrajectoryBalance:
         """
         ctx = self.ctx
         env = self.env
-        dev = model.device
+        dev = self.ctx.device
         cond_info = cond_info.to(dev)
         logZ_pred = model.logZ(cond_info)
         # This will be returned as training data
         data = [{'traj': [], 'reward_pred': None, 'is_valid': True} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
         zero = torch.tensor([0], device=dev).float()
-        fwd_logprob = [[] for i in range(n)]
-        bck_logprob = [[zero] for i in range(n)]  # zero in case there is a single invalid action
+        fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
+        bck_logprob: List[List[Tensor]] = [[zero] for i in range(n)]  # zero in case there is a single invalid action
 
         graphs = [env.new() for i in range(n)]
         done = [False] * n
@@ -115,7 +124,7 @@ class TrajectoryBalance:
                 actions = fwd_cat.sample()
             self._corrupt_actions(actions, fwd_cat)
             graph_actions = [
-                ctx.aidx_to_GraphAction(g, a, model.action_type_order[a[0]])
+                ctx.aidx_to_GraphAction(g, a)
                 for g, a in zip(torch_graphs, actions)
             ]
             log_probs = fwd_cat.log_prob(actions)
@@ -169,7 +178,7 @@ class TrajectoryBalance:
             data[i]['bck_logprob'] = sum(bck_logprob[i])
             if self.bootstrap_own_reward:
                 if not data[i]['is_valid']:
-                    logprob_of_illegal.append(sum(fwd_logprob[i]).item())
+                    logprob_of_illegal.append(data[i]['fwd_logprob'].item())
                 # If we are bootstrapping, we can report the theoretical loss as well
                 numerator = data[i]['fwd_logprob'] + logZ_pred[i]
                 denominator = data[i]['bck_logprob'] + data[i]['reward_pred'].log()
@@ -195,19 +204,17 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards, action_type_order):
+    def construct_batch(self, trajs, cond_info, rewards):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
         ----------
         trajs: List[List[tuple[Graph, GraphAction]]]
             A list of N trajectories.
-        cond_info: torch.Tensor
+        cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
-        rewards: torch.Tensor
+        rewards: Tensor
             The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
-        action_type_order: List[GraphActionType]
-            The order in which models output graph action logits.
 
         Returns
         -------
@@ -215,7 +222,7 @@ class TrajectoryBalance:
              A (CPU) Batch object with relevant attributes added
         """
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
-        actions = [self.ctx.GraphAction_to_aidx(g, a, action_type_order)
+        actions = [self.ctx.GraphAction_to_aidx(g, a)
                    for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])]
         num_backward = torch.tensor([
             # Count the number of backward transitions from s_{t+1},
@@ -232,12 +239,12 @@ class TrajectoryBalance:
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
 
-    def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):
+    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
         """Compute the losses over trajectories contained in the batch
 
         Parameters
         ----------
-        model: nn.Module
+        model: TrajectoryBalanceModel
            A GNN taking in a batch of graphs as input as per constructed by `self.construct_batch`.
            Must have a `logZ` attribute, itself a model, which predicts log of Z(cond_info)
         batch: gd.Batch
@@ -245,16 +252,16 @@ class TrajectoryBalance:
         num_bootstrap: int
           the number of trajectories for which the reward loss is computed. Ignored if 0.        
         """
-        dev = model.device
+        dev = batch.x.device
         # A single trajectory is comprised of many graphs
-        num_trajs = batch.traj_lens.shape[0]
+        num_trajs = int(batch.traj_lens.shape[0])
         rewards = batch.rewards
         cond_info = batch.cond_info
 
         # This index says which trajectory each graph belongs to, so
         # it will look like [0,0,0,0,1,1,1,2,...] if trajectory 0 is
         # of length 4, trajectory 1 of length 3, and so on.
-        batch_idx = torch.arange(batch.traj_lens.shape[0], device=dev).repeat_interleave(batch.traj_lens)
+        batch_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens)
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 

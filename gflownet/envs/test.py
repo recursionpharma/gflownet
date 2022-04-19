@@ -4,8 +4,8 @@ It trains a model to overfit generating one single molecule.
 """
 
 from tqdm import tqdm
-from graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv, generate_forward_trajectory
-from mol_building_env import MolBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv, generate_forward_trajectory
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
 
 import torch
 import torch.nn as nn
@@ -82,7 +82,7 @@ def main(smi, n_steps):
         print(a.action, a.source, a.target, a.value, a.relabel)
     graphs = [ctx.graph_to_Data(i) for i, _ in traj]
     traj_batch = ctx.collate(graphs)
-    actions = [ctx.GraphAction_to_aidx(g, a, model.action_type_order) for g, a in zip(graphs, [i[1] for i in traj])]
+    actions = [ctx.GraphAction_to_aidx(g, a) for g, a in zip(graphs, [i[1] for i in traj])]
 
     # Train to overfit
     for i in tqdm(range(n_steps)):
@@ -113,7 +113,7 @@ def main(smi, n_steps):
             # some probability is left on unlikely (wrong) steps
             print('oops, starting step over')
             continue
-        graph_action = ctx.aidx_to_GraphAction(tg, action, model.action_type_order[action[0]])
+        graph_action = ctx.aidx_to_GraphAction(tg, action)
         print(graph_action.action, graph_action.source, graph_action.target, graph_action.value)
         if graph_action.action is GraphActionType.Stop:
             break

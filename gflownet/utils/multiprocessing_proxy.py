@@ -60,10 +60,11 @@ class MPModelProxy:
             Types that will be cast to cuda when received as arguments of method calls. 
             torch.Tensor is cast by default.
         """
-        self.in_queues = [mp.Queue() for i in range(num_workers)]
-        self.out_queues = [mp.Queue() for i in range(num_workers)]
+        self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore 
+        self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
         self.model = model
+        self.device = next(model.parameters()).device
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -81,7 +82,7 @@ class MPModelProxy:
                     continue
                 attr, *args = r
                 f = getattr(self.model, attr)
-                args = [i.to(self.model.device) if isinstance(i, self.cuda_types) else i
+                args = [i.to(self.device) if isinstance(i, self.cuda_types) else i
                         for i in args]
                 result = f(*args)
                 if isinstance(result, (list, tuple)):

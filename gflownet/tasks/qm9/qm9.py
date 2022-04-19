@@ -19,7 +19,7 @@ from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionType, 
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.tasks.MXMNet import model_standalone as mxmnet
-from gflownet.utils.multiprocessing import wrap_model_mp
+from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 
 
 class QM9Dataset(Dataset):
@@ -191,7 +191,7 @@ class QM9SamplingIterator(IterableDataset):
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info, rewards, self.model.action_type_order)
+            batch = self.algo.construct_batch(trajs, cond_info, rewards)
             batch.smiles = smiles
             # TODO: There is a smarter way to do this
             # batch.pin_memory()
@@ -229,15 +229,9 @@ class Model(nn.Module):
         self.emb2stop = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
         self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
-        self.action_type_order = [
-            GraphActionType.Stop,
-            GraphActionType.AddNode,
-            GraphActionType.SetNodeAttr,
-            GraphActionType.AddEdge,
-            GraphActionType.SetEdgeAttr
-        ]
+        self.action_type_order = env_ctx.action_type_order
 
-    def forward(self, g: gd.Batch, cond: torch.tensor):
+    def forward(self, g: gd.Batch, cond: torch.Tensor):
         o = self.x2h(g.x)
         e = self.e2h(g.edge_attr)
         c = self.c2h(cond)
@@ -299,11 +293,11 @@ class ConditionalTask:
 
     def load_task_models(self):
         gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
-        gap_model.device = torch.device('cuda')
         # TODO: this path should be part of the config?
         state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')
         gap_model.load_state_dict(state_dict)
         gap_model.cuda()
+        gap_model.device = torch.device('cuda')
         gap_model = self._wrap_model(gap_model)
         return {'mxmnet_gap': gap_model}
 
@@ -340,6 +334,7 @@ class QM9Trial(PyTorchTrial):
         self.context = context
         default_hps = {
             # TODO: write down default hyperparameters to reduce pollution in config files
+            'learning_rate': 1e-4,
         }
         hps = {
             # This c = {**a, **b} notation overrides a[k] with b[k] in
@@ -359,12 +354,10 @@ class QM9Trial(PyTorchTrial):
                       num_emb=context.get_hparam('num_emb'),
                       num_layers=context.get_hparam('num_layers'))
         self.model = context.wrap_model(model)
-        self.model.device = torch.device('cuda')
 
         self.sampling_tau = context.get_hparam('sampling_tau')
         if self.sampling_tau > 0:
             self.sampling_model = context.wrap_model(copy.deepcopy(model))
-            self.sampling_model.device = torch.device('cuda')
         else:
             self.sampling_model = self.model
 
@@ -421,7 +414,6 @@ class QM9Trial(PyTorchTrial):
         """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers."""
         if self.num_workers > 0:
             placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
-            placeholder.action_type_order = self.model.action_type_order
             return placeholder
         return model
 
@@ -438,8 +430,6 @@ class QM9Trial(PyTorchTrial):
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers, persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, torch.Tensor]:
-        if not hasattr(self.model, 'device'):
-            self.model.device = self.context.to_device(torch.ones(1)).device
         losses, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
         avg_offline_loss = losses[:self.mb_size].mean()
         avg_online_loss = losses[self.mb_size:].mean()
@@ -466,9 +456,7 @@ class QM9Trial(PyTorchTrial):
                 'invalid_losses': info['invalid_losses'].item(),
                 }
 
-    def evaluate_batch(self, batch: Tuple[List[str], torch.Tensor]) -> Dict[str, Any]:
-        if not hasattr(self.model, 'device'):
-            self.model.device = self.context.to_device(torch.ones(1)).device
+    def evaluate_batch(self, batch: gd.Batch) -> Dict[str, Any]:
         losses, info = self.algo.compute_batch_losses(
             self.model, batch, num_bootstrap=len(batch.smiles))
         loss = losses.mean()
@@ -495,9 +483,6 @@ class DummyContext:
 
     def wrap_optimizer(self, opt):
         return opt
-
-    def wrap_lr_scheduler(self, sc, *a, **kw):
-        return sc
 
     def get_hparams(self):
         return self.hps
