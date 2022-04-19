@@ -1,24 +1,25 @@
 import ast
 import copy
 import tarfile
-import pandas as pd
-import numpy as np
 from typing import Any, Dict
 
+import numpy as np
+import pandas as pd
 import rdkit.Chem as Chem
-from rdkit import RDLogger
-
-from determined.pytorch import DataLoader, PyTorchTrial, PyTorchTrialContext, LRScheduler
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
-from torch_geometric.utils import add_self_loops
+from determined.pytorch import (DataLoader, LRScheduler, PyTorchTrial,
+                                PyTorchTrialContext)
+from rdkit import RDLogger
 from torch.utils.data import Dataset, IterableDataset
+from torch_geometric.utils import add_self_loops
 
-from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphActionCategorical
-from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.envs.graph_building_env import (GraphActionCategorical,
+                                              GraphBuildingEnv)
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import mxmnet
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 

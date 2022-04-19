@@ -1,14 +1,14 @@
 from typing import List, Tuple
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType
-
-import rdkit.Chem as Chem
-from rdkit.Chem.rdchem import ChiralType, BondType
-import numpy as np
 import networkx as nx
-
+import numpy as np
+import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
+from rdkit.Chem.rdchem import BondType, ChiralType
+
+from gflownet.envs.graph_building_env import (Graph, GraphAction,
+                                              GraphActionType)
 
 
 class MolBuildingEnvContext:

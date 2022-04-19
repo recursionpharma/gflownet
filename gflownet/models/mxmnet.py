@@ -14,13 +14,13 @@ both these functions return None if no valid conformation is found.
 
 
 import math
+
 import torch
 import torch.nn as nn
 from torch_geometric.nn import global_add_pool, radius
-from torch_geometric.utils import remove_self_loops, add_self_loops
-from torch_sparse import SparseTensor
+from torch_geometric.utils import add_self_loops, remove_self_loops
 from torch_scatter import scatter
-
+from torch_sparse import SparseTensor
 
 HAR2EV = 27.2113825435
 KCALMOL2EV = 0.04336414
@@ -157,32 +157,31 @@ class MXMNet(nn.Module):
         output = global_add_pool(node_sum, batch)
         return output.view(-1)
 
-import numpy as np
+import glob
 import inspect
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import Parameter, Sequential, ModuleList, Linear
-from torch_geometric.utils import remove_self_loops, add_self_loops, sort_edge_index
-from torch_geometric.data import InMemoryDataset, download_url, extract_zip, Data
-from torch_sparse import coalesce
-from torch_scatter import scatter
-from torch_geometric.io import read_txt_array
-
-
-from operator import itemgetter
-from collections import OrderedDict
-
 import os
 import os.path as osp
 import shutil
-import glob
+from collections import OrderedDict
+from math import pi as PI
+from math import sqrt
+from operator import itemgetter
 
+import numpy as np
 import sympy as sym
-from math import sqrt, pi as PI
-
-from scipy.optimize import brentq
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from scipy import special as sp
+from scipy.optimize import brentq
+from torch.nn import Linear, ModuleList, Parameter, Sequential
+from torch_geometric.data import (Data, InMemoryDataset, download_url,
+                                  extract_zip)
+from torch_geometric.io import read_txt_array
+from torch_geometric.utils import (add_self_loops, remove_self_loops,
+                                   sort_edge_index)
+from torch_scatter import scatter
+from torch_sparse import coalesce
 
 try:
     import sympy as sym
@@ -702,10 +701,11 @@ class MessagePassing(torch.nn.Module):
 
         return inputs
 
+import copy
+
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-import copy
 params = AllChem.ETKDGv3()
 params.useSmallRingTorsions = True
 def rdkit_conformation(mol, n=5, addHs=False):

@@ -1,15 +1,17 @@
 import copy
-import numpy as np
 from itertools import count
-from typing import Tuple, List
+from typing import List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter
 
-from gflownet.envs.graph_building_env import GraphActionType, GraphActionCategorical, generate_forward_trajectory
+from gflownet.envs.graph_building_env import (GraphActionCategorical,
+                                              GraphActionType,
+                                              generate_forward_trajectory)
 
 
 class TrajectoryBalanceModel(nn.Module):

@@ -1,7 +1,6 @@
-from setuptools import find_packages, setup
-
 # TODO: remove roadie dependency?
 import roadie
+from setuptools import find_packages, setup
 
 (install_requires, extras_require) = roadie.get_requirements()
 
