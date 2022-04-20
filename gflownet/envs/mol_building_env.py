@@ -1,14 +1,13 @@
 from typing import List, Tuple
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType
-
-import rdkit.Chem as Chem
-from rdkit.Chem.rdchem import ChiralType, BondType
-import numpy as np
 import networkx as nx
-
+import numpy as np
+import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
+from rdkit.Chem.rdchem import BondType, ChiralType
+
+from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionType)
 
 
 class MolBuildingEnvContext:
@@ -17,7 +16,6 @@ class MolBuildingEnvContext:
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
 
     """
-
     def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
@@ -68,10 +66,7 @@ class MolBuildingEnvContext:
 
         # Order in which models have to output logits
         self.action_type_order = [
-            GraphActionType.Stop,
-            GraphActionType.AddNode,
-            GraphActionType.SetNodeAttr,
-            GraphActionType.AddEdge,
+            GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetNodeAttr, GraphActionType.AddEdge,
             GraphActionType.SetEdgeAttr
         ]
         self.device = torch.device('cpu')
@@ -120,7 +115,7 @@ class MolBuildingEnvContext:
             #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
             # Because edges are duplicated but logits aren't, divide by two
-            row = row.div(2, rounding_mode='floor') # type: ignore
+            row = row.div(2, rounding_mode='floor')  # type: ignore
             col = self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr]
         type_idx = self.action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
@@ -196,7 +191,7 @@ class MolBuildingEnvContext:
         try:
             mol = self.graph_to_mol(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
-        except:
+        except Exception:
             return False
         if mol is None:
             return False

@@ -1,14 +1,13 @@
 import copy
-from collections import defaultdict
 import enum
-from typing import List, Tuple, Dict, Union
+from collections import defaultdict
+from typing import Dict, List, Tuple
 
 import networkx as nx
-from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
-
 import torch
 import torch_geometric.data as gd
+from networkx.algorithms.isomorphism import is_isomorphic
 from torch_scatter import scatter, scatter_max
 
 
@@ -93,25 +92,25 @@ class GraphAction:
 class GraphBuildingEnv:
     """
     A Graph building environment which induces a DAG state space, compatible with GFlowNet.
-    Supports forward and backward actions, with a `parents` function that list parents of 
+    Supports forward and backward actions, with a `parents` function that list parents of
     forward actions.
 
     Edges and nodes can have attributes added to them in a key:value style.
 
-    Edges and nodes are created with _implicit_ default attribute 
+    Edges and nodes are created with _implicit_ default attribute
     values (e.g. chirality, single/double bondness) so that:
-        - an agent gets to do an extra action to set that attribute, but only 
+        - an agent gets to do an extra action to set that attribute, but only
           if it is still default-valued (DAG property preserved)
         - we can generate a legal action for any attribute that isn't a default one.
     """
-
     def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
         """A graph building environment instance
 
         Parameters
         ----------
         allow_add_edge: bool
-            if True, allows this action and computes AddEdge parents (i.e. if False, this env only allows for tree generation)
+            if True, allows this action and computes AddEdge parents (i.e. if False, this
+            env only allows for tree generation)
         allow_node_attr: bool
             if True, allows this action and computes SetNodeAttr parents
         allow_edge_attr: bool
@@ -372,7 +371,7 @@ class GraphActionCategorical:
             which there are `m` possible actions. `n` should thus be
             equal to the sum of the number of such elements for each
             graph in the Batch object. The length of the `logits` list
-            should thus be equal to the number of element types (in 
+            should thus be equal to the number of element types (in
             other words there should be one tensor per type).
         keys: List[Union[str, None]]
             The keys corresponding to the Graph elements for each
@@ -386,12 +385,10 @@ class GraphActionCategorical:
         types: List[GraphActionType]
            The action type each logit corresponds to.
         deduplicate_edge_index: bool, default=True
-           If true, this means that the 'edge_index' keys have been reduced 
+           If true, this means that the 'edge_index' keys have been reduced
            by e_i[::2] (presumably because the graphs are undirected)
         """
         # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
-        # TODO: cuda-ize
-        #self.g = graphs
         self.num_graphs = graphs.num_graphs
         # The logits
         self.logits = logits
@@ -415,8 +412,9 @@ class GraphActionCategorical:
             else torch.arange(graphs.num_graphs, device=dev) for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
-        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(
-            graphs.num_graphs, device=dev) for k in keys]
+        self.slice = [
+            graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs, device=dev) for k in keys
+        ]
         self.logprobs = None
 
         if deduplicate_edge_index and 'edge_index' in keys:
@@ -454,8 +452,7 @@ class GraphActionCategorical:
         exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
-            for i, b in zip(exp_logits, self.batch)
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
         ]).log()
         # log probabilities is log(exp(logit) / Z)
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]

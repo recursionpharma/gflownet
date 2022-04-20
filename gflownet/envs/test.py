@@ -3,14 +3,15 @@ This test shows an example of how to setup a model and environment.
 It trains a model to overfit generating one single molecule.
 """
 
-from tqdm import tqdm
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnv, generate_forward_trajectory
-from gflownet.envs.mol_building_env import MolBuildingEnvContext
-
 import torch
 import torch.nn as nn
-import torch_geometric.nn as gnn
 import torch_geometric.data as gd
+import torch_geometric.nn as gnn
+from tqdm import tqdm
+
+from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, GraphBuildingEnv,
+                                              generate_forward_trajectory)
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
 
 
 class Model(nn.Module):
@@ -67,9 +68,9 @@ def main(smi, n_steps):
     generated that molecule
 
     """
-    from rdkit import Chem
-    import numpy as np
     import networkx as nx
+    import numpy as np
+    from rdkit import Chem
     np.random.seed(123)
     env = GraphBuildingEnv()
     ctx = MolBuildingEnvContext()
@@ -134,4 +135,4 @@ if __name__ == '__main__':
     # Simple mol
     main("C1N2C3C2C2C4OC12C34", 500)
     # More complicated mol
-    #main("O=C(NC1=CC=2NC(=NC2C=C1)C=3C=CC=CC3)C4=NN(C=C4N(=O)=O)C", 2000)
+    # main("O=C(NC1=CC=2NC(=NC2C=C1)C=3C=CC=CC3)C4=NN(C=C4N(=O)=O)C", 2000)
