@@ -9,9 +9,7 @@ import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter
 
-from gflownet.envs.graph_building_env import (GraphActionCategorical,
-                                              GraphActionType,
-                                              generate_forward_trajectory)
+from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, generate_forward_trajectory)
 
 
 class TrajectoryBalanceModel(nn.Module):

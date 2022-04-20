@@ -10,15 +10,13 @@ import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
-from determined.pytorch import (DataLoader, LRScheduler, PyTorchTrial,
-                                PyTorchTrialContext)
+from determined.pytorch import (DataLoader, LRScheduler, PyTorchTrial, PyTorchTrialContext)
 from rdkit import RDLogger
 from torch.utils.data import Dataset, IterableDataset
 from torch_geometric.utils import add_self_loops
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.envs.graph_building_env import (GraphActionCategorical,
-                                              GraphBuildingEnv)
+from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphBuildingEnv)
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import mxmnet
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
@@ -380,7 +378,8 @@ class QM9Trial(PyTorchTrial):
         self.algo.bootstrap_own_reward = context.get_hparam('bootstrap_own_reward')
 
         self.task = ConditionalTask(self.training_data, context.get_hparam('temperature_sample_dist'),
-                                    ast.literal_eval(context.get_hparam('temperature_dist_params')), wrap_model=self._wrap_model_mp)
+                                    ast.literal_eval(context.get_hparam('temperature_dist_params')),
+                                    wrap_model=self._wrap_model_mp)
         self.mb_size = self.context.get_per_slot_batch_size()
         self.clip_grad_param = context.get_hparam('clip_grad_param')
         self.clip_grad_callback = {

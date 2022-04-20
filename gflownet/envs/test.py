@@ -9,9 +9,7 @@ import torch_geometric.data as gd
 import torch_geometric.nn as gnn
 from tqdm import tqdm
 
-from gflownet.envs.graph_building_env import (GraphActionCategorical,
-                                              GraphActionType,
-                                              GraphBuildingEnv,
+from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, GraphBuildingEnv,
                                               generate_forward_trajectory)
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 
