@@ -12,6 +12,7 @@ import torch_geometric.data as gd
 import torch_geometric.nn as gnn
 from determined.pytorch import (DataLoader, LRScheduler, PyTorchTrial, PyTorchTrialContext)
 from rdkit import RDLogger
+from torch import Tensor
 from torch.utils.data import Dataset, IterableDataset
 from torch_geometric.utils import add_self_loops
 
@@ -151,7 +152,7 @@ class QM9SamplingIterator(IterableDataset):
             num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
             cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
-            is_valid = torch.ones(cond_info.shape[0]).bool()
+            is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
 
             # Sample some dataset data
             smiles, flat_rewards = map(list, zip(*[self._data[i] for i in idcs]))
@@ -161,12 +162,12 @@ class QM9SamplingIterator(IterableDataset):
             if self.online_batch_size > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, self.online_batch_size,
-                                                                             cond_info[num_offline:])
+                                                                             cond_info['encoding'][num_offline:])
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_reward
                     pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
-                    raise ValueError('make this flat rewards')
+                    raise ValueError('make this flat rewards')  # TODO
                 else:
                     # Otherwise
                     valid_idcs = torch.tensor([
@@ -190,7 +191,7 @@ class QM9SamplingIterator(IterableDataset):
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info, rewards)
+            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
             batch.smiles = smiles
             # TODO: There is a smarter way to do this
             # batch.pin_memory()
@@ -200,6 +201,12 @@ class QM9SamplingIterator(IterableDataset):
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
     n = [n_in] + [n_hid] * n_layer + [n_out]
     return nn.Sequential(*sum([[nn.Linear(n[i], n[i + 1]), act()] for i in range(n_layer + 1)], [])[:-1])
+
+
+def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
+    bins = torch.linspace(vmin, vmax, n_bins)
+    gap = bins[1] - bins[0]
+    return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
 
 
 class Model(nn.Module):
@@ -303,12 +310,13 @@ class ConditionalTask:
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-        return torch.tensor(beta).reshape((-1, 1))
+        beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)  # TODO: hyperparameters
+        return {'beta': torch.tensor(beta), 'encoding': beta_enc}
 
     def cond_info_to_reward(self, cond_info, flat_reward):
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward**cond_info[:, 0]
+        return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols):
         graphs = [mxmnet.mol2graph(i) for i in mols]
@@ -341,7 +349,7 @@ class QM9Trial(PyTorchTrial):
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=1)
+        self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=32)
         self.training_data = QM9Dataset(self.context.get_data_config()['h5_path'], train=True)
 
         model = Model(self.ctx, num_emb=context.get_hparam('num_emb'), num_layers=context.get_hparam('num_layers'))
