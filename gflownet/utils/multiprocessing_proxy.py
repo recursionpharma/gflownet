@@ -79,6 +79,8 @@ class MPModelProxy:
                     r = q.get(True, 1e-5)
                 except queue.Empty:
                     continue
+                except ConnectionError:
+                    break
                 attr, *args = r
                 f = getattr(self.model, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
