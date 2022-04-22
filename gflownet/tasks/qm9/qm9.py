@@ -509,7 +509,7 @@ def main():
         'temperature_sample_dist': 'uniform',
         'temperature_dist_params': '(.5, 32)',
         'weight_decay': 1e-8,
-        'num_data_loader_workers': 8,
+        'num_data_loader_workers': 0,
         'momentum': 0.9,
         'adam_eps': 1e-8,
         'lr_decay': 10000,
