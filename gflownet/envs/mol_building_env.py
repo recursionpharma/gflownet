@@ -7,10 +7,10 @@ import torch
 import torch_geometric.data as gd
 from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionType)
+from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionType, GraphBuildingEnvContext)
 
 
-class MolBuildingEnvContext:
+class MolBuildingEnvContext(GraphBuildingEnvContext):
     """A specification of what is being generated for a GraphBuildingEnv
 
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).

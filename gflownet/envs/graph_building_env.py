@@ -509,3 +509,7 @@ class GraphActionCategorical:
         """The log-probability of a list of action tuples"""
         logprobs = self.logsoftmax()
         return torch.stack([logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in enumerate(actions)])
+
+
+class GraphBuildingEnvContext:
+    pass  # TODO: fill this in

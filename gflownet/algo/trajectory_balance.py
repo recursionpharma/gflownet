@@ -1,15 +1,15 @@
 import copy
 from itertools import count
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, GraphBuildingEnv,
+                                              GraphBuildingEnvContext, generate_forward_trajectory)
 from torch import Tensor
 from torch_scatter import scatter
-
-from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, generate_forward_trajectory)
 
 
 class TrajectoryBalanceModel(nn.Module):
@@ -26,19 +26,20 @@ class TrajectoryBalance:
     Nikolay Malkin, Moksh Jain, Emmanuel Bengio, Chen Sun, Yoshua Bengio
     https://arxiv.org/abs/2201.13259
     """
-    def __init__(self, env, ctx, rng, max_len=None, random_action_prob=None, max_nodes=None,
-                 illegal_action_logreward=-50, epsilon=-60):
+    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
+                 hps: Dict[str, Any], max_len=None, max_nodes=None):
         self.ctx = ctx
         self.env = env
-        self.max_len = max_len
-        self.random_action_prob = random_action_prob
-        self.illegal_action_logreward = illegal_action_logreward
-        self.bootstrap_own_reward = True
-        self.sanitize_samples = True
-        self.max_nodes = max_nodes
         self.rng = rng
-        self.epsilon = epsilon
-        self.reward_loss_multiplier = 1
+        self.max_len = max_len
+        self.max_nodes = max_nodes
+        self.random_action_prob = hps['random_action_prob']
+        self.illegal_action_logreward = hps['illegal_action_logreward']
+        self.bootstrap_own_reward = hps['bootstrap_own_reward']
+        self.sanitize_samples = True
+        self.epsilon = hps['tb_epsilon']
+        self.reward_loss_multiplier = hps['reward_loss_multiplier']
+        # Experimental flags
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = False
         self.tb_loss_is_huber = False
@@ -46,15 +47,15 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.sample_temp = 1
 
-    def _corrupt_actions(self, actions, cat):
+    def _corrupt_actions(self, actions: List[Tuple[int, int, int]], cat: GraphActionCategorical):
         """Sample from the uniform policy with probability `self.random_action_prob`"""
         # Should this be a method of GraphActionCategorical?
         if self.random_action_prob <= 0:
             return
-        corrupted, = (np.random.uniform(size=len(actions)) < self.random_action_prob).nonzero()
+        corrupted, = (self.rng.uniform(size=len(actions)) < self.random_action_prob).nonzero()
         for i in corrupted:
-            n_in_batch = [(b == i).sum().item() for b in cat.batch]
-            n_each = np.float32([logit.shape[1] * nb for logit, nb in zip(cat.logits, n_in_batch)])
+            n_in_batch = [int((b == i).sum()) for b in cat.batch]
+            n_each = np.array([float(logit.shape[1]) * nb for logit, nb in zip(cat.logits, n_in_batch)])
             which = self.rng.choice(len(n_each), p=n_each / n_each.sum())
             row = self.rng.choice(n_in_batch[which])
             col = self.rng.choice(cat.logits[which].shape[1])
@@ -297,23 +298,15 @@ class TrajectoryBalance:
             denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
 
         if self.tb_loss_is_mae:
-            unnorm = traj_losses = abs(numerator - denominator)
+            traj_losses = abs(numerator - denominator)
         elif self.tb_loss_is_huber:
             pass  # TODO
         else:
-            unnorm = traj_losses = (numerator - denominator).pow(2)
+            traj_losses = (numerator - denominator).pow(2)
 
         # Normalize losses by trajectory length
         if self.length_normalize_losses:
             traj_losses = traj_losses / batch.traj_lens
-
-        info = {
-            'unnorm_traj_losses': unnorm,
-            'invalid_trajectories': invalid_mask.mean() * 2,
-            'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
-            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
-            'logZ': Z.mean().item()
-        }
 
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)
@@ -321,8 +314,21 @@ class TrajectoryBalance:
                 reward_losses = abs(rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp())
             else:
                 reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
-            info['reward_losses'] = reward_losses
+            reward_loss = reward_losses.mean()
+        else:
+            reward_loss = 0
+
+        loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
+        info = {
+            'offline_loss': traj_losses[:batch.num_offline].mean(),
+            'online_loss': traj_losses[batch.num_offline:].mean(),
+            'reward_loss': reward_loss,
+            'invalid_trajectories': invalid_mask.mean() * 2,
+            'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
+            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            'logZ': Z.mean(),
+        }
 
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
-        return traj_losses, info
+        return loss, info
