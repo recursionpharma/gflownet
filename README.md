@@ -21,8 +21,8 @@ The GNN model can be trained on a mix of existing data (offline) and self-genera
 - [models](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/models), contains model definitions.
 - [tasks](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/tasks), contains training code.
     -  [qm9](https://github.com/recursionpharma/gflownet/blob/trunk/gflownet/tasks/qm9/qm9.py), temperature-conditional molecule sampler based on QM9's HOMO-LUMO gap data as a reward.
-- [utils](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/tasks), contains utilities (multiprocessing).
-- [`train.py`](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/train.py), general GFlowNet training setup.
+- [utils](gflownet/utils), contains utilities (multiprocessing).
+- [`train.py`](gflownet/train.py), general GFlowNet training setup.
 ## Installation
 
 ### PIP
