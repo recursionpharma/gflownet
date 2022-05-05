@@ -1,3 +1,4 @@
+import queue
 import threading
 
 import torch
@@ -7,7 +8,6 @@ import torch.multiprocessing as mp
 class MPModelPlaceholder:
     """This class can be used as a Model in a worker process, and
     translates calls to queries to the main process"""
-
     def __init__(self, in_queues, out_queues):
         self.qs = in_queues, out_queues
         self.device = torch.device('cpu')
@@ -36,7 +36,7 @@ class MPModelPlaceholder:
 class MPModelProxy:
     """This class maintains a reference to an in-cuda-memory model, and
     creates a `placeholder` attribute which can be safely passed to
-    multiprocessing DataLoader workers. 
+    multiprocessing DataLoader workers.
 
     This placeholder model sends messages accross multiprocessing
     queues, which are received by this proxy instance, which calls the
@@ -46,7 +46,6 @@ class MPModelProxy:
     processes.
 
     """
-
     def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple):
         """Construct a multiprocessing model proxy for torch DataLoaders.
 
@@ -57,13 +56,14 @@ class MPModelProxy:
         num_workers: int
             Number of DataLoader workers
         cast_types: tuple
-            Types that will be cast to cuda when received as arguments of method calls. 
+            Types that will be cast to cuda when received as arguments of method calls.
             torch.Tensor is cast by default.
         """
-        self.in_queues = [mp.Queue() for i in range(num_workers)]
-        self.out_queues = [mp.Queue() for i in range(num_workers)]
+        self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
+        self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
         self.model = model
+        self.device = next(model.parameters()).device
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -77,12 +77,13 @@ class MPModelProxy:
             for qi, q in enumerate(self.in_queues):
                 try:
                     r = q.get(True, 1e-5)
-                except:
+                except queue.Empty:
                     continue
+                except ConnectionError:
+                    break
                 attr, *args = r
                 f = getattr(self.model, attr)
-                args = [i.to(self.model.device) if isinstance(i, self.cuda_types) else i
-                        for i in args]
+                args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 result = f(*args)
                 if isinstance(result, (list, tuple)):
                     msg = [i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i for i in result]
@@ -104,7 +105,7 @@ def wrap_model_mp(model, num_workers, cast_types):
     num_workers: int
         Number of DataLoader workers
     cast_types: tuple
-        Types that will be cast to cuda when received as arguments of method calls. 
+        Types that will be cast to cuda when received as arguments of method calls.
         torch.Tensor is cast by default.
 
     Returns

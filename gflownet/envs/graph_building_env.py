@@ -1,14 +1,13 @@
 import copy
-from collections import defaultdict
 import enum
-from typing import List, Tuple
+from collections import defaultdict
+from typing import Dict, List, Tuple
 
 import networkx as nx
-from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
-
 import torch
 import torch_geometric.data as gd
+from networkx.algorithms.isomorphism import is_isomorphic
 from torch_scatter import scatter, scatter_max
 
 
@@ -93,25 +92,25 @@ class GraphAction:
 class GraphBuildingEnv:
     """
     A Graph building environment which induces a DAG state space, compatible with GFlowNet.
-    Supports forward and backward actions, with a `parents` function that list parents of 
+    Supports forward and backward actions, with a `parents` function that list parents of
     forward actions.
 
     Edges and nodes can have attributes added to them in a key:value style.
 
-    Edges and nodes are created with _implicit_ default attribute 
+    Edges and nodes are created with _implicit_ default attribute
     values (e.g. chirality, single/double bondness) so that:
-        - an agent gets to do an extra action to set that attribute, but only 
+        - an agent gets to do an extra action to set that attribute, but only
           if it is still default-valued (DAG property preserved)
         - we can generate a legal action for any attribute that isn't a default one.
     """
-
     def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
         """A graph building environment instance
 
         Parameters
         ----------
         allow_add_edge: bool
-            if True, allows this action and computes AddEdge parents (i.e. if False, this env only allows for tree generation)
+            if True, allows this action and computes AddEdge parents (i.e. if False, this
+            env only allows for tree generation)
         allow_node_attr: bool
             if True, allows this action and computes SetNodeAttr parents
         allow_edge_attr: bool
@@ -269,15 +268,15 @@ class GraphBuildingEnv:
         return c
 
 
-def generate_forward_trajectory(g: Graph, max_nodes: int = None):
+def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
-    stack = [np.random.randint(0, len(g.nodes))]
+    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)]
     traj = []
     # This map keeps track of node labels in gn, since we have to start from 0
-    relabeling_map = {}
+    relabeling_map: Dict[int, int] = {}
     while len(stack):
         # We pop from the stack until all nodes and edges have been
         # generated and their attributes have been set. Uninserted
@@ -288,7 +287,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
         i = stack.pop(np.random.randint(len(stack)))
 
         gt = gn.copy()  # This is a shallow copy
-        if type(i) is tuple:  # i is an edge
+        if len(i) > 1:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
             if e in gn.edges:
                 # i exists in the new graph, that means some of its attributes need to be added
@@ -314,7 +313,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
                             stack.append((i[1], j))
                     act = GraphAction(GraphActionType.AddNode, source=e[0], value=g.nodes[i[1]]['v'])
                     if len(gn.nodes[e[1]]) < len(g.nodes[i[1]]):
-                        stack.append(i[1])  # we still have attributes to add to node i[1]
+                        stack.append((i[1],))  # we still have attributes to add to node i[1]
                 else:
                     # The endpoint is in the graph, this is an AddEdge action
                     assert e[0] in gn.nodes
@@ -323,25 +322,26 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None):
 
             if len(gn.edges[e]) < len(g.edges[i]):
                 stack.append(i)  # we still have attributes to add to edge i
-        else:  # i is a node
-            n = relabeling_map.get(i, None)
+        else:  # i is a node, (u,)
+            u = i[0]
+            n = relabeling_map.get(u, None)
             if n not in gn.nodes:
-                # i doesn't exist yet, this should only happen for the first node
+                # u doesn't exist yet, this should only happen for the first node
                 assert len(gn.nodes) == 0
-                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v'])
-                n = relabeling_map[i] = len(relabeling_map)
-                gn.add_node(0, v=g.nodes[i]['v'])
-                for j in g[i]:  # For every neighbour of node i
+                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[u]['v'])
+                n = relabeling_map[u] = len(relabeling_map)
+                gn.add_node(0, v=g.nodes[u]['v'])
+                for j in g[u]:  # For every neighbour of node u
                     if relabeling_map.get(j, None) not in gn:
-                        stack.append((i, j))  # push the (i,j) edge onto the stack
+                        stack.append((u, j))  # push the (u,j) edge onto the stack
             else:
-                # i exists, meaning we have attributes left to add
-                attrs = [j for j in g.nodes[i] if j not in gn.nodes[n]]
+                # u exists, meaning we have attributes left to add
+                attrs = [j for j in g.nodes[u] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
-                gn.nodes[n][attr] = g.nodes[i][attr]
-                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[i][attr])
-            if len(gn.nodes[n]) < len(g.nodes[i]):
-                stack.append(i)  # we still have attributes to add to node i
+                gn.nodes[n][attr] = g.nodes[u][attr]
+                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[u][attr])
+            if len(gn.nodes[n]) < len(g.nodes[u]):
+                stack.append((u,))  # we still have attributes to add to node u
         traj.append((gt, act))
     traj.append((gn, GraphAction(GraphActionType.Stop)))
     return traj
@@ -371,7 +371,7 @@ class GraphActionCategorical:
             which there are `m` possible actions. `n` should thus be
             equal to the sum of the number of such elements for each
             graph in the Batch object. The length of the `logits` list
-            should thus be equal to the number of element types (in 
+            should thus be equal to the number of element types (in
             other words there should be one tensor per type).
         keys: List[Union[str, None]]
             The keys corresponding to the Graph elements for each
@@ -385,12 +385,10 @@ class GraphActionCategorical:
         types: List[GraphActionType]
            The action type each logit corresponds to.
         deduplicate_edge_index: bool, default=True
-           If true, this means that the 'edge_index' keys have been reduced 
+           If true, this means that the 'edge_index' keys have been reduced
            by e_i[::2] (presumably because the graphs are undirected)
         """
         # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
-        # TODO: cuda-ize
-        #self.g = graphs
         self.num_graphs = graphs.num_graphs
         # The logits
         self.logits = logits
@@ -414,8 +412,9 @@ class GraphActionCategorical:
             else torch.arange(graphs.num_graphs, device=dev) for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
-        self.slice = [graphs._slice_dict[k] if k is not None else torch.arange(
-            graphs.num_graphs, device=dev) for k in keys]
+        self.slice = [
+            graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs, device=dev) for k in keys
+        ]
         self.logprobs = None
 
         if deduplicate_edge_index and 'edge_index' in keys:
@@ -453,8 +452,7 @@ class GraphActionCategorical:
         exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
-            for i, b in zip(exp_logits, self.batch)
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
         ]).log()
         # log probabilities is log(exp(logit) / Z)
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
@@ -502,7 +500,7 @@ class GraphActionCategorical:
             t = type_max_idx[i]
             # Subtract from the slice of that type and index, since the computed
             # row position is batch-wise rather graph-wise
-            actions.append((t, row_pos[t][i] - self.slice[t][i], col_max[t][1][i]))
+            actions.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
         return actions
@@ -511,3 +509,7 @@ class GraphActionCategorical:
         """The log-probability of a list of action tuples"""
         logprobs = self.logsoftmax()
         return torch.stack([logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in enumerate(actions)])
+
+
+class GraphBuildingEnvContext:
+    pass  # TODO: fill this in

@@ -2,5 +2,5 @@ pip install torch-scatter==2.0.9 torch-sparse==0.6.12 torch-geometric==2.0.3 tor
 pip install rdkit-pypi tables sympy scipy
 pip install -U networkx
 pip install -e /run/determined/workdir/home/rs/gfn/gflownet/ #TODO: pull from github
-# MXMNet requirements
+# MXMNet training requirements
 pip install sympy git+https://github.com/ildoonet/pytorch-gradual-warmup-lr.git
