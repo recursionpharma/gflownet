@@ -1,6 +1,6 @@
 import ast
 import copy
-from typing import Any, Dict, Union, List, Tuple, Callable
+from typing import Any, Dict, Union, List, Tuple, Callable, cast
 
 import numpy as np
 import torch
@@ -36,7 +36,7 @@ class SEHTask(GFNTask):
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
-        return y / 10
+        return FlatRewards(torch.as_tensor(y) / 10)
 
     def inverse_flat_reward_transform(self, rp):
         return rp
@@ -62,17 +62,17 @@ class SEHTask(GFNTask):
             flat_reward = torch.tensor(flat_reward)
         return flat_reward**cond_info['beta']
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> RewardScalar:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return torch.zeros((0,)), is_valid
+            return RewardScalar(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['seh'](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 1
         preds = self.flat_reward_transform(preds).clip(1e-4, 2)
-        return preds, is_valid
+        return RewardScalar(preds), is_valid
 
 
 class SEHFragTrainer(GFNTrainer):

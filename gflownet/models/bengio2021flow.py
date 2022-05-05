@@ -264,18 +264,12 @@ def mol2graph(mol, floatX=torch.float, bonds=False, nblocks=False):
     else:
         atmfeat, _, bond, bondfeat = mpnn_feat(mol, ifcoord=False, one_hot_atom=True, donor_features=False)
         g = mol_to_graph_backend(atmfeat, None, bond, bondfeat)
-    #stems = mol.stem_atmidxs
-    #if not len(stems):
-    #    stems = [0]
     stem_mask = torch.zeros((g.x.shape[0], 1))
-    #stem_mask[torch.tensor(stems).long()] = 1
-    #g.stems = torch.tensor(stems).long()
     g.x = torch.cat([g.x, stem_mask], 1).to(floatX)
     g.edge_attr = g.edge_attr.to(floatX)
     if g.edge_index.shape[0] == 0:
         g.edge_index = torch.zeros((2, 1)).long()
         g.edge_attr = torch.zeros((1, g.edge_attr.shape[1])).to(floatX)
-        #g.stems = torch.zeros((1,)).long()
     return g
 
 
