@@ -91,6 +91,8 @@ class GFNTrainer:
         self.hps = {**self.default_hps(), **hps}
         self.device = device
         self.num_workers: int = self.hps.get('num_data_loader_workers', 0)
+        self.offline_ratio = 0.5
+        self.valid_offline_ratio = 1
         self.setup()
 
     def default_hps(self) -> Dict[str, Any]:
@@ -111,14 +113,15 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev)
+        iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
+                                    ratio=self.offline_ratio)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev, ratio=1,
-                                    stream=False)
+        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
+                                    ratio=self.valid_offline_ratio, stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
@@ -137,7 +140,7 @@ class GFNTrainer:
         """
         self.model.to(self.device)
         self.sampling_model.to(self.device)
-        epoch_length = len(self.training_data)
+        epoch_length = max(len(self.training_data), 1)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
         for it, batch in zip(range(1, 1 + self.hps['num_training_steps']), train_dl):
