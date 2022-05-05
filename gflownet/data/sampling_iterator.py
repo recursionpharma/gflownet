@@ -58,6 +58,9 @@ class SamplingIterator(IterableDataset):
             # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()
             n = len(self.data)
+            if n == 0:
+                yield []
+                return
             if worker_info is None:
                 start, end, wid = 0, n, -1
             else:
@@ -90,8 +93,8 @@ class SamplingIterator(IterableDataset):
             is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
 
             # Sample some dataset data
-            mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs]))
-            flat_rewards = list(self.task.flat_reward_transform(flat_rewards))
+            mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
+            flat_rewards = list(self.task.flat_reward_transform(torch.tensor(flat_rewards)))
             graphs = [self.ctx.mol_to_graph(m) for m in mols]
             trajs = self.algo.create_training_data_from_graphs(graphs)
             # Sample some on-policy data
