@@ -1,5 +1,3 @@
 from setuptools import find_packages, setup
 
-setup(
-    packages=find_packages(),
-)
+setup(packages=find_packages(),)
