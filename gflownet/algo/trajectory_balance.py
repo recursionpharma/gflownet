@@ -22,12 +22,36 @@ class TrajectoryBalanceModel(nn.Module):
 
 class TrajectoryBalance:
     """
-    See, Trajectory Balance: Improved Credit Assignment in GFlowNets
-    Nikolay Malkin, Moksh Jain, Emmanuel Bengio, Chen Sun, Yoshua Bengio
-    https://arxiv.org/abs/2201.13259
     """
     def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
                  hps: Dict[str, Any], max_len=None, max_nodes=None):
+        """TB implementation, see
+        "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
+        Emmanuel Bengio, Chen Sun, Yoshua Bengio"
+        https://arxiv.org/abs/2201.13259
+
+        Hyperparameters used:
+        random_action_prob: float, probability of taking a uniform random action when sampling
+        illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
+        bootstrap_own_reward: bool, if True, uses the .reward batch data to predict rewards for sampled data
+        tb_epsilon: float, if not None, adds this epsilon in the numerator and denominator of the log-ratio
+        reward_loss_multiplier: float, multiplying constant for the bootstrap loss.
+
+        Parameters
+        ----------
+        env: GraphBuildingEnv
+            A graph environment.
+        ctx: GraphBuildingEnvContext
+            A context.
+        rng: np.random.RandomState
+            rng used to take random actions
+        hps: Dict[str, Any]
+            Hyperparameter dictionary, see above for used keys.
+        max_len: int
+            If not None, ends trajectories of more than max_len steps.
+        max_nodes: int
+            If not None, ends trajectories of graphs with more than max_nodes steps (illegal action).
+        """
         self.ctx = ctx
         self.env = env
         self.rng = rng
