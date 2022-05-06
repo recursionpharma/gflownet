@@ -1,12 +1,12 @@
 import ast
 import copy
-from typing import Any, Dict, Union, List, Tuple, Callable
+from typing import Any, Dict, Union, List, Tuple, Callable, cast
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from determined.pytorch import LRScheduler, PyTorchTrial, PyTorchTrialContext
+from determined.pytorch import LRScheduler, PyTorchTrial, PyTorchTrialContext, DataLoader as PyTorchDataLoader
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
@@ -43,13 +43,15 @@ class QM9GapTask(GFNTask):
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
         if self._rtrans == 'exp':
-            return np.exp(-(y - self._min) / self._width)
+            flat_r = np.exp(-(y - self._min) / self._width)
         elif self._rtrans == 'unit':
-            return 1 - (y - self._min) / self._width
+            flat_r = 1 - (y - self._min) / self._width
         elif self._rtrans == 'unit+95p':
             # Add constant such that 5% of rewards are > 1
-            return 1 - (y - self._percentile_95) / self._width
-        raise ValueError(self._rtrans)
+            flat_r = 1 - (y - self._percentile_95) / self._width
+        else:
+            raise ValueError(self._rtrans)
+        return FlatRewards(flat_r)
 
     def inverse_flat_reward_transform(self, rp):
         if self._rtrans == 'exp':
@@ -82,13 +84,13 @@ class QM9GapTask(GFNTask):
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward**cond_info['beta']
+        return RewardScalar(flat_reward**cond_info['beta'])
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> RewardScalar:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return torch.zeros((0,)), is_valid
+            return RewardScalar(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV
@@ -194,6 +196,18 @@ class QM9Trial(QM9GapTrainer, PyTorchTrial):
         # See docs.determined.ai/latest/training-apis/api-pytorch-advanced.html#customizing-a-reproducible-dataset
         if isinstance(context, PyTorchTrialContext):
             context.experimental.disable_dataset_reproducibility_checks()
+
+    def build_training_data_loader(self) -> PyTorchDataLoader:
+        # Instead of casting, GFNTrainer could rely on a "DataLoader
+        # class" attribute, which this class (subclassing
+        # PyTorchTrial) could override to set to
+        # determined.pytorch.DataLoader. Alternatively we could _not_
+        # subclass QM9GapTrainer and just reroute all the PyTorchTrial
+        # methods to an instance of QM9GapTrainer.
+        return cast(PyTorchDataLoader, self.create_training_data_loader())
+
+    def build_validation_data_loader(self) -> PyTorchDataLoader:
+        return cast(PyTorchDataLoader, self.create_validation_data_loader())
 
     def get_batch_length(self, batch):
         return batch.traj_lens.shape[0]
