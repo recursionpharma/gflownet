@@ -221,7 +221,7 @@ def main():
         'num_training_steps': 100_000,
         'validate_every': 100,
     }
-    trial = QM9GapTrainer(hps, torch.device('cuda'))
+    trial = QM9GapTrainer(hps, torch.device('cpu'))
     trial.run()
 
 
