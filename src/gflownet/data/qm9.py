@@ -13,7 +13,7 @@ class QM9Dataset(Dataset):
         elif xyz_file is not None:
             self.load_tar()
         rng = np.random.default_rng(split_seed)
-        idcs = np.arange(len(self.df)) #TODO: error if there is no h5_file provided. Should h5 be required
+        idcs = np.arange(len(self.df))  # TODO: error if there is no h5_file provided. Should h5 be required
         rng.shuffle(idcs)
         self.target = target
         if train:

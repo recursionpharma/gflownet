@@ -24,10 +24,10 @@ readme = "README.md"
 exclude = "tests"     
 skips = ["B101"]
 
-[tool.flake8]
-max-line-length = 120
-exclude = ".github,doc,.git,.nox,.tox,doc"
-max_complexity = 10
+# [tool.flake8] not yet supported
+# max-line-length = 120
+# exclude = ".github,doc,.git,.nox,.tox,doc"
+# max_complexity = 20
 
 [tool.yapf]
 based_on_style = "google"
