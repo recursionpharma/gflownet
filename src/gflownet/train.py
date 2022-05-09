@@ -60,7 +60,7 @@ class GFNTask:
         """
         raise NotImplementedError()
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> RewardScalar:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         """Compute the flat rewards of mols according the the tasks' proxies
 
         Parameters
@@ -71,6 +71,8 @@ class GFNTask:
         -------
         reward: RewardScalar
             A 1d tensor, a scalar reward for each molecule.
+        is_valid: Tensor
+            A 1d tensor, a boolean indicating whether the molecule is valid.
         """
         raise NotImplementedError()
 

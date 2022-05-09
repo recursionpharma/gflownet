@@ -512,4 +512,10 @@ class GraphActionCategorical:
 
 
 class GraphBuildingEnvContext:
-    pass  # TODO: fill this in
+    # TODO: fill this in
+    def __init__(self):
+        self.device = None
+        self.graph_to_Data = None
+        self.collate = None
+        self.aidx_to_GraphAction = None
+        self.is_sane = None

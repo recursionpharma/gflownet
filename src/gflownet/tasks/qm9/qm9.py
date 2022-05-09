@@ -84,17 +84,17 @@ class QM9GapTask(GFNTask):
             flat_reward = torch.tensor(flat_reward)
         return flat_reward**cond_info['beta']
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> RewardScalar:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return torch.zeros((0,)), is_valid
+            return RewardScalar(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV
         preds[preds.isnan()] = 1
         preds = self.flat_reward_transform(preds).clip(1e-4, 2)
-        return preds, is_valid
+        return RewardScalar(preds), is_valid
 
 
 class QM9GapTrainer(GFNTrainer):

@@ -51,7 +51,6 @@ testpaths = ["tests"]
 pythonpath = "src/"
 
 [tool.mypy]
-plugins = "pydantic.mypy"
 ignore_missing_imports = true
 show_error_codes = true
 show_error_context = true
