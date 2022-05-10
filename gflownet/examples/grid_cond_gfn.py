@@ -15,6 +15,9 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 import torch.multiprocessing as mp
+# import botorch
+# from botorch.utils.multi_objective.box_decompositions.dominated import DominatedPartitioning
+# from botorch.test_functions.multi_objective import BraninCurrin
 
 parser = argparse.ArgumentParser()
 
@@ -33,6 +36,16 @@ parser.add_argument("--mbsize", default=128, help="Minibatch size", type=int)
 parser.add_argument("--n_hid", default=64, type=int)
 parser.add_argument("--n_layers", default=3, type=int)
 parser.add_argument("--n_train_steps", default=5000, type=int)
+parser.add_argument("--r_dim", default=3, type=int)
+
+# Temperature
+parser.add_argument("--alpha", default=2, type=int)
+parser.add_argument("--beta", default=1, type=int)
+parser.add_argument("--const_beta", default=1, type=int)
+parser.add_argument("--use_thermo_encoding", action='store_true')
+parser.add_argument("--use_const_beta", action='store_true')
+parser.add_argument("--annealing", action='store_true')
+parser.add_argument("--uniform", action='store_true')
 
 # Measurement
 parser.add_argument("--n_distr_measurements", default=50, type=int)
@@ -43,6 +56,7 @@ parser.add_argument("--n_mp_procs", default=4, type=int)
 # Env
 parser.add_argument('--func', default='BraninCurrin')
 parser.add_argument("--horizon", default=32, type=int)
+
 
 
 
@@ -68,18 +82,60 @@ def branin(x):
     t2 = 10 * (1 - 1 / (8 * np.pi)) * np.cos(x_0)
     return 1 - (t1 ** 2 + t2 + 10) / 308.13 # Dividing by the max to help normalize
 
-class GridEnv:
 
+def shubert(x):
+    sum1=0
+    sum2=0
+    y_min = -12.58133095975989
+    y_max = 12.85231572911876
+    for i in range(1,6):
+        sum1 = sum1 + (i* np.cos(((i+1)*x[..., 0]) + i * 10))
+        sum2 = sum2 + (i* np.cos(((i+1)*x[..., 1]) + i * 10))
+    y = sum1 * sum2
+    return (y - y_min) / (y_max - y_min)
+
+def sphere(x):
+    d = 2
+    current_sum = 0;
+    y_max = 2.0
+    for i in range(d):
+        current_sum = current_sum + (x[..., i] ** 2)
+    y = current_sum
+    y /= y_max
+    return y
+
+def beale(x):
+    y_min = 4.369943360497595
+    y_max = 38.703125
+    term1 = np.square(1.5 - x[..., 0] + x[..., 0] * x[..., 1])
+    term2 = np.square(2.25 - x[..., 0] + x[..., 0]* np.square(x[..., 1]))
+    term3 = np.square(2.625 - x[..., 0] + x[..., 0] * np.power(x[..., 1], 3));
+    y = term1 + term2 + term3
+    return (y - y_min) / (y_max - y_min)
+
+
+def thermo_encoding(beta, vmin=0, vmax=32, nbins=50):
+    bins = np.linspace(vmin, vmax, nbins)
+    thermometer_encoding = 1 - (bins - beta).clip(0, 1)
+    return thermometer_encoding
+
+class GridEnv:
     def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None,
-                 obs_type='one-hot'):
+                 obs_type='one-hot', nbins=50, use_thermo_encoding=False, annealing=True, alpha=2, beta=1):
+        self.alpha= alpha
+        self.beta = beta
         self.horizon = horizon
         self.start = [xrange[0]] * ndim
         self.ndim = ndim
         self.width = xrange[1] - xrange[0]
+        self.use_thermo_encoding = use_thermo_encoding
         self.funcs = (
             [lambda x: ((np.cos(x * 50) + 1) * norm.pdf(x * 5)).prod(-1) + 0.01]
             if funcs is None else funcs)
-        self.num_cond_dim = len(self.funcs) + 1
+        if use_thermo_encoding: 
+            self.num_cond_dim = len(self.funcs) + nbins
+        else:
+            self.num_cond_dim = len(self.funcs) + 1
         self.xspace = np.linspace(*xrange, horizon)
         self._true_density = None
         self.obs_type = obs_type
@@ -90,7 +146,6 @@ class GridEnv:
         elif obs_type == 'tab':
             self.num_obs_dim = self.horizon ** self.ndim
         
-
     def obs(self, s=None):
         s = np.int32(self._state if s is None else s)
         z = np.zeros(self.num_obs_dim + self.num_cond_dim)
@@ -106,9 +161,15 @@ class GridEnv:
         return z
 
     def s2x(self, s):
+        """
+        Renormalize the states relative to the start state
+        """
         return s / (self.horizon-1) * self.width + self.start
 
     def s2r(self, s):
+        """
+        Linear combination of rewards with coefficients 
+        """
         x = self.s2x(s)
         return (self.coefficients * np.array([i(x) for i in self.funcs])).sum() ** self.temperature
 
@@ -116,8 +177,14 @@ class GridEnv:
         self._state = np.int32([0] * self.ndim)
         self._step = 0
         self.coefficients = np.random.dirichlet([1.5]*len(self.funcs)) if coefs is None else coefs
-        self.temperature = np.random.gamma(2,1) if temp is None else temp
-        self.cond_obs = np.concatenate([self.coefficients, [self.temperature]])
+        # Inlcude uniform beta sampling
+        self.temperature = np.random.gamma(self.alpha, self.beta) if temp is None else temp
+        if self.use_thermo_encoding:
+            temperature = thermo_encoding(self.temperature)
+        else:
+            temperature = [self.temperature]
+        # Might get an error here
+        self.cond_obs = np.concatenate([self.coefficients, temperature])
         return self.obs(), self.s2r(self._state), self._state
 
     def parent_transitions(self, s, used_stop_action):
@@ -135,7 +202,6 @@ class GridEnv:
                 actions += [i]
         return parents, actions
 
-
     def step(self, a, s=None):
         _s = s
         s = (self._state if s is None else s) + 0
@@ -148,7 +214,6 @@ class GridEnv:
             self._step += 1
         return self.obs(s), 0 if not done else self.s2r(s), done, s
 
-
     def state_info(self):
         all_int_states = np.float32(list(itertools.product(*[list(range(self.horizon))]*self.ndim)))
         state_mask = (all_int_states == self.horizon-1).sum(1) <= 1
@@ -157,12 +222,11 @@ class GridEnv:
         r = np.stack([f(s) for f in self.funcs]).T
         return s, r, pos
 
-    
     def generate_backward(self, r, s0, reset=False):
         if reset:
             self.reset(coefs=np.zeros(2)) # this e.g. samples a new temperature
         s = np.int8(s0)
-        os0 = self.obs(s)
+        s0 = self.obs(s)
         r = max(r ** self.temperature, 1e-35) # TODO: this might hit float32 limit, handle this more gracefully?
         # If s0 is a forced-terminal state, the the action that leads
         # to it is s0.argmax() which .parents finds, but if it isn't,
@@ -203,7 +267,6 @@ def make_mlp(l, act=nn.LeakyReLU, tail=[]):
          for n, (i, o) in enumerate(zip(l, l[1:]))], []) + tail))
 
 
-
 class FlowNet_TBAgent:
     def __init__(self, args, envs):
         self.model = make_mlp([envs[0].num_obs_dim + envs[0].num_cond_dim] +
@@ -221,11 +284,16 @@ class FlowNet_TBAgent:
     def parameters(self):
         return chain(self.model.parameters(), self.Z.parameters())
 
-    def sample_many(self, mbsize):
-        s = tf(np.float32([i.reset()[0] for i in self.envs]))
+    def sample_many(self, mbsize, temp=None):
+        if args.use_const_beta:
+            s = tf(np.float32([i.reset(temp=args.const_beta)[0] for i in self.envs]))
+        elif args.annealing or args.uniform:
+            s = tf(np.float32([i.reset(temp=temp)[0] for i in self.envs]))
+        else:
+            s = tf(np.float32([i.reset()[0] for i in self.envs]))
         done = [False] * mbsize
-        
-        Z = self.Z(torch.tensor([i.cond_obs for i in self.envs]).float())[:, 0]
+        z_s = np.array([i.cond_obs for i in self.envs])
+        Z = self.Z(torch.tensor(z_s).float())[:, 0]
         self._Z = Z.detach().numpy().reshape(-1)
         #traj_mass = list(traj_mass) # allows x[i] += y
         fwd_prob = [[i] for i in Z]
@@ -278,6 +346,40 @@ def make_opt(params, args):
         opt = torch.optim.SGD(params, args.learning_rate, momentum=args.momentum)
     return opt
 
+def get_hv(agent, funcs, ref, mbsize, num_samples):
+    # sample points
+    data = []
+    for i in range(num_samples // mbsize):
+        s = tf(np.float32([i.reset(temp=2.)[0] for i in agent.envs]))
+        done = [False] * mbsize
+        while not all(done):
+            cat = Categorical(logits=agent.model(s))
+            acts = cat.sample()
+            ridx = torch.tensor((np.random.uniform(0,1,acts.shape[0]) < 0.01).nonzero()[0])
+            if len(ridx):
+                racts = np.random.randint(0, cat.logits.shape[1], len(ridx))
+                acts[ridx] = torch.tensor(racts)
+            logp = cat.log_prob(acts)
+            step = [i.step(a) for i,a in zip([e for d, e in zip(done, agent.envs) if not d], acts)]
+            p_a = [agent.envs[0].parent_transitions(sp_state, a == agent.ndim)
+                   for a, (sp, r, done, sp_state) in zip(acts, step)]
+            c = count(0)
+            m = {j:next(c) for j in range(mbsize) if not done[j]}
+            done = [bool(d or step[m[i]][2]) for i, d in enumerate(done)]
+            s = tf(np.float32([i[0] for i in step if not i[2]]))
+        for env in agent.envs:
+            data.append(env.s2x(env._state))
+    data = np.array(data)
+    problem = BraninCurrin(negate=True)
+    beval = problem(tf(data))
+    # evaluate points
+    # vals = np.stack([func(data, nonorm=True) for func in funcs])
+    # vals = tf(vals)
+    # import pdb; pdb.set_trace();
+    # compute hypervolume
+    bd = DominatedPartitioning(ref_point=problem.ref_point, Y=beval)
+    volume = bd.compute_hypervolume().item()
+    return volume
 
 def compute_exact_dag_distribution(envs, agent, args):
     env = envs[0]
@@ -312,30 +414,94 @@ def compute_exact_dag_distribution(envs, agent, args):
         end_prob[i] for i in map(tuple,all_int_states[state_mask])])
     return distribution
 
-def worker(args, agent, events, outq):
+def worker(args, agent, events, outq, step):
     stop_event, backprop_barrier = events
     torch.set_num_threads(1)
     torch.manual_seed(os.getpid())
     np.random.seed(os.getpid())
     mbs = args.mbsize // args.n_mp_procs
-    
-    agent.envs = [GridEnv(args.horizon, args.ndim, funcs=agent.envs[0].funcs)
-                  for i in range(mbs)]
+    alphas = list(range(1, 9, -1))
+    agent.envs = [
+        GridEnv(
+            args.horizon,
+            args.ndim,
+            funcs=agent.envs[0].funcs,
+            alpha=args.alpha,
+            beta=args.beta,
+            use_thermo_encoding=args.use_thermo_encoding,
+            annealing=args.annealing
+        )
+                  for i in range(mbs)
+    ]
 
     while not stop_event.is_set():
-        data = agent.sample_many(mbs)
+        # I have to pass the annealing temperature here 
+        if args.annealing:
+            if len(alphas) == 0:
+                alphas = [8]
+            temp = np.random.gamma(alphas[0], args.beta)
+            data = agent.sample_many(mbs, temp)
+            if step % 625 == 0:
+                alphas.pop(0)
+        elif args.use_const_beta:
+            data = agent.sample_many(mbs, args.const_beta)
+        elif args.uniform:
+            temp = np.random.uniform(0, 16)
+            data = agent.sample_many(mbs, temp)
+        else:
+            data = agent.sample_many(mbs)
+        
         losses = agent.learn_from(-1, data) # returns (opt loss, *metrics)
         losses[0].backward()
         outq.put([losses[0].item()] + list(losses[1:]))
         backprop_barrier.wait()
-
+        step += 1
         
+
+def get_true_loss(r, coefs, final_dist):
+    errs = []
+    logerrs = []
+    for (coef, t), dist in zip(coefs, final_dist.T):
+        unnorm_p = 0
+        for i in range(r.shape[-1]):
+            unnorm_p += r[:, i]*coef[i]
+        unnorm_p = unnorm_p ** t
+        Z = unnorm_p.sum()
+        p = unnorm_p / Z
+        errs.append(abs(dist - p).mean())
+
+    loss = sum(errs) / len(errs)
+    return loss
+
+def get_functions(dims):
+    functions = [branin, currin, shubert, sphere, beale]
+    function_labels = ["Branin", "Currin", "Shubert", "Sphere", "Beale"]
+    if dims == 3:
+        return functions[:3], function_labels[:3]
+    elif dims == 4:
+        return functions[:4], function_labels[:4]
+    else:
+        return functions, function_labels
+    
+    
 def main(args):
+    # How to change temperature based on the timestep depending on the timestep?
+    
     args.dev = torch.device(args.device)
-    args.ndim = 2 # Force this for Branin-Currin
-    fs = [branin, currin]
-    envs = [GridEnv(args.horizon, args.ndim, funcs=fs)
-            for i in range(args.mbsize)]
+    args.ndim = 2 # Force this for Branin-Currin "beale"
+    fs, _ = get_functions(args.r_dim)
+    envs = [
+        GridEnv(
+            args.horizon,
+            args.ndim,
+            funcs=fs, 
+            alpha=args.alpha,
+            beta=args.beta,
+            use_thermo_encoding=args.use_thermo_encoding,
+            annealing=args.annealing
+        )
+            for i in range(args.mbsize)
+    ]
     
     agent = FlowNet_TBAgent(args, envs)
     for i in agent.parameters():
@@ -343,29 +509,74 @@ def main(args):
     agent.model.share_memory()
     agent.Z.share_memory()
 
-    assert args.mbsize % args.n_mp_procs == 0
-    
+    assert args.mbsize % args.n_mp_procs == 0    
     opt = make_opt(agent.model.parameters(), args)
     optZ = make_opt(agent.Z.parameters(), args)
               
     # We want to test our model on a series of conditional configurations
-    cond_confs = [
-        ([a,1-a], temp)
-        for a in np.linspace(0,1,11)
-        for temp in [1,2,4,8,16]]
-    test_envs = [GridEnv(args.horizon, args.ndim, funcs=fs)
-                 for i in range(len(cond_confs))]
+    if len(fs) == 2:
+        cond_confs = [
+            ([a,1-a], temp)
+            for a in np.linspace(0,1,11)
+            for temp in [1,2,4,8,16]
+        ]
+    elif len(fs) == 3:
+        n = 10
+        cond_confs = [
+            ([i/n,j/n,1-(i+j)/n], temp)
+            for i in np.arange(n)
+            for j in np.arange(n)
+            for temp in [1,2,4,8,16]
+            if (i+j) <= n
+        ]
+    elif len(fs) == 4:
+        n = 10
+        cond_confs = [
+            ([i/n,j/n, k/ n, 1-(i+j+k)/n], temp)
+            for i in np.arange(n)
+            for j in np.arange(n)
+            for k in range(n)
+            for temp in [1,2,4,8,16]
+            if (i + j + k) <= n
+        ]
+    elif len(fs) == 5:
+        n = 10
+        cond_confs = [
+            ([i/n,j/n, k/ n, l/n,  1-(i+j+k + l)/n], temp)
+            for i in np.arange(n)
+            for j in np.arange(n)
+            for k in range(n)
+            for l in range(n)
+            for temp in [1,2,4,8,16]
+            if (i + j + k + l) <= n
+        ]
+
+    test_envs = [
+        GridEnv(
+        args.horizon,
+        args.ndim,
+        funcs=fs,
+        alpha=args.alpha,
+        beta=args.beta,
+        use_thermo_encoding=args.use_thermo_encoding,
+        annealing=args.annealing
+    )
+                 for i in range(len(cond_confs))
+    ]
 
     stop_event, backprop_barrier = mp.Event(), mp.Barrier(args.n_mp_procs + 1)
     losses_q = mp.Queue()
+    current_step = 0
 
     processes = [
-        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q))
+        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q, current_step))
         for i in range(args.n_mp_procs)]
     [i.start() for i in processes]
     
     all_losses = []
     distributions = []
+    true_losses = []
+    hyper_volumes = []
     progress_bar = tqdm(range(args.n_train_steps + 1), disable=not args.progress)
     for t in progress_bar:
         while backprop_barrier.n_waiting < args.n_mp_procs:
@@ -380,7 +591,13 @@ def main(args):
         if t % (args.n_train_steps // args.n_distr_measurements) == 0:
             for cfg, env in zip(cond_confs, test_envs):
                 env.reset(*cfg)
-            distributions.append(compute_exact_dag_distribution(test_envs, agent, args))
+            final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
+            s, r, pos = env.state_info()
+            loss = get_true_loss(r, cond_confs, final_distribution)
+            distributions.append(final_distribution)
+            true_losses.append(loss)
+            # volume = get_hv(agent, fs, torch.tensor([18.0, 6]), args.mbsize, 5000)
+            # hyper_volumes.append(volume)
         # Workers add to the .grad even if they take the mean of the
         # loss, so let's divide here
         [i.grad.mul_(1 / args.n_mp_procs) for i in agent.parameters()]
@@ -402,19 +619,22 @@ def main(args):
                'params': [i.data.to('cpu').numpy() for i in agent.parameters()],
                'distributions': distributions,
                'final_distribution': final_distribution,
+               'true_losses': true_losses,
                'cond_confs': cond_confs,
                'state_info': envs[0].state_info(),
                'args':args}
-    if args.save_path is not None:
-        root = os.path.split(args.save_path)[0]
+    save_path = args.save_path
+    if save_path is not None: 
+        root = os.path.split(save_path)[0]
         if len(root):
             os.makedirs(root, exist_ok=True)
-        pickle.dump(results, gzip.open(args.save_path, 'wb'))
+        pickle.dump(results, gzip.open(save_path, 'wb'))
     else:
         return results
     
 
 if __name__ == '__main__':
+    from itertools import product
     args = parser.parse_args()
     torch.set_num_threads(4)
     main(args)
