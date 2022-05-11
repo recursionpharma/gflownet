@@ -4,6 +4,17 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 
 
+# print("\n\n")
+# import sys
+# print(sys.path)
+# print("\n\n")
+
+
+
+# from src.gflownet import __version__
+
+# print(__version__)
+
 def get_version_from_package() -> str:
     """
     Read the package version from the source without importing it.

@@ -1,28 +1,25 @@
 [build-system]
-requires = [
-    "setuptools>=51.0",
-    "wheel",
-]
+requires = ["setuptools", "setuptools-scm", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[metadata]
-name = "gflownet"
-description = "GFlowNet related training and environment code"
-url = "https://github.com/recursionpharma/gflownet"
-author = "Recursion Pharmaceuticals"
-author_email = "devs@recursionpharma.com"
-classifiers = [
-	"Operating System :: OS Independent",
-	"Programming Language :: Python",
-	"Programming Language :: Python :: 3"
-]
-keywords = ["gflownet"]
-requires-python = ">=3.6"
-readme = "README.md"
+# [project] not yet supported
+# name = "gflownet"
+# description = "GFlowNet related training and environment code"
+# url = "https://github.com/recursionpharma/gflownet"
+# author = "Recursion Pharmaceuticals"
+# author_email = "devs@recursionpharma.com"
+# classifiers = [
+# 	"Operating System :: OS Independent",
+# 	"Programming Language :: Python",
+# 	"Programming Language :: Python :: 3"
+# ]
+# keywords = ["gflownet"]
+# requires-python = ">=3.6"
+# readme = "README.md"
 
-[tool.bandit]
-exclude = "tests"     
-skips = ["B101"]
+# [tool.bandit] #requires bandit[toml]
+# exclude = "tests"     
+# skips = ["B101"]
 
 # [tool.flake8] not yet supported
 # max-line-length = 120
