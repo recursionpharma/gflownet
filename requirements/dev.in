@@ -6,6 +6,7 @@ flake8
 isort
 mypy
 pip-compile-multi
+pre-commit
 pytest
 pytest-cov
 roadie

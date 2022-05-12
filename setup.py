@@ -1,6 +1,7 @@
-from setuptools import setup
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import Dict, List, Tuple
+
+from setuptools import setup
 
 from src.gflownet import __version__
 
