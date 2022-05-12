@@ -1,32 +1,8 @@
-import os.path
 from setuptools import setup
 from pathlib import Path
 from typing import List, Tuple, Dict
 
-
-# print("\n\n")
-# import sys
-# print(sys.path)
-# print("\n\n")
-
-
-
-# from src.gflownet import __version__
-
-# print(__version__)
-
-def get_version_from_package() -> str:
-    """
-    Read the package version from the source without importing it.
-    """
-    path = os.path.join(os.path.dirname(__file__), "src/gflownet/__init__.py")
-    path = os.path.normpath(os.path.abspath(path))
-    with open(path) as f:
-        for line in f:
-            if line.startswith("__version__"):
-                token, version = line.split(" = ", 1)
-                version = version.replace("\"", "").strip()
-    return version
+from src.gflownet import __version__
 
 
 def _parse_requirement_file(req_file: Path) -> List[str]:
@@ -56,6 +32,6 @@ install_requires, extras_require = get_requirements()
 setup(
     install_requires=install_requires,
     extras_require=extras_require,
-    version=get_version_from_package(),
+    version=__version__,
     packages=["src/gflownet"],
 )

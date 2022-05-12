@@ -18,8 +18,8 @@ build-backend = "setuptools.build_meta"
 # readme = "README.md"
 
 # [tool.bandit] #requires bandit[toml]
-# exclude = "tests"     
-# skips = ["B101"]
+exclude = "tests"     
+skips = ["B101"]
 
 # [tool.flake8] not yet supported
 # max-line-length = 120
