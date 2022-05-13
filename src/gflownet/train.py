@@ -16,11 +16,11 @@ from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 
 # This type represents an unprocessed list of reward signals/conditioning information
-FlatRewards = NewType('FlatRewards', Tensor)
+FlatRewards = NewType('FlatRewards', Tensor)  # type: ignore
 
 # This type represents the outcome for a multi-objective task of
 # converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
-RewardScalar = NewType('RewardScalar', Tensor)
+RewardScalar = NewType('RewardScalar', Tensor)  # type: ignore
 
 
 class GFNAlgorithm:
