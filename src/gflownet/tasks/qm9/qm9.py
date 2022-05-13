@@ -1,23 +1,29 @@
 import ast
 import copy
-from typing import Any, Dict, Union, List, Tuple, Callable
+from typing import Any, Callable, Dict, List, Tuple, Union
 
+from determined.pytorch import LRScheduler
+from determined.pytorch import PyTorchTrial
+from determined.pytorch import PyTorchTrialContext
 import numpy as np
+from rdkit import RDLogger
+from rdkit.Chem.rdchem import Mol as RDMol
 import torch
+from torch import Tensor
 import torch.nn as nn
+from torch.utils.data import Dataset
 import torch_geometric.data as gd
-from determined.pytorch import LRScheduler, PyTorchTrial, PyTorchTrialContext
+
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import mxmnet
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import GFNTrainer, GFNTask, FlatRewards, RewardScalar
-from rdkit import RDLogger
-from rdkit.Chem.rdchem import Mol as RDMol
-from torch import Tensor
-from torch.utils.data import Dataset
+from gflownet.train import FlatRewards
+from gflownet.train import GFNTask
+from gflownet.train import GFNTrainer
+from gflownet.train import RewardScalar
 
 
 def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
@@ -84,17 +90,17 @@ class QM9GapTask(GFNTask):
             flat_reward = torch.tensor(flat_reward)
         return flat_reward**cond_info['beta']
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> RewardScalar:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return torch.zeros((0,)), is_valid
+            return RewardScalar(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV
         preds[preds.isnan()] = 1
         preds = self.flat_reward_transform(preds).clip(1e-4, 2)
-        return preds, is_valid
+        return RewardScalar(preds), is_valid
 
 
 class QM9GapTrainer(GFNTrainer):
@@ -221,7 +227,7 @@ def main():
         'num_training_steps': 100_000,
         'validate_every': 100,
     }
-    trial = QM9GapTrainer(hps, torch.device('cuda'))
+    trial = QM9GapTrainer(hps, torch.device('cpu'))
     trial.run()
 
 
