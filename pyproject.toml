@@ -17,9 +17,9 @@ build-backend = "setuptools.build_meta"
 # requires-python = ">=3.6"
 # readme = "README.md"
 
-# [tool.bandit] #requires bandit[toml]
-exclude = "tests"     
+[tool.bandit]
 skips = ["B101"]
+exclude_dirs = ["tests", ".tox", ".venv"]
 
 # [tool.flake8] not yet supported
 # max-line-length = 120
@@ -67,4 +67,3 @@ allow_incomplete_defs = true
 profile = "google"
 line_length = 120
 py_version = "auto"
-

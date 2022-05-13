@@ -1,5 +1,6 @@
 # https://pre-commit.com/hooks.html
 
+exclude: ^(docs/|.tox)
 default_language_version:
   python: python3.8
 repos:
@@ -10,7 +11,7 @@ repos:
       - id: check-ast # Simply check whether the files parse as valid python.
       - id: check-byte-order-marker # forbid files which have a UTF-8 byte-order marker
       - id: check-builtin-literals # Require literal syntax when initializing empty or zero Python builtin types.
-      - id: check-case-conflict # Check for files that would conflict in case-insensitive filesystems
+      - id: check-case-conflict # Check for/home/pawelrc/code/gflownet/requirements/docs files that would conflict in case-insensitive filesystems
       - id: check-docstring-first # Checks a common error of defining a docstring after code.
       - id: check-executables-have-shebangs # Ensures that (non-binary) executables have a shebang.
       - id: check-json # This hook checks json files for parseable syntax.
@@ -24,18 +25,10 @@ repos:
       - id: check-yaml # This hook checks yaml files for parseable syntax.
       - id: debug-statements # Check for debugger imports and py37+ `breakpoint()` calls in python source.
       - id: destroyed-symlinks # Detects symlinks which are changed to regular files with a content of a path which that symlink was pointing to.
-      # - id: detect-aws-credentials # Detects *your* aws credentials from the aws cli credentials file
       - id: detect-private-key # Detects the presence of private keys
-      # - id: double-quote-string-fixer # This hook replaces double quoted strings with single quoted strings
       - id: end-of-file-fixer # Ensures that a file is either empty, or ends with one newline.
-      # - id: file-contents-sorter # Sort the lines in specified files (defaults to alphabetical). You must provide list of target files as input in your .pre-commit-config.yaml file.
       - id: fix-byte-order-marker # removes UTF-8 byte order marker
-      # - id: fix-encoding-pragma # Add # -*- coding: utf-8 -*- to the top of python files
-      # - id: forbid-new-submodules # Prevent addition of new git submodules
       - id: mixed-line-ending # Replaces or checks mixed line ending
-      - id: name-tests-test # This verifies that test files are named correctly
-      # - id: no-commit-to-branch # Don't commit to branch
-      # - id: requirements-txt-fixer # Sorts entries in requirements.txt
       - id: sort-simple-yaml # Sorts simple YAML files which consist only of top-level keys, preserving comments and blocks.
       - id: trailing-whitespace # This hook trims trailing whitespace.
   - repo: local
@@ -60,7 +53,7 @@ repos:
         require_serial: true
       - id: mypy
         name: mypy
-        entry: "mypy --config-file=setup.cfg"
+        entry: "mypy --config-file=pyproject.toml"
         language: system
         types: [python]
         require_serial: true
@@ -74,12 +67,7 @@ repos:
     rev: v1.9.0
     hooks:
       - id: python-check-blanket-noqa # Enforce that noqa annotations always occur with specific codes. Sample annotations: # noqa: F401, # noqa: F401,W203
-      - id: python-check-blanket-type-ignore # Enforce that # type: ignore annotations always occur with specific codes. Sample annotations: # type: ignore[attr-defined], # type: ignore[attr-defined, name-defined]
+      # - id: python-check-blanket-type-ignore # Enforce that # type: ignore annotations always occur with specific codes. Sample annotations: # type: ignore[attr-defined], # type: ignore[attr-defined, name-defined]
       - id: python-check-mock-methods # Prevent common mistakes of assert mck.not_called(), assert mck.called_once_with(...) and mck.assert_called.
-      # - id: python-no-eval # A quick check for the eval() built-in function - disabled b/c it flags torch's `model.eval()`
-      # - id: python-no-log-warn # A quick check for the deprecated .warn() method of python loggers
       - id: python-use-type-annotations # Enforce that python3.6+ type annotations are used instead of type comments
-      # - id: rst-backticks # Detect common mistake of using single backticks when writing rst
-      # - id: rst-directive-colons # Detect mistake of rst directive not ending with double colon
-      # - id: rst-inline-touching-normal # Detect mistake of inline code touching normal text in rst
       - id: text-unicode-replacement-char # Forbid files which have a UTF-8 Unicode replacement character

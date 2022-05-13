@@ -1,8 +1,9 @@
 import numpy as np
+from rdkit import RDLogger
 import torch
 import torch.nn as nn
-from rdkit import RDLogger
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset
 
 
 class SamplingIterator(IterableDataset):

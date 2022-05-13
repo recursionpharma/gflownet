@@ -1,5 +1,6 @@
-from gflownet.core import get_version
 import re
+
+from gflownet.core import get_version
 
 
 def test_get_version():

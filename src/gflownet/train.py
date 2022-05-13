@@ -108,7 +108,7 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def _wrap_model_mp(self, model):
-        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers."""
+        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
         if self.num_workers > 0:
             placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
             return placeholder, torch.device('cpu')

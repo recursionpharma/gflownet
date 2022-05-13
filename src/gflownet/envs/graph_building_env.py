@@ -1,14 +1,15 @@
+from collections import defaultdict
 import copy
 import enum
-from collections import defaultdict
 from typing import Dict, List, Tuple
 
 import networkx as nx
+from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
 import torch
 import torch_geometric.data as gd
-from networkx.algorithms.isomorphism import is_isomorphic
-from torch_scatter import scatter, scatter_max
+from torch_scatter import scatter
+from torch_scatter import scatter_max
 
 
 class Graph(nx.Graph):

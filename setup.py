@@ -1,9 +1,22 @@
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from setuptools import setup
 
-from src.gflownet import __version__
+
+def _get_version_from_package() -> str:
+    """
+    Read the package version from the source without importing it.
+    """
+    path = os.path.join(os.path.dirname(__file__), "src/gflownet/__init__.py")
+    path = os.path.normpath(os.path.abspath(path))
+    with open(path) as f:
+        for line in f:
+            if line.startswith("__version__"):
+                token, version = line.split(" = ", 1)
+                version = version.replace("\"", "").strip()
+    return version
 
 
 def _parse_requirement_file(req_file: Path) -> List[str]:
@@ -13,7 +26,7 @@ def _parse_requirement_file(req_file: Path) -> List[str]:
     return lines
 
 
-def get_requirements(path: str = 'requirements', ext: str = 'in') -> Tuple[List[str], Dict[str, List[str]]]:
+def _get_requirements(path: str = 'requirements', ext: str = 'in') -> Tuple[List[str], Dict[str, List[str]]]:
     ext = ext[1:] if ext.startswith('.') else ext
 
     # Supports an arbitrary number of 'extra' packages
@@ -28,11 +41,11 @@ def get_requirements(path: str = 'requirements', ext: str = 'in') -> Tuple[List[
     return install_requires, extras_require
 
 
-install_requires, extras_require = get_requirements()
+install_requires, extras_require = _get_requirements()
 
 setup(
     install_requires=install_requires,
     extras_require=extras_require,
-    version=__version__,
+    version=_get_version_from_package(),
     packages=["src/gflownet"],
 )
