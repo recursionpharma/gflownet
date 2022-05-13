@@ -60,7 +60,7 @@ repos:
         require_serial: true
       - id: mypy
         name: mypy
-        entry: "mypy --config-file=pyproject.toml"
+        entry: "mypy --config-file=setup.cfg"
         language: system
         types: [python]
         require_serial: true
