@@ -56,6 +56,7 @@ strict = false
 strict_optional = false
 implicit_reexport = true
 allow_redefinition = true
+files = ["src", "tests"]
 #allow_untyped_calls = true
 
 [[tool.mypy.overrides]]
