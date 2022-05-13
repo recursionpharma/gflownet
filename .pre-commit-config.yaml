@@ -60,13 +60,13 @@ repos:
         require_serial: true
       - id: mypy
         name: mypy
-        entry: "mypy --config-file=setup.cfg"
+        entry: "mypy --config-file=pyproject.toml"
         language: system
         types: [python]
         require_serial: true
       - id: bandit
         name: bandit
-        entry: "bandit -x=tests --skip=B106"
+        entry: "bandit"
         language: system
         types: [python]
         require_serial: true
