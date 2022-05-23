@@ -57,8 +57,6 @@ strict_optional = false
 implicit_reexport = true
 allow_redefinition = true
 files = "src"
-install_types = true
-#allow_untyped_calls = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
