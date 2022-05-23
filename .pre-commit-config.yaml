@@ -59,7 +59,7 @@ repos:
         require_serial: true
       - id: bandit
         name: bandit
-        entry: "bandit -r ."
+        entry: "bandit -r -c pyproject.toml ."
         language: system
         types: [python]
         require_serial: true
