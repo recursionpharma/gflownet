@@ -9,7 +9,6 @@ pip-compile-multi
 pre-commit
 pytest
 pytest-cov
-roadie
 safety
 typeguard
 types-pkg_resources
