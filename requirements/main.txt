@@ -7,7 +7,7 @@
 #
 --find-links https://data.pyg.org/whl/torch-1.10.0+cu113.html
 
-certifi==2021.10.8
+certifi==2022.5.18.1
     # via requests
 charset-normalizer==2.0.12
     # via requests
@@ -25,13 +25,13 @@ markupsafe==2.1.1
     # via jinja2
 mpmath==1.2.1
     # via sympy
-networkx==2.8
+networkx==2.8.2
     # via
     #   -r requirements/main.in
     #   torch-geometric
 numexpr==2.8.1
     # via tables
-numpy==1.22.3
+numpy==1.22.4
     # via
     #   numexpr
     #   pandas
@@ -46,9 +46,9 @@ packaging==21.3
     #   tables
 pandas==1.4.2
     # via torch-geometric
-pillow==9.1.0
+pillow==9.1.1
     # via rdkit-pypi
-pyparsing==3.0.8
+pyparsing==3.0.9
     # via
     #   packaging
     #   rdflib
@@ -67,9 +67,9 @@ rdkit-pypi==2022.3.2.1
     # via -r requirements/main.in
 requests==2.27.1
     # via torch-geometric
-scikit-learn==1.0.2
+scikit-learn==1.1.1
     # via torch-geometric
-scipy==1.8.0
+scipy==1.8.1
     # via
     #   -r requirements/main.in
     #   scikit-learn
