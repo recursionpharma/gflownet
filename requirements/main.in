@@ -7,7 +7,7 @@ torch>=1.10
 # them as >= in dev until something breaks?
 torch-geometric==2.0.3
 torch-scatter==2.0.9
-torch-sparse==0.6.12
+torch-sparse==0.6.13
 torch-cluster==1.6.0
 rdkit-pypi
 tables
