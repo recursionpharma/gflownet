@@ -31,5 +31,4 @@ install_requires, extras_require = _get_requirements()
 setup(
     install_requires=install_requires,
     extras_require=extras_require,
-    packages=["src/gflownet"],
 )
