@@ -1,10 +1,11 @@
+import json
 import os
+
 import numpy as np
 import torch
 import torch.nn as nn
 from rdkit import RDLogger, Chem
 from torch.utils.data import Dataset, IterableDataset
-import json
 
 
 class SamplingIterator(IterableDataset):

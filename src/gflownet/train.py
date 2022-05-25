@@ -1,23 +1,26 @@
 import pathlib
-from typing import Dict, Tuple, Any, NewType, List, Optional
+from typing import Any, Dict, List, NewType, Optional, Tuple
 
-import torch
-import torch.nn as nn
-import torch_geometric.data as gd
 from rdkit.Chem.rdchem import Mol as RDMol
+import torch
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+import torch_geometric.data as gd
 
 from gflownet.data.sampling_iterator import SamplingIterator
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 
 # This type represents an unprocessed list of reward signals/conditioning information
-FlatRewards = NewType('FlatRewards', Tensor)
+FlatRewards = NewType('FlatRewards', Tensor)  # type: ignore
 
 # This type represents the outcome for a multi-objective task of
 # converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
-RewardScalar = NewType('RewardScalar', Tensor)
+RewardScalar = NewType('RewardScalar', Tensor)  # type: ignore
 
 
 class GFNAlgorithm:
@@ -72,7 +75,7 @@ class GFNTask:
         reward: RewardScalar
             A 1d tensor, a scalar reward for each molecule.
         is_valid: Tensor
-            A 1d bool tensor, True for each entry deemed valid by the task.
+            A 1d tensor, a boolean indicating whether the molecule is valid.
         """
         raise NotImplementedError()
 
@@ -108,7 +111,7 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def _wrap_model_mp(self, model):
-        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers."""
+        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
         model.to(self.device)
         if self.num_workers > 0:
             placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))

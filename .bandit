@@ -1,0 +1,3 @@
+[bandit]
+exclude = ./.tox,tests,docs
+skips = B101

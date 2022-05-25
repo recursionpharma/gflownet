@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
 from torch_geometric.utils import add_self_loops
+
 from gflownet.envs.graph_building_env import GraphActionCategorical
 
 
