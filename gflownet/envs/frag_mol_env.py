@@ -9,7 +9,8 @@ from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionTyp
 
 
 class FragMolBuildingEnvContext(GraphBuildingEnvContext):
-    def __init__(self, num_cond_dim=0):
+    def __init__(self, max_frags=9, num_cond_dim=0):
+        self.max_frags = max_frags
         self.frags_smi = open(os.path.split(__file__)[0] + '/frags_72.txt', 'r').read().splitlines()
         self.frags_mol = [Chem.MolFromSmiles(i) for i in self.frags_smi]
         self.frags_stems = [[
@@ -78,16 +79,24 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         for i, n in enumerate(g.nodes):
             x[i, g.nodes[n]['v']] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
+        set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             a, b = e
             for n, offset in zip(e, [0, self.num_stem_acts]):
-                idx = ad.get('{int(n)}_attach', 0) + offset
+                idx = ad.get(f'{int(n)}_attach', 0) + offset
                 edge_attr[i * 2, idx] = 1
                 edge_attr[i * 2 + 1, idx] = 1
+                if f'{int(n)}_attach' not in ad:
+                    set_edge_attr_mask[i, offset:offset + len(self.frags_stems[g.nodes[n]['v']])] = 1
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
             (-1, 2)).T
-        return gd.Data(x, edge_index, edge_attr)
+        if x.shape[0] == self.max_frags:
+            add_node_mask = torch.zeros((x.shape[0], 1))
+        else:
+            add_node_mask = torch.ones((x.shape[0], 1))
+
+        return gd.Data(x, edge_index, edge_attr, add_node_mask=add_node_mask, set_edge_attr_mask=set_edge_attr_mask)
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
@@ -123,12 +132,23 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 mol = Chem.CombineMols(mol, self.frags_mol[g.nodes[i]['v']])
 
         mol = Chem.EditableMol(mol)
+        bond_atoms = []
         for a, b in g.edges:
             afrag = g.nodes[a]['v']
             bfrag = g.nodes[b]['v']
-            mol.AddBond(int(self.frags_stems[afrag][g.edges[(a, b)].get(f'{a}_attach', 0)] + offsets[a]),
-                        int(self.frags_stems[bfrag][g.edges[(a, b)].get(f'{b}_attach', 0)] + offsets[b]))
+            u, v = (int(self.frags_stems[afrag][g.edges[(a, b)].get(f'{a}_attach', 0)] + offsets[a]),
+                    int(self.frags_stems[bfrag][g.edges[(a, b)].get(f'{b}_attach', 0)] + offsets[b]))
+            bond_atoms += [u, v]
+            mol.AddBond(u, v, Chem.BondType.SINGLE)
         mol = mol.GetMol()
+
+        def _pop_H(atom):
+            atom = mol.GetAtomWithIdx(atom)
+            nh = atom.GetNumExplicitHs()
+            if nh > 0:
+                atom.SetNumExplicitHs(nh - 1)
+
+        list(map(_pop_H, bond_atoms))
         return mol
 
     def is_sane(self, g):
