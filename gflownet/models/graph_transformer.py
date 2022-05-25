@@ -121,12 +121,16 @@ class GraphTransformerFragGFN(nn.Module):
         src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_row]], 1))
         dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_col]], 1))
 
+        def _mask(x, m):
+            # mask logit vector x with binary mask m, -1000 is a tiny log-value
+            return x * m + -1000 * (1 - m)
+
         cat = GraphActionCategorical(
             g,
             logits=[
                 self.emb2stop(graph_embeddings),
-                self.emb2add_node(node_embeddings),
-                torch.cat([src_anchor_logits, dst_anchor_logits], 1),
+                _mask(self.emb2add_node(node_embeddings), g.add_node_mask),
+                _mask(torch.cat([src_anchor_logits, dst_anchor_logits], 1), g.set_edge_attr_mask),
             ],
             keys=[None, 'x', 'edge_index'],
             types=self.action_type_order,
