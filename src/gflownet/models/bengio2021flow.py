@@ -1,18 +1,3 @@
-import gzip
-import os
-import pickle  # nosec
-
-import numpy as np
-import requests
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from rdkit import RDConfig
-from rdkit.Chem import ChemicalFeatures
-from rdkit.Chem.rdchem import BondType as BT, HybridizationType
-from torch_geometric.data import Data, Batch
-from torch_geometric.nn import NNConv, Set2Set
-from torch_sparse import coalesce
 """
 This is code adapted from Bengio et al. (2021), 'Flow Network based
 Generative Models for Non-Iterative Diverse Candidate Generation',
@@ -22,6 +7,24 @@ from
 In particular, this model class allows us to compare to the same
 target proxy used in that paper (sEH binding affinity prediction).
 """
+import gzip
+import os
+import pickle  # nosec
+
+import numpy as np
+from rdkit import RDConfig
+from rdkit.Chem import ChemicalFeatures
+from rdkit.Chem.rdchem import BondType as BT
+from rdkit.Chem.rdchem import HybridizationType
+import requests
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.data import Batch
+from torch_geometric.data import Data
+from torch_geometric.nn import NNConv
+from torch_geometric.nn import Set2Set
+from torch_sparse import coalesce
 
 
 class MPNNet(nn.Module):
