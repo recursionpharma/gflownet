@@ -2,6 +2,7 @@ import ast
 import copy
 from typing import Any, Dict, Union, List, Tuple, Callable, cast
 
+import scipy.stats as stats
 import numpy as np
 import torch
 import torch.nn as nn
@@ -35,11 +36,10 @@ class SEHTask(GFNTask):
         self.temperature_dist_params = temperature_parameters
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
-        return FlatRewards(torch.as_tensor(y) / 10)
+        return FlatRewards(torch.as_tensor(y) / 8)
 
     def inverse_flat_reward_transform(self, rp):
-        return rp
+        return rp * 8
 
     def load_task_models(self):
         model = bengio2021flow.load_original_model()
@@ -54,13 +54,13 @@ class SEHTask(GFNTask):
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)  # TODO: hyperparameters
+        beta_enc = thermometer(torch.tensor(beta), 32, 0, 64)  # TODO: hyperparameters
         return {'beta': torch.tensor(beta), 'encoding': beta_enc}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward**cond_info['beta']
+        return flat_reward**cond_info['beta']  # / stats.norm.pdf(flat_reward.numpy(), 1, 0.4)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -70,8 +70,8 @@ class SEHTask(GFNTask):
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['seh'](batch).reshape((-1,)).data.cpu()
-        preds[preds.isnan()] = 1
-        preds = self.flat_reward_transform(preds).clip(1e-4, 2)
+        preds[preds.isnan()] = 0
+        preds = self.flat_reward_transform(preds).clip(1e-4, 100)
         return RewardScalar(preds), is_valid
 
 
@@ -84,7 +84,7 @@ class SEHFragTrainer(GFNTrainer):
             'num_emb': 128,
             'num_layers': 4,
             'tb_epsilon': None,
-            'illegal_action_logreward': -50,
+            'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
             'temperature_dist_params': '(.5, 32)',
@@ -96,7 +96,7 @@ class SEHFragTrainer(GFNTrainer):
             'Z_lr_decay': 20000,
             'clip_grad_type': 'norm',
             'clip_grad_param': 10,
-            'random_action_prob': .001,
+            'random_action_prob': 0.,
             'sampling_tau': 0.,
         }
 
@@ -105,7 +105,7 @@ class SEHFragTrainer(GFNTrainer):
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = FragMolBuildingEnvContext(num_cond_dim=32)
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=32)
         self.training_data = []
         self.test_data = []
         self.offline_ratio = 0
@@ -197,11 +197,14 @@ def main():
     hps = {
         'lr_decay': 10000,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/scratch/logs/seh_frag',
-        'num_training_steps': 100_000,
-        'validate_every': 1000,
+        'log_dir': '/scratch/logs/seh_frag/run_0/',
+        'num_training_steps': 10_000,
+        'validate_every': 100,
+        'sampling_tau': 0.99,
+        'temperature_dist_params': '(0, 64)',
     }
     trial = SEHFragTrainer(hps, torch.device('cuda'))
+    trial.verbose = True
     trial.run()
 
 
