@@ -1,23 +1,23 @@
 import ast
 import copy
-from typing import Any, Dict, Union, List, Tuple, Callable, cast
+from typing import Any, Dict, Union, List, Tuple, Callable
 
-import scipy.stats as stats
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 from determined.pytorch import LRScheduler, PyTorchTrial, PyTorchTrialContext
-from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.models.graph_transformer import GraphTransformerFragGFN
-from gflownet.train import GFNTrainer, GFNTask, FlatRewards, RewardScalar
-from gflownet.models import bengio2021flow
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
+
+from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.models import bengio2021flow
+from gflownet.models.graph_transformer import GraphTransformerFragGFN
+from gflownet.train import GFNTrainer, GFNTask, FlatRewards, RewardScalar
 
 
 def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:

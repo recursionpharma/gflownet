@@ -1,6 +1,6 @@
 import gzip
 import os
-import pickle
+import pickle  # nosec
 
 import numpy as np
 import requests
@@ -13,8 +13,6 @@ from rdkit.Chem.rdchem import BondType as BT, HybridizationType
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn import NNConv, Set2Set
 from torch_sparse import coalesce
-
-
 """
 This is code adapted from Bengio et al. (2021), 'Flow Network based
 Generative Models for Non-Iterative Diverse Candidate Generation',
@@ -73,7 +71,7 @@ def load_original_model():
     mpnn = MPNNet(num_feat=num_feat, num_vec=0, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_conv_steps=12)
     f = requests.get("https://github.com/GFNOrg/gflownet/raw/master/mols/data/pretrained_proxy/best_params.pkl.gz",
                      stream=True)
-    params = pickle.load(gzip.open(f.raw))
+    params = pickle.load(gzip.open(f.raw))  # nosec
     param_map = {
         'lin0.weight': params[0],
         'lin0.bias': params[1],
