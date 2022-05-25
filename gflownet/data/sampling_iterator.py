@@ -1,8 +1,10 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from rdkit import RDLogger
+from rdkit import RDLogger, Chem
 from torch.utils.data import Dataset, IterableDataset
+import json
 
 
 class SamplingIterator(IterableDataset):
@@ -15,7 +17,7 @@ class SamplingIterator(IterableDataset):
 
     """
     def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True):
+                 stream=True, log_dir: str = None):
         """Parameters
         ----------
         dataset: Dataset
@@ -47,6 +49,7 @@ class SamplingIterator(IterableDataset):
         self.task = task
         self.device = device
         self.stream = stream
+        self.log_dir = log_dir if self.ratio < 1 and self.stream else None
 
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
@@ -59,7 +62,7 @@ class SamplingIterator(IterableDataset):
             worker_info = torch.utils.data.get_worker_info()
             n = len(self.data)
             if n == 0:
-                yield []
+                yield np.arange(0, 0)
                 return
             if worker_info is None:
                 start, end, wid = 0, n, -1
@@ -83,9 +86,12 @@ class SamplingIterator(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        wid = (worker_info.id if worker_info is not None else 0)
-        self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + wid)
+        self._wid = (worker_info.id if worker_info is not None else 0)
+        self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
         self.ctx.device = self.device
+        if self.log_dir is not None:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self.generated_logfile = open(f'{self.log_dir}/generated_mols_{self._wid}.csv', 'a')
         for idcs in self._idx_iterator():
             num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
@@ -134,4 +140,24 @@ class SamplingIterator(IterableDataset):
             batch.num_offline = num_offline
             # TODO: There is a smarter way to do this
             # batch.pin_memory()
+            if self.online_batch_size > 0 and self.log_dir is not None:
+                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
+                                   {k: v[num_offline:] for k, v in cond_info.items()})
             yield batch
+
+    def log_generated(self, trajs, rewards, flat_rewards, cond_info):
+        mols = [
+            Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
+            for i in range(len(trajs))
+        ]
+
+        def un_tensor(v):
+            if isinstance(v, torch.Tensor):
+                return v.data.numpy().tolist()
+
+        flat_rewards = un_tensor(torch.as_tensor(flat_rewards))
+        for i in range(len(trajs)):
+            serializable_ci = {k: un_tensor(v[i]) for k, v in cond_info.items() if k != 'encoding'}
+            self.generated_logfile.write(
+                f'{mols[i]},{rewards[i]},{json.dumps(flat_rewards[i])},{json.dumps(serializable_ci)}\n')
+        self.generated_logfile.flush()

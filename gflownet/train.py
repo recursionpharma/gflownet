@@ -95,6 +95,7 @@ class GFNTrainer:
         self.num_workers: int = self.hps.get('num_data_loader_workers', 0)
         self.offline_ratio = 0.5
         self.valid_offline_ratio = 1
+        self.verbose = False
         self.setup()
 
     def default_hps(self) -> Dict[str, Any]:
@@ -108,6 +109,7 @@ class GFNTrainer:
 
     def _wrap_model_mp(self, model):
         """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers."""
+        model.to(self.device)
         if self.num_workers > 0:
             placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
             return placeholder, torch.device('cpu')
@@ -116,7 +118,7 @@ class GFNTrainer:
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.offline_ratio)
+                                    ratio=self.offline_ratio, log_dir=self.hps['log_dir'])
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
@@ -149,6 +151,8 @@ class GFNTrainer:
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
+            if self.verbose:
+                print(it, ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
             self.log(info, it, 'train')
 
             if it % self.hps['validate_every'] == 0:
