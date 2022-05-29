@@ -1,3 +1,9 @@
+
+
+[![Build-and-Test](https://github.com/recursionpharma/gflownet/actions/workflows/build-and-test.yaml/badge.svg)](https://github.com/recursionpharma/gflownet/actions/workflows/build-and-test.yaml)
+[![Python versions](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/downloads/)
+[![license: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
+
 # gflownet
 
 GFlowNet-related training and environment code on graphs.
