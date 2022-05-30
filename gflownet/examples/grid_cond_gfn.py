@@ -114,14 +114,26 @@ def beale(x):
     return (y - y_min) / (y_max - y_min)
 
 
-def thermo_encoding(beta, vmin=0, vmax=32, nbins=50):
+def thermometer(beta, vmin=0, vmax=32, nbins=50):
     bins = np.linspace(vmin, vmax, nbins)
-    thermometer_encoding = 1 - (bins - beta).clip(0, 1)
+    gap = bins[1] - bins[0]
+    thermometer_encoding = (beta[..., None] - bins.reshape((1,) * beta.ndim + (-1,))).clip(0, gap.item()) / gap
     return thermometer_encoding
 
 class GridEnv:
-    def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None,
-                 obs_type='one-hot', nbins=50, use_thermo_encoding=False, annealing=True, alpha=2, beta=1):
+    def __init__(
+        self,
+        horizon,
+        ndim=2,
+        xrange=[-1, 1],
+        funcs=None,
+        obs_type='one-hot',
+        nbins=50,
+        use_thermo_encoding=False,
+        annealing=True,
+        alpha=2,
+        beta=1
+    ):
         self.alpha= alpha
         self.beta = beta
         self.horizon = horizon
@@ -180,7 +192,7 @@ class GridEnv:
         # Inlcude uniform beta sampling
         self.temperature = np.random.gamma(self.alpha, self.beta) if temp is None else temp
         if self.use_thermo_encoding:
-            temperature = thermo_encoding(self.temperature)
+            temperature = thermometer(self.temperature)
         else:
             temperature = [self.temperature]
         # Might get an error here
@@ -476,12 +488,7 @@ def get_true_loss(r, coefs, final_dist):
 def get_functions(dims):
     functions = [branin, currin, shubert, sphere, beale]
     function_labels = ["Branin", "Currin", "Shubert", "Sphere", "Beale"]
-    if dims == 3:
-        return functions[:3], function_labels[:3]
-    elif dims == 4:
-        return functions[:4], function_labels[:4]
-    else:
-        return functions, function_labels
+    return functions[:dims], function_labels[:dims]
     
     
 def main(args):
