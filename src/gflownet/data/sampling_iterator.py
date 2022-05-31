@@ -115,7 +115,7 @@ class SamplingIterator(IterableDataset):
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_reward
                     pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
-                    raise ValueError('make this flat rewards')  # TODO
+                    flat_rewards += pred_reward
                 else:
                     # Otherwise, query the task for flat rewards
                     valid_idcs = torch.tensor([
@@ -141,6 +141,7 @@ class SamplingIterator(IterableDataset):
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
             batch.num_offline = num_offline
+            batch.num_online = self.online_batch_size
             # TODO: There is a smarter way to do this
             # batch.pin_memory()
             if self.online_batch_size > 0 and self.log_dir is not None:
