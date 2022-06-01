@@ -110,7 +110,7 @@ class TrajectoryBalance:
         mol_too_big = 0
         mol_not_sane = 0
         invalid_act = 0
-        logprob_of_illegal = []
+        logprob_of_illegal: List[Tensor] = []
 
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         if self.epsilon is not None:
