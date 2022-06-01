@@ -17,8 +17,8 @@ from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.models import mxmnet
 from gflownet.models.graph_transformer import GraphTransformerGFN
+import gflownet.models.mxmnet as mxmnet
 from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
 from gflownet.train import GFNTrainer
