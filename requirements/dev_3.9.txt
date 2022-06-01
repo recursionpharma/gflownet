@@ -8,102 +8,206 @@
 
 attrs==21.4.0
     # via pytest
-bandit==1.7.2
+bandit[toml]==1.7.4
     # via -r requirements/dev.in
-certifi==2021.10.8
-    # via
-    #   -c requirements/main_3.9.txt
-    #   requests
+certifi==2022.5.18.1
+    # via requests
+cfgv==3.3.1
+    # via pre-commit
 charset-normalizer==2.0.12
+    # via requests
+click==8.1.3
     # via
-    #   -c requirements/main_3.9.txt
-    #   requests
-click==8.0.4
-    # via safety
-coverage[toml]==6.3.2
+    #   pip-compile-multi
+    #   pip-tools
+    #   safety
+coverage[toml]==6.4
     # via pytest-cov
+distlib==0.3.4
+    # via virtualenv
 dparse==0.5.1
     # via safety
-flake8==4.0.1 ; python_version >= "3.8"
+filelock==3.7.1
+    # via virtualenv
+flake8==4.0.1
     # via -r requirements/dev.in
 gitdb==4.0.9
     # via gitpython
 gitpython==3.1.27
     # via bandit
+googledrivedownloader==0.4
+    # via torch-geometric
+identify==2.5.1
+    # via pre-commit
 idna==3.3
-    # via
-    #   -c requirements/main_3.9.txt
-    #   requests
+    # via requests
 iniconfig==1.1.1
     # via pytest
+isodate==0.6.1
+    # via rdflib
+isort==5.10.1
+    # via -r requirements/dev.in
+jinja2==3.1.2
+    # via torch-geometric
+joblib==1.1.0
+    # via scikit-learn
+markupsafe==2.1.1
+    # via jinja2
 mccabe==0.6.1
     # via flake8
-mypy==0.931
+mpmath==1.2.1
+    # via sympy
+mypy==0.960
     # via -r requirements/dev.in
 mypy-extensions==0.4.3
     # via mypy
+networkx==2.8.2
+    # via
+    #   -r requirements/main.in
+    #   torch-geometric
+nodeenv==1.6.0
+    # via pre-commit
+numexpr==2.8.1
+    # via tables
+numpy==1.22.4
+    # via
+    #   numexpr
+    #   pandas
+    #   rdkit-pypi
+    #   scikit-learn
+    #   scipy
+    #   tables
+    #   torch-geometric
 packaging==21.3
     # via
-    #   -c requirements/main_3.9.txt
     #   dparse
+    #   numexpr
     #   pytest
     #   safety
-pbr==5.8.1
+    #   tables
+pandas==1.4.2
+    # via torch-geometric
+pbr==5.9.0
     # via stevedore
+pep517==0.12.0
+    # via pip-tools
+pillow==9.1.1
+    # via rdkit-pypi
+pip-compile-multi==2.4.5
+    # via -r requirements/dev.in
+pip-tools==6.6.2
+    # via pip-compile-multi
+platformdirs==2.5.2
+    # via virtualenv
 pluggy==1.0.0
     # via pytest
+pre-commit==2.19.0
+    # via -r requirements/dev.in
 py==1.11.0
     # via pytest
 pycodestyle==2.8.0
     # via flake8
 pyflakes==2.4.0
     # via flake8
-pyparsing==3.0.8
+pyparsing==3.0.9
     # via
-    #   -c requirements/main_3.9.txt
     #   packaging
-pytest==7.0.1
+    #   rdflib
+    #   torch-geometric
+pytest==7.1.2
     # via
     #   -r requirements/dev.in
     #   pytest-cov
 pytest-cov==3.0.0
     # via -r requirements/dev.in
+python-dateutil==2.8.2
+    # via pandas
+pytz==2022.1
+    # via pandas
 pyyaml==6.0
     # via
-    #   -c requirements/main_3.9.txt
     #   bandit
     #   dparse
+    #   pre-commit
+    #   torch-geometric
+    #   yacs
+rdflib==6.1.1
+    # via torch-geometric
+rdkit-pypi==2022.3.2.1
+    # via -r requirements/main.in
 requests==2.27.1
     # via
-    #   -c requirements/main_3.9.txt
     #   safety
-roadie==5.1.6
-    # via -r requirements/dev.in
+    #   torch-geometric
 safety==1.10.3
     # via -r requirements/dev.in
+scikit-learn==1.1.1
+    # via torch-geometric
+scipy==1.8.1
+    # via
+    #   -r requirements/main.in
+    #   scikit-learn
+    #   torch-geometric
+    #   torch-sparse
+six==1.16.0
+    # via
+    #   isodate
+    #   python-dateutil
+    #   virtualenv
 smmap==5.0.0
     # via gitdb
 stevedore==3.5.0
     # via bandit
+sympy==1.10.1
+    # via -r requirements/main.in
+tables==3.7.0
+    # via -r requirements/main.in
+threadpoolctl==3.1.0
+    # via scikit-learn
 toml==0.10.2
-    # via dparse
+    # via
+    #   bandit
+    #   dparse
+    #   pre-commit
 tomli==2.0.1
     # via
     #   coverage
     #   mypy
+    #   pep517
     #   pytest
+toposort==1.7
+    # via pip-compile-multi
+torch==1.11.0
+    # via -r requirements/main.in
+torch-cluster==1.6.0
+    # via -r requirements/main.in
+torch-geometric==2.0.3
+    # via -r requirements/main.in
+torch-scatter==2.0.9
+    # via -r requirements/main.in
+torch-sparse==0.6.13
+    # via -r requirements/main.in
+tqdm==4.64.0
+    # via torch-geometric
+typeguard==2.13.3
+    # via -r requirements/dev.in
 types-pkg-resources==0.1.3
     # via -r requirements/dev.in
 typing-extensions==4.2.0
     # via
-    #   -c requirements/main_3.9.txt
     #   mypy
+    #   torch
 urllib3==1.26.9
-    # via
-    #   -c requirements/main_3.9.txt
-    #   requests
+    # via requests
+virtualenv==20.14.1
+    # via pre-commit
+wheel==0.37.1
+    # via pip-tools
+yacs==0.1.8
+    # via torch-geometric
 yapf==0.32.0
     # via -r requirements/dev.in
 
 # The following packages are considered to be unsafe in a requirements file:
+# pip
 # setuptools
