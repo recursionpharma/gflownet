@@ -15,8 +15,19 @@ class SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True):
+    def __init__(
+            self,
+            dataset: Dataset,
+            model: nn.Module,
+            batch_size: int,
+            ctx,
+            algo,
+            task,
+            number_of_objectives,
+            device,
+            ratio=0.0,
+            stream=True
+    ):
         """Parameters
         ----------
         dataset: Dataset
@@ -46,6 +57,7 @@ class SamplingIterator(IterableDataset):
         self.ctx = ctx
         self.algo = algo
         self.task = task
+        self.number_of_objectives = number_of_objectives
         self.device = device
         self.stream = stream
 
@@ -110,14 +122,14 @@ class SamplingIterator(IterableDataset):
                     valid_idcs = torch.tensor([
                         i + num_offline for i in range(self.online_batch_size) if trajs[i + num_offline]['is_valid']
                     ]).long()
-                    pred_reward = torch.zeros((self.online_batch_size))
+                    pred_reward = torch.zeros((self.number_of_objectives, self.online_batch_size))
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    pred_reward[valid_idcs - num_offline] = preds
+                    pred_reward[:, valid_idcs - num_offline] = preds
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)

@@ -29,6 +29,8 @@ hyperparameters:
   sampling_tau: 0
   temperature_sample_dist: uniform
   temperature_dist_params: (0.2, 32)
+  reward_transform:  'unit+95p'
+  number_of_objectives: 2
   tb_epsilon: None
   weight_decay: 1e-8
   lr_decay: 100000
@@ -39,7 +41,7 @@ hyperparameters:
   #temperature_dist_params: (1.25, 2)
 searcher:
   name: single
-  metric: validation_loss
+  metric: offline_loss
   max_length:
       batches: 100000
   smaller_is_better: true
