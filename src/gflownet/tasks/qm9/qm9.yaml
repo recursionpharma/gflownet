@@ -56,12 +56,12 @@ checkpoint_storage:
   host_path: /mnt/bh1/scratch/det_checkpoints
   type: shared_fs
 bind_mounts:
-  - host_path: /mnt/ps/home/CORP/emmanuel.bengio/
+  - host_path: /mnt/ps/home/CORP/sharath.raparthy/
     container_path: /run/determined/workdir/home/
   - host_path: /mnt/bh1/data/
     container_path: /data
-  - host_path: /mnt/bh1/scratch/emmanuel.bengio/
-    container_path: /scratch/
+  - host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/
+    container_path: /sandbox/
 environment:
   image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
   add_capabilities:
