@@ -34,11 +34,12 @@ def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
     return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
 
 class RewardInfo:
-    def __init__(self, _min: float, _max: float, _percentile_95: float):
+    def __init__(self, _min: float, _max: float, _percentile_95: float, _ideal: float):
         self._min = _min
         self._max = _max
         self._percentile_95 = _percentile_95
         self._width = self._max - self._min
+        self._ideal = _ideal
 
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
@@ -63,10 +64,11 @@ class QM9GapTask(GFNTask):
         self._rtrans = reward_transform
         self.reward_stat_info = []
         self.targets = targets
+        ideal_vals = [None, 4.0, None, None]
         
         for i in range(number_of_objectives):
             _min, _max, _percentile_95 = self.dataset.get_stats(percentile=0.05, target=targets[i])
-            self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _percentile_95=_percentile_95))
+            self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _percentile_95=_percentile_95, _ideal=ideal_vals[i]))
 
     def flat_reward_transform(self, y: Union[list, np.ndarray, float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
@@ -122,9 +124,10 @@ class QM9GapTask(GFNTask):
         # Preferences
         m = Dirichlet(torch.FloatTensor([1.5] * self.number_of_objectives))
         preferences = m.sample([n])
-        return {'beta': torch.tensor(beta), 'encoding': beta_enc, 'preferences': preferences}
+        return {'beta': torch.tensor(beta).unsqueeze(1), 'encoding': beta_enc, 'preferences': preferences}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+        # print(f"Flat Before: {flat_reward}")
         if isinstance(flat_reward, list):
             flat_reward = np.vstack(flat_reward)
             flat_reward = torch.bmm(
@@ -132,6 +135,8 @@ class QM9GapTask(GFNTask):
             ).squeeze(1)
         else:
             flat_reward = flat_reward.dot(cond_info["preferences"])
+        b= cond_info['beta']
+        # print(f"Flat After Pref: {flat_reward.shape} | Flat After Beta: {(flat_reward**b).shape} | Beta: {b.shape}")
         return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
@@ -157,7 +162,7 @@ class QM9GapTask(GFNTask):
             all_preds.append(preds)
         all_preds = np.hstack(all_preds)
         preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
-        return RewardScalar(preds), is_valid
+        return FlatRewards(preds), is_valid
 
 
 class QM9GapTrainer(GFNTrainer):

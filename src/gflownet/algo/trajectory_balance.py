@@ -323,9 +323,13 @@ class TrajectoryBalance:
             reward_loss = 0
 
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
+        if len(traj_losses[batch.num_offline:]) == 0:
+            online_loss = 0
+        else:
+            online_loss = traj_losses[batch.num_offline:].mean()
         info = {
             'offline_loss': traj_losses[:batch.num_offline].mean(),
-            'online_loss': 0,
+            'online_loss': online_loss,
             'reward_loss': reward_loss,
             'invalid_trajectories': invalid_mask.mean() * 2,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
