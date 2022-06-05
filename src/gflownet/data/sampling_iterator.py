@@ -99,12 +99,14 @@ class SamplingIterator(IterableDataset):
         for idcs in self._idx_iterator():
             num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
+            
             cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
             is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
-
+            pre = cond_info["preferences"]
+            
             # Sample some dataset data
             mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs]))
-            flat_rewards = list(self.task.flat_reward_transform(flat_rewards))
+            flat_rewards = list(np.vstack(self.task.flat_reward_transform(flat_rewards)))
             graphs = [self.ctx.mol_to_graph(m) for m in mols]
             trajs = self.algo.create_training_data_from_graphs(graphs)
             # Sample some on-policy data
@@ -122,14 +124,16 @@ class SamplingIterator(IterableDataset):
                     valid_idcs = torch.tensor([
                         i + num_offline for i in range(self.online_batch_size) if trajs[i + num_offline]['is_valid']
                     ]).long()
-                    pred_reward = torch.zeros((self.number_of_objectives, self.online_batch_size))
+                    pred_reward = np.zeros((self.online_batch_size, self.number_of_objectives))
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    pred_reward[:, valid_idcs - num_offline] = preds
+                    if preds.shape[0] > 0:
+                        for i in range(self.number_of_objectives):
+                            pred_reward[valid_idcs - num_offline, i] = preds[:, i]
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)

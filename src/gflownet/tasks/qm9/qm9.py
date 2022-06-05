@@ -33,7 +33,7 @@ def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
     gap = bins[1] - bins[0]
     return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
 
-class RewardStatInfo:
+class RewardInfo:
     def __init__(self, _min: float, _max: float, _percentile_95: float):
         self._min = _min
         self._max = _max
@@ -47,6 +47,7 @@ class QM9GapTask(GFNTask):
             dataset: Dataset,
             temperature_distribution: str,
             temperature_parameters: Tuple[float],
+            temperature_max_min: Tuple[int],
             number_of_objectives: int,
             reward_transform: str,
             targets: list,
@@ -57,25 +58,27 @@ class QM9GapTask(GFNTask):
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
+        self.temperature_max_min = list(map(tuple, temperature_max_min))
         self.number_of_objectives = number_of_objectives
-        # TODO: fix interface
-          # type: ignore
-        self._width = self._max - self._min
         self._rtrans = reward_transform
         self.reward_stat_info = []
         self.targets = targets
-        for target in targets:
-            _min, _max, _percentile_95 = self.dataset.get_stats(percentile=0.05, target=target)
-            self.reward_stat_info.append(RewardStatInfo(_min=_min, _max=_max, _percentile_95=_percentile_95))
+        
+        for i in range(number_of_objectives):
+            _min, _max, _percentile_95 = self.dataset.get_stats(percentile=0.05, target=targets[i])
+            self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _percentile_95=_percentile_95))
 
-    def flat_reward_transform(self, y: Union[list, float, Tensor]) -> FlatRewards:
+    def flat_reward_transform(self, y: Union[list, np.ndarray, float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
-        # This assumes that y is a list. Check if that is indeed a case.
+        # This assumes that y is a list. Check if that is indeed a case. If yes, turn that into an array
+        if isinstance(y, list):
+            y = np.vstack(y)
         rewards = []
+        # Problem here. Why the shape is 4, 1???
         for i in range(self.number_of_objectives):
-            rew = self._transform(y[i], self.reward_stat_info[i])
+            rew = self._transform(y[:, i], self.reward_stat_info[i])
             rewards.append(rew)
-        rewards = np.asarray(rewards)
+        rewards = np.vstack(rewards).reshape(-1, self.number_of_objectives)
         return rewards
 
     def _transform(self, y: Union[float, Tensor], reward_stat_info):
@@ -106,48 +109,54 @@ class QM9GapTask(GFNTask):
         return {'mxmnet_gap': gap_model}
 
     def sample_conditional_information(self, n):
+        # Beta Info
         beta = None
+        # TODO Sharath: Inlcude Annealing
         if self.temperature_sample_dist == 'gamma':
             beta = self.rng.gamma(*self.temperature_dist_params, n).astype(np.float32)
         elif self.temperature_sample_dist == 'uniform':
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)  # TODO: hyperparameters
+        beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)
+        # Preferences
         m = Dirichlet(torch.FloatTensor([1.5] * self.number_of_objectives))
-        preferences = m.sample()
+        preferences = m.sample([n])
         return {'beta': torch.tensor(beta), 'encoding': beta_enc, 'preferences': preferences}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
-            flat_reward = torch.FloatTensor(flat_reward).dot(cond_info["preferences"])
+            flat_reward = np.vstack(flat_reward)
+            flat_reward = torch.bmm(
+                torch.FloatTensor(flat_reward).unsqueeze(1), cond_info["preferences"].unsqueeze(1).permute(0, 2, 1)
+            ).squeeze(1)
         else:
             flat_reward = flat_reward.dot(cond_info["preferences"])
         return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         all_preds = []
+        graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
+        is_valid = torch.tensor([i is not None for i in graphs]).bool()
+        if not is_valid.any():
+            return RewardScalar(torch.zeros((0,))), is_valid
         for target in self.targets:
             if target == 'gap':
-                graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
-                is_valid = torch.tensor([i is not None for i in graphs]).bool()
-                if not is_valid.any():
-                    return RewardScalar(torch.zeros((0,))), is_valid
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
-                preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
-                preds[preds.isnan()] = 1
+                preds = self.models['mxmnet_gap'](batch).reshape((-1, 1)).data.cpu().numpy() / mxmnet.HAR2EV  # type: ignore[attr-defined]                
             elif target == 'logP':
-                preds = torch.FloatTensor([Descriptors.MolLogP(mol) for mol in mols])
+                preds = np.asarray([Descriptors.MolLogP(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1,1 ))
             elif target == 'molecular_weight':
-                preds = torch.FloatTensor([Descriptors.MolLogP(mol) for mol in mols])
-            elif target == 'solubility':
-                preds = torch.FloatTensor([Descriptors.MolLogP(mol) for mol in mols])
+                preds = np.asarray([Descriptors.MolWt(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1, 1))
+            elif target == 'QED':
+                preds = np.asarray([Descriptors.qed(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1, 1))
             else:
                 preds = []
+            preds[np.isnan(preds)] = 1
             all_preds.append(preds)
-        preds = self.flat_reward_transform(all_preds).clip(1e-4, 2)
-
+        all_preds = np.hstack(all_preds)
+        preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
         return RewardScalar(preds), is_valid
 
 
@@ -174,7 +183,6 @@ class QM9GapTrainer(GFNTrainer):
             'clip_grad_param': 10,
             'random_action_prob': .001,
             'sampling_tau': 0.,
-            'targets': ['gap', 'logP', 'molecular_weight', 'solubility']
         }
 
     def setup(self):
@@ -183,8 +191,8 @@ class QM9GapTrainer(GFNTrainer):
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
         self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=32)
-        self.training_data = QM9Dataset(hps['qm9_h5_path'], train=True, targets=hps['targets'])
-        self.test_data = QM9Dataset(hps['qm9_h5_path'], train=False, targets=hps['targets'])
+        self.training_data = QM9Dataset(hps['qm9_h5_path'], train=True, targets=hps['targets'][:hps['number_of_objectives']])
+        self.test_data = QM9Dataset(hps['qm9_h5_path'], train=False, targets=hps['targets'][:hps['number_of_objectives']])
 
         model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'])
         self.model = model
@@ -209,9 +217,10 @@ class QM9GapTrainer(GFNTrainer):
             dataset=self.training_data,
             temperature_distribution=hps['temperature_sample_dist'],
             temperature_parameters=ast.literal_eval(hps['temperature_dist_params']),
+            temperature_max_min=hps['temperature_max_min'],
             number_of_objectives=hps['number_of_objectives'],
             reward_transform=hps['reward_transform'],
-            targets=hps['targets'],
+            targets=hps['targets'][:hps['number_of_objectives']],
             wrap_model=self._wrap_model_mp
         )
         self.mb_size = hps['global_batch_size']

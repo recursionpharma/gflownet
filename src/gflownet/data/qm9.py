@@ -16,13 +16,18 @@ class QM9Dataset(Dataset):
         idcs = np.arange(len(self.df))  # TODO: error if there is no h5_file provided. Should h5 be required
         rng.shuffle(idcs)
         self.targets = targets
-        self.calculate_logP()
-        self.calculate_QED()
-        self.calculate_molwt()
         if train:
             self.idcs = idcs[:int(np.floor(ratio * len(self.df)))]
         else:
             self.idcs = idcs[int(np.floor(ratio * len(self.df))):]
+        self.length = len(self.df["SMILES"])
+        for target in self.targets:
+            if target == "logP":
+                self.calculate_logP()
+            elif target == "molecular_weight":
+                self.calculate_molwt()
+            elif target == "QED":  
+                self.calculate_QED()
 
     def gather_rewards(self, idx):
         rewards = []
@@ -37,22 +42,25 @@ class QM9Dataset(Dataset):
 
     def calculate_logP(self):
         logP = []
-        for idx in self.idcs:
+        for idx in range(self.length):
             molecule = self.df['SMILES'][idx]
+            molecule = Chem.MolFromSmiles(molecule)
             logP.append(Descriptors.MolLogP(molecule))
         self.df["logP"] = logP
 
     def calculate_QED(self):
         QED = []
-        for idx in self.idcs:
+        for idx in range(self.length):
             molecule = self.df['SMILES'][idx]
+            molecule = Chem.MolFromSmiles(molecule)
             QED.append(Descriptors.qed(molecule))
         self.df["QED"] = QED
 
     def calculate_molwt(self):
         mol_weight = []
-        for idx in self.idcs:
+        for idx in range(self.length):
             molecule = self.df['SMILES'][idx]
+            molecule = Chem.MolFromSmiles(molecule)
             mol_weight.append(Descriptors.MolWt(molecule))
         self.df["molecular_weight"] = mol_weight
 
