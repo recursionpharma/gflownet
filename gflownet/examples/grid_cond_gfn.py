@@ -485,6 +485,20 @@ def get_true_loss(r, coefs, final_dist):
     loss = sum(errs) / len(errs)
     return loss
 
+def get_topk_scores(r, coefs):
+    topks = []
+    for (coef, t) in coefs:
+        unnorm_p = 0
+        for i in range(r.shape[-1]):
+            unnorm_p += r[:, i]*coef[i]
+        unnorm_p = unnorm_p ** t
+        Z = unnorm_p.sum()
+        p = unnorm_p / Z
+        errs.append(abs(dist - p).mean())
+
+    loss = sum(errs) / len(errs)
+    return loss
+
 def get_functions(dims):
     functions = [branin, currin, shubert, sphere, beale]
     function_labels = ["Branin", "Currin", "Shubert", "Sphere", "Beale"]
@@ -600,6 +614,7 @@ def main(args):
                 env.reset(*cfg)
             final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
             s, r, pos = env.state_info()
+            
             loss = get_true_loss(r, cond_confs, final_distribution)
             distributions.append(final_distribution)
             true_losses.append(loss)
