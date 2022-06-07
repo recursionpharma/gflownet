@@ -131,9 +131,9 @@ class SamplingIterator(IterableDataset):
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    if preds.shape[0] > 0:
-                        for i in range(self.number_of_objectives):
-                            pred_reward[valid_idcs - num_offline, i] = preds[:, i]
+                    # if preds.shape[0] > 0:
+                        # for i in range(self.number_of_objectives):
+                    pred_reward[valid_idcs - num_offline, range(self.number_of_objectives)] = preds
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)

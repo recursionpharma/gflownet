@@ -1,4 +1,4 @@
-name: Qm9 Four Objective Online (0.9) unit+95p (Uniform)
+name: (Test) Qm9 one Objective Online unit+95p 
 description: Uniform Distribution Experiments
 data:
   h5_path: /data/chem/qm9/qm9.h5
@@ -27,12 +27,13 @@ hyperparameters:
   reward_loss_multiplier: 2
   random_action_prob: 0.001
   sampling_tau: 0
-  temperature_sample_dist:
-      type: categorical
-      vals:
-          - uniform
+  temperature_sample_dist: gamma
+      # type: categorical
+      # vals:
+      #     - uniform
           # - gamma
-  temperature_dist_params: (0.2, 32)
+  temperature_dist_params: (2, 2)
+  const_temp : 8
       # type: categorical
       # vals:
           # - (0.2, 32)
@@ -40,7 +41,7 @@ hyperparameters:
           # - (1, 1)
   temperature_max_min: (0, 32)
   reward_transform:  unit+95p
-  number_of_objectives: 4
+  number_of_objectives: 2
       # type: categorical
       # vals:
       #     - 1

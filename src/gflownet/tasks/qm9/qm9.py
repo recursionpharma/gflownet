@@ -49,6 +49,7 @@ class QM9GapTask(GFNTask):
             temperature_distribution: str,
             temperature_parameters: Tuple[float],
             temperature_max_min: Tuple[int],
+            const_temp: int,
             number_of_objectives: int,
             reward_transform: str,
             targets: list,
@@ -60,6 +61,7 @@ class QM9GapTask(GFNTask):
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
         self.temperature_max_min = list(map(tuple, temperature_max_min))
+        self.const_temp = const_temp
         self.number_of_objectives = number_of_objectives
         self._rtrans = reward_transform
         self.reward_stat_info = []
@@ -76,7 +78,6 @@ class QM9GapTask(GFNTask):
         if isinstance(y, list):
             y = np.vstack(y)
         rewards = []
-        # Problem here. Why the shape is 4, 1???
         for i in range(self.number_of_objectives):
             rew = self._transform(y[:, i], self.reward_stat_info[i])
             rewards.append(rew)
@@ -120,6 +121,9 @@ class QM9GapTask(GFNTask):
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
+        elif self.temperature_sample_dist == 'const':
+            beta = np.ones(n).astype(np.float32)
+            beta = beta * self.const_temp
         beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)
         # Preferences
         m = Dirichlet(torch.FloatTensor([1.5] * self.number_of_objectives))
@@ -162,6 +166,7 @@ class QM9GapTask(GFNTask):
             all_preds.append(preds)
         all_preds = np.hstack(all_preds)
         preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
+        print(f"Preds: {preds.shape}")
         return FlatRewards(preds), is_valid
 
 
@@ -223,6 +228,18 @@ class QM9GapTrainer(GFNTrainer):
             temperature_distribution=hps['temperature_sample_dist'],
             temperature_parameters=ast.literal_eval(hps['temperature_dist_params']),
             temperature_max_min=hps['temperature_max_min'],
+            const_temp=hps['const_temp'],
+            number_of_objectives=hps['number_of_objectives'],
+            reward_transform=hps['reward_transform'],
+            targets=hps['targets'][:hps['number_of_objectives']],
+            wrap_model=self._wrap_model_mp
+        )
+        self.test_task = QM9GapTask(
+            dataset=self.training_data,
+            temperature_distribution='uniform',
+            temperature_parameters=ast.literal_eval('(0.2, 32)'),
+            temperature_max_min=hps['temperature_max_min'],
+            const_temp=hps['const_temp'],
             number_of_objectives=hps['number_of_objectives'],
             reward_transform=hps['reward_transform'],
             targets=hps['targets'][:hps['number_of_objectives']],
