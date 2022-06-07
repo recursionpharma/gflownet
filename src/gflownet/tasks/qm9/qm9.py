@@ -139,8 +139,6 @@ class QM9GapTask(GFNTask):
             ).squeeze(1)
         else:
             flat_reward = flat_reward.dot(cond_info["preferences"])
-        b= cond_info['beta']
-        # print(f"Flat After Pref: {flat_reward.shape} | Flat After Beta: {(flat_reward**b).shape} | Beta: {b.shape}")
         return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
@@ -163,10 +161,10 @@ class QM9GapTask(GFNTask):
             else:
                 preds = []
             preds[np.isnan(preds)] = 1
+            preds = preds.clip(1e-4, 2)
             all_preds.append(preds)
         all_preds = np.hstack(all_preds)
-        preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
-        print(f"Preds: {preds.shape}")
+        preds = self.flat_reward_transform(all_preds) # TODO: Is this clipping valid for all the rewards?
         return FlatRewards(preds), is_valid
 
 
