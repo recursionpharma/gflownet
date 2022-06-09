@@ -16,7 +16,7 @@ from rdkit import RDConfig
 from rdkit.Chem import ChemicalFeatures
 from rdkit.Chem.rdchem import BondType as BT
 from rdkit.Chem.rdchem import HybridizationType
-import requests
+import requests  # type: ignore
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
