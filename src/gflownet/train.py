@@ -114,13 +114,13 @@ class GFNTrainer:
             return placeholder, torch.device('cpu')
         return model, self.device
 
-    def create_training_data_loader(self) -> DataLoader:
+    def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
-    def create_validation_data_loader(self) -> DataLoader:
+    def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
         iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev, ratio=1,
                                     stream=False)
