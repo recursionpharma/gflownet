@@ -21,30 +21,29 @@ The GNN model can be trained on a mix of existing data (offline) and self-genera
 
 ## Repo overview
 
-- [algo](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/algo), contains GFlowNet algorithms implementations (only [Trajectory Balance](https://arxiv.org/abs/2201.13259) for now). These implement how to sample trajectories from a model and compute the loss from trajectories.
-- [data](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/data), contains dataset definitions, data loading and data sampling utilities.
-- [envs](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/envs), contains environment classes; a graph-building environment base, and a molecular graph context class. The base environment is agnostic to what kind of graph is being made, and the context class specifies mappings from graphs to objects (e.g. molecules) and torch geometric Data.
-- [examples](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/examples), contains simple example implementations of GFlowNet.
-- [models](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/models), contains model definitions.
-- [tasks](https://github.com/recursionpharma/gflownet/tree/trunk/gflownet/tasks), contains training code.
-    -  [qm9](https://github.com/recursionpharma/gflownet/blob/trunk/gflownet/tasks/qm9/qm9.py), temperature-conditional molecule sampler based on QM9's HOMO-LUMO gap data as a reward.
+- [algo](gflownet/algo), contains GFlowNet algorithms implementations (only [Trajectory Balance](https://arxiv.org/abs/2201.13259) for now). These implement how to sample trajectories from a model and compute the loss from trajectories.
+- [data](gflownet/data), contains dataset definitions, data loading and data sampling utilities.
+- [envs](gflownet/envs), contains environment classes; a graph-building environment base, and a molecular graph context class. The base environment is agnostic to what kind of graph is being made, and the context class specifies mappings from graphs to objects (e.g. molecules) and torch geometric Data.
+- [examples](gflownet/examples), contains simple example implementations of GFlowNet.
+- [models](gflownet/models), contains model definitions.
+- [tasks](gflownet/tasks), contains training code.
+    -  [qm9](gflownet/tasks/qm9/qm9.py), temperature-conditional molecule sampler based on QM9's HOMO-LUMO gap data as a reward.
 - [utils](gflownet/utils), contains utilities (multiprocessing).
 - [`train.py`](gflownet/train.py), general GFlowNet training setup.
 ## Installation
 
 ### PIP
 
-This package is installable via [Nexus](nexus.rxrx.io). You should configure your PIP using the instructions listed at
-[roadie: PIP Configuration](https://github.com/recursionpharma/roadie#pip-configuration). Then, execute the following:
+This package is installable as a PIP package:
 
 ```bash
-pip install gflownet
+pip install -e .
+```
+To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.8`, use the following scheme:
+```bash
+pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.8
 ```
 
-Alternatively, `pip install -e .`.
+## Developing & Contributing
 
-
-## Developing
-
-Please refer to [Developing Python at Recursion](https://github.com/recursionpharma/roadie/blob/trunk/Developing.md)
-for all tasks related to development of this codebase.
+TODO: Write Contributing.md.

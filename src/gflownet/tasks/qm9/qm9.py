@@ -48,13 +48,15 @@ class QM9GapTask(GFNTask):
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
         if self._rtrans == 'exp':
-            return np.exp(-(y - self._min) / self._width)
+            flat_r = np.exp(-(y - self._min) / self._width)
         elif self._rtrans == 'unit':
-            return 1 - (y - self._min) / self._width
+            flat_r = 1 - (y - self._min) / self._width
         elif self._rtrans == 'unit+95p':
             # Add constant such that 5% of rewards are > 1
-            return 1 - (y - self._percentile_95) / self._width
-        raise ValueError(self._rtrans)
+            flat_r = 1 - (y - self._percentile_95) / self._width
+        else:
+            raise ValueError(self._rtrans)
+        return FlatRewards(flat_r)
 
     def inverse_flat_reward_transform(self, rp):
         if self._rtrans == 'exp':
@@ -87,7 +89,7 @@ class QM9GapTask(GFNTask):
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward**cond_info['beta']
+        return RewardScalar(flat_reward**cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]

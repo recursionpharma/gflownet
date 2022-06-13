@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
+from rdkit.Chem import Mol
 import torch
 import torch_geometric.data as gd
 from torch_scatter import scatter
@@ -513,10 +514,100 @@ class GraphActionCategorical:
 
 
 class GraphBuildingEnvContext:
-    # TODO: fill this in
-    def __init__(self):
-        self.device = None
-        self.graph_to_Data = None
-        self.collate = None
-        self.aidx_to_GraphAction = None
-        self.is_sane = None
+    """A context class defines what the graphs are, how they map to and from data"""
+    device: torch.device
+
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]) -> GraphAction:
+        """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
+        Parameters
+        ----------
+        g: gd.Data
+            The graph to which the action is being applied
+        action_idx: Tuple[int, int, int]
+            The tensor indices for the corresponding action
+
+        Returns
+        -------
+        action: GraphAction
+            A graph action that could be applied to the original graph coressponding to g.
+        """
+        raise NotImplementedError()
+
+    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
+        """Translate a GraphAction to an action index (e.g. from a GraphActionCategorical)
+        Parameters
+        ----------
+        g: gd.Data
+            The graph to which the action is being applied
+        action: GraphAction
+            A graph action that could be applied to the original graph coressponding to g.
+
+        Returns
+        -------
+        action_idx: Tuple[int, int, int]
+            The tensor indices for the corresponding action
+        """
+        raise NotImplementedError()
+
+    def graph_to_Data(self, g: Graph) -> gd.Data:
+        """Convert a networkx Graph to a torch geometric Data instance
+        Parameters
+        ----------
+        g: Graph
+            A graph instance.
+
+        Returns
+        -------
+        torch_g: gd.Data
+            The corresponding torch_geometric graph.
+        """
+        raise NotImplementedError()
+
+    def collate(self, graphs: List[gd.Data]) -> gd.Batch:
+        """Convert a list of torch geometric Data instances to a Batch
+        instance.  This exists so that environment contexts can set
+        custom batching attributes, e.g. by using `follow_batch`.
+
+        Parameters
+        ----------
+        graphs: List[gd.Data]
+            Graph instances
+
+        Returns
+        -------
+        batch: gd.Batch
+            The corresponding batch.
+        """
+        return gd.Batch.from_data_list(graphs)
+
+    def is_sane(self, g: Graph) -> bool:
+        """Verifies whether a graph is sane according to the context. This can
+        catch, e.g. impossible molecules.
+
+        Parameters
+        ----------
+        g: Graph
+            A graph.
+
+        Returns
+        -------
+        is_sane: bool:
+            True if the environment considers g to be sane.
+        """
+        raise NotImplementedError()
+
+    def mol_to_graph(self, mol: Mol) -> Graph:
+        """Verifies whether a graph is sane according to the context. This can
+        catch, e.g. impossible molecules.
+
+        Parameters
+        ----------
+        mol: Mol
+            An RDKit molecule
+
+        Returns
+        -------
+        g: Graph
+            The corresponding Graph representation of that molecule.
+        """
+        raise NotImplementedError()
