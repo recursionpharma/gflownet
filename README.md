@@ -34,17 +34,16 @@ The GNN model can be trained on a mix of existing data (offline) and self-genera
 
 ### PIP
 
-This package is installable via [Nexus](nexus.rxrx.io). You should configure your PIP using the instructions listed at
-[roadie: PIP Configuration](https://github.com/recursionpharma/roadie#pip-configuration). Then, execute the following:
+This package is installable as a PIP package:
 
 ```bash
-pip install gflownet
+pip install -e .
+```
+To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.8`, use the following scheme:
+```bash
+pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.8
 ```
 
-Alternatively, `pip install -e .`.
+## Developing & Contributing
 
-
-## Developing
-
-Please refer to [Developing Python at Recursion](https://github.com/recursionpharma/roadie/blob/trunk/Developing.md)
-for all tasks related to development of this codebase.
+TODO: Write Contributing.md.
