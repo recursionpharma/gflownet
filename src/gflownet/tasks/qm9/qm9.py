@@ -1,23 +1,25 @@
 import ast
 import copy
-from typing import Any, Dict, Union, List, Tuple, Callable, cast
+import os
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from determined.pytorch import LRScheduler, PyTorchTrial, PyTorchTrialContext, DataLoader as PyTorchDataLoader
+from rdkit import RDLogger
+from rdkit.Chem.rdchem import Mol as RDMol
+from ruamel.yaml import YAML
+from torch import Tensor
+from torch.utils.data import Dataset
+
+import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.models import mxmnet
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import GFNTrainer, GFNTask, FlatRewards, RewardScalar
-from rdkit import RDLogger
-from rdkit.Chem.rdchem import Mol as RDMol
-from torch import Tensor
-from torch.utils.data import Dataset
+from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 
 
 def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
@@ -87,16 +89,16 @@ class QM9GapTask(GFNTask):
         return RewardScalar(flat_reward**cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
-        graphs = [mxmnet.mol2graph(i) for i in mols]
+        graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return RewardScalar(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
-        preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV
+        preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
         preds[preds.isnan()] = 1
         preds = self.flat_reward_transform(preds).clip(1e-4, 2)
-        return preds, is_valid
+        return RewardScalar(preds), is_valid
 
 
 class QM9GapTrainer(GFNTrainer):
@@ -178,64 +180,13 @@ class QM9GapTrainer(GFNTrainer):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
 
 
-# Determined-specific code:
-class QM9Trial(QM9GapTrainer, PyTorchTrial):
-    def __init__(self, context: PyTorchTrialContext) -> None:
-        QM9GapTrainer.__init__(self, context.get_hparams(), context.device)  # type: ignore
-        self.mb_size = context.get_per_slot_batch_size()
-        self.context = context
-        self.model = context.wrap_model(self.model)
-        if context.get_hparam('sampling_tau') > 0:
-            self.sampling_model = context.wrap_model(self.sampling_model)
-
-        self._opt = context.wrap_optimizer(self.opt)
-        self._opt_Z = context.wrap_optimizer(self.opt_Z)
-        context.wrap_lr_scheduler(self.lr_sched, LRScheduler.StepMode.STEP_EVERY_BATCH)
-        context.wrap_lr_scheduler(self.lr_sched_Z, LRScheduler.StepMode.STEP_EVERY_BATCH)
-
-        # See docs.determined.ai/latest/training-apis/api-pytorch-advanced.html#customizing-a-reproducible-dataset
-        if isinstance(context, PyTorchTrialContext):
-            context.experimental.disable_dataset_reproducibility_checks()
-
-    def build_training_data_loader(self) -> PyTorchDataLoader:
-        # Instead of casting, GFNTrainer could rely on a "DataLoader
-        # class" attribute, which this class (subclassing
-        # PyTorchTrial) could override to set to
-        # determined.pytorch.DataLoader. Alternatively we could _not_
-        # subclass QM9GapTrainer and just reroute all the PyTorchTrial
-        # methods to an instance of QM9GapTrainer.
-        return cast(PyTorchDataLoader, self.create_training_data_loader())
-
-    def build_validation_data_loader(self) -> PyTorchDataLoader:
-        return cast(PyTorchDataLoader, self.create_validation_data_loader())
-
-    def get_batch_length(self, batch):
-        return batch.traj_lens.shape[0]
-
-    def log(self, info, index, key):
-        pass  # Override this method since Determined is doing the logging for us
-
-    def step(self, loss):
-        self.context.backward(loss)
-        self.context.step_optimizer(self._opt, clip_grads=self.clip_grad_callback)
-        self.context.step_optimizer(self._opt_Z, clip_grads=self.clip_grad_callback)
-        # This isn't wrapped in self.context, would probably break the Trial API
-        # TODO: fix, if we go to multi-gpu
-        if self.sampling_tau > 0:
-            for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
-                b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
-
-
 def main():
     """Example of how this model can be run outside of Determined"""
-    hps = {
-        'lr_decay': 10000,
-        'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/scratch/logs/qm9_gap_mxmnet',
-        'num_training_steps': 100_000,
-        'validate_every': 100,
-    }
-    trial = QM9GapTrainer(hps, torch.device('cuda'))
+    yaml = YAML(typ="safe", pure=True)
+    config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'qm9.yaml')
+    with open(config_file, 'r') as f:
+        hps = yaml.load(f)
+    trial = QM9GapTrainer(hps, torch.device('cpu'))
     trial.run()
 
 

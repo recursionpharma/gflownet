@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# [project] not yet supported
+# name = "gflownet"
+# description = "GFlowNet related training and environment code"
+# url = "https://github.com/recursionpharma/gflownet"
+# author = "Recursion Pharmaceuticals"
+# author_email = "devs@recursionpharma.com"
+# classifiers = [
+# 	"Operating System :: OS Independent",
+# 	"Programming Language :: Python",
+# 	"Programming Language :: Python :: 3"
+# ]
+# keywords = ["gflownet"]
+# requires-python = ">=3.6"
+# readme = "README.md"
+
+[tool.bandit]
+skips = ["B101"]
+exclude_dirs = ["tests", ".tox", ".venv"]
+
+# [tool.flake8] not yet supported
+# max-line-length = 120
+# exclude = ".github,doc,.git,.nox,.tox,doc"
+# max_complexity = 20
+
+[tool.yapf]
+based_on_style = "google"
+allow_multiline_dictionary_keys = true
+allow_split_before_dict_value = false
+blank_line_before_nested_class_or_def = false
+coalesce_brackets = true
+column_limit = 120
+split_before_named_assigns = false
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",
+    "-x",
+    "--color=yes",
+    "--cov-report=term-missing",
+    "--cov=gflownet",
+    "--typeguard-packages=ml_kit,tests"
+]
+testpaths = ["tests"]
+pythonpath = "src/"
+
+[tool.mypy]
+ignore_missing_imports = true
+show_error_codes = true
+show_error_context = true
+show_traceback = true
+strict = false
+strict_optional = false
+implicit_reexport = true
+allow_redefinition = true
+files = "src"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+allow_untyped_defs = true
+allow_incomplete_defs = true
+
+[tool.isort]
+profile = "google"
+line_length = 120
+py_version = "auto"

@@ -1,0 +1,5 @@
+lr_decay: 10000
+qm9_h5_path: /data/chem/qm9/qm9.h5
+log_dir: /scratch/logs/qm9_gap_mxmnet
+num_training_steps: 100000
+validate_every: 100

@@ -1,15 +1,19 @@
 import copy
 from itertools import count
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
+from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
-from gflownet.envs.graph_building_env import (GraphActionCategorical, GraphActionType, GraphBuildingEnv,
-                                              GraphBuildingEnvContext, generate_forward_trajectory)
-from torch import Tensor
 from torch_scatter import scatter
+
+from gflownet.envs.graph_building_env import generate_forward_trajectory
+from gflownet.envs.graph_building_env import GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphActionType
+from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
 
 class TrajectoryBalanceModel(nn.Module):
