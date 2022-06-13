@@ -6,9 +6,9 @@ from typing import Dict, List, Tuple
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
+from rdkit.Chem import Mol
 import torch
 import torch_geometric.data as gd
-from rdkit.Chem import Mol
 from torch_scatter import scatter
 from torch_scatter import scatter_max
 

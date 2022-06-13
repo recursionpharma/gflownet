@@ -2,13 +2,12 @@ from typing import List, Tuple
 
 import networkx as nx
 import numpy as np
+from rdkit.Chem import Mol
 import rdkit.Chem as Chem
 from rdkit.Chem.rdchem import BondType
 from rdkit.Chem.rdchem import ChiralType
 import torch
 import torch_geometric.data as gd
-from rdkit.Chem import Mol
-from rdkit.Chem.rdchem import BondType, ChiralType
 
 from gflownet.envs.graph_building_env import Graph
 from gflownet.envs.graph_building_env import GraphAction
