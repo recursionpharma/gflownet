@@ -38,7 +38,8 @@ class QM9Dataset(Dataset):
     def get_stats(self, target, percentile=0.95):
         # Return a list of stats
         y = self.df[target]
-        return y.min(), y.max(), np.sort(y)[int(y.shape[0] * percentile)]
+        stats = (y.min(), y.max(), y.median(), np.sort(y)[int(y.shape[0] * percentile)])
+        return stats
 
     def calculate_logP(self):
         logP = []

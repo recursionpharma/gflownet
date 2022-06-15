@@ -122,7 +122,7 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.test_task, self.hps['number_of_objectives'], dev, ratio=1,
+        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, self.hps['number_of_objectives'], dev, ratio=1,
                                     stream=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)

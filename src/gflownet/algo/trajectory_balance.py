@@ -15,7 +15,6 @@ from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
-
 class TrajectoryBalanceModel(nn.Module):
     def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
         raise NotImplementedError()
@@ -280,13 +279,12 @@ class TrajectoryBalance:
         # The log prob of each backward action
         log_p_B = (1 / batch.num_backward).log()
         # Take log rewards, and clip
-        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev))
+        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev)).squeeze(1)
         # This is the log probability of each trajectory
         traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
         # Compute log numerator and denominator of the TB objective
         numerator = Z + traj_log_prob
         denominator = Rp + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-
         if self.epsilon is not None:
             # Numerical stability epsilon
             epsilon = torch.tensor([self.epsilon], device=dev).float()
@@ -300,7 +298,6 @@ class TrajectoryBalance:
             # logprobablity of this trajetcory is it should be smaller
             # (thus the `numerator - 1`). Why 1? Intuition?
             denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
-
         if self.tb_loss_is_mae:
             traj_losses = abs(numerator - denominator)
         elif self.tb_loss_is_huber:
