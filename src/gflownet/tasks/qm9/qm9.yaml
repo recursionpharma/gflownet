@@ -20,25 +20,32 @@ hyperparameters:
     #   - 128
     #   - 256
   num_layers: 4
-    # type: categorical
-    # vals:
-    #   - 3
-    #   - 5
+     type: categorical
+     vals:
+       - 3
+       - 5
   reward_loss_multiplier: 2
   random_action_prob: 0.001
   sampling_tau: 0.99
-  temperature_sample_dist: gamma
-      # type: categorical
-      # vals:
-      #     - uniform
-          # - gamma
-  temperature_dist_params: (2, 2)
+  temperature_sample_dist: uniform
+#       type: categorical
+#       vals:
+#           - uniform
+#           - gamma
+#           - const
+  uniform_temperature_dist_params: (0.2, 32)
+  gamma_temperature_dist_params: (2, 1)
+#      type: categorical
+#      vals:
+#          - (2, 1)
+#          - (2, 2)
+#          - (2, 3)
+#          - (3, 3)
   const_temp : 8
-      # type: categorical
-      # vals:
-          # - (0.2, 32)
-          # - (2, 1)
-          # - (1, 1)
+#       type: categorical
+#       vals:
+#           - 8
+#           - 4
   temperature_max_min: (0, 32)
   reward_transform:  unit+95p
   number_of_objectives:

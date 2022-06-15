@@ -64,7 +64,9 @@ class QM9GapTask(GFNTask):
             self,
             dataset: Dataset,
             temperature_distribution: str,
-            temperature_parameters: Tuple[float],
+            uniform_temperature_parameters: Tuple[float],
+            gamma_temperature_parameters: Tuple[float],
+            beta_temperature_parameters: Tuple[float],
             temperature_max_min: Tuple[int],
             const_temp: int,
             number_of_objectives: int,
@@ -76,14 +78,20 @@ class QM9GapTask(GFNTask):
         self.models = self.load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
-        self.temperature_dist_params = temperature_parameters
+        if temperature_distribution == "uniform":
+            self.temperature_dist_params = uniform_temperature_parameters
+        elif temperature_distribution == "gamma":
+            self.temperature_dist_params = gamma_temperature_parameters
+        elif temperature_distribution == "beta":
+            self.temperature_dist_params = beta_temperature_parameters
+        else:
+            self.temperature_dist_params = None
         self.temperature_max_min = list(map(tuple, temperature_max_min))
         self.const_temp = const_temp
         self.number_of_objectives = number_of_objectives
         self._rtrans = reward_transform
         self.reward_stat_info = []
         self.targets = targets
-        
         for i in range(number_of_objectives):
             _min, _max, _median,  _percentile_95 = self.dataset.get_stats(percentile=0.05, target=targets[i])
             self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _median=_median, _percentile_95=_percentile_95))
@@ -158,7 +166,6 @@ class QM9GapTask(GFNTask):
             ).squeeze(1)
         else:
             flat_reward = flat_reward.dot(cond_info["preferences"])
-        b= cond_info['beta']
         return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
@@ -244,7 +251,9 @@ class QM9GapTrainer(GFNTrainer):
         self.task = QM9GapTask(
             dataset=self.training_data,
             temperature_distribution=hps['temperature_sample_dist'],
-            temperature_parameters=ast.literal_eval(hps['temperature_dist_params']),
+            uniform_temperature_parameters=ast.literal_eval(hps['uniform_temperature_dist_params']),
+            gamma_temperature_parameters=ast.literal_eval(hps['gamma_temperature_dist_params']),
+            beta_temperature_parameters=ast.literal_eval(hps['beta_temperature_dist_params']),
             temperature_max_min=hps['temperature_max_min'],
             const_temp=hps['const_temp'],
             number_of_objectives=hps['number_of_objectives'],
