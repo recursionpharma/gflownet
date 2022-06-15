@@ -1,5 +1,5 @@
-name: (Test) Qm9 one Objective Online unit+95p 
-description: Uniform Distribution Experiments
+name:  Test Qm9 Gamma (2, 2) Online Experiments
+description: Experiments Sweep
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
@@ -26,7 +26,7 @@ hyperparameters:
     #   - 5
   reward_loss_multiplier: 2
   random_action_prob: 0.001
-  sampling_tau: 0
+  sampling_tau: 0.99
   temperature_sample_dist: gamma
       # type: categorical
       # vals:
@@ -41,14 +41,14 @@ hyperparameters:
           # - (1, 1)
   temperature_max_min: (0, 32)
   reward_transform:  unit+95p
-  number_of_objectives: 2
-      # type: categorical
-      # vals:
-      #     - 1
-      #     - 2
-      #     - 3
-      #     - 4
-  targets: ["gap", "logP", "molecular_weight", "QED"]
+  number_of_objectives:
+      type: categorical
+      vals:
+          - 1
+          - 2
+          - 3
+          - 4
+  targets: ["gap", "logP", "QED", "molecular_weight"]
   tb_epsilon: None
   weight_decay: 1e-8
   lr_decay: 100000
@@ -58,7 +58,7 @@ hyperparameters:
   #temperature_sample_dist: beta
   #temperature_dist_params: (1.25, 2)
 searcher:
-  name: single
+  name: grid
   metric: offline_loss
   max_length:
       batches: 100000
@@ -71,7 +71,7 @@ checkpoint_storage:
   save_trial_best: 1
   save_trial_latest: 1
   save_experiment_best: 0
-  host_path: /mnt/bh1/scratch/det_checkpoints
+  host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/qm9_results/
   type: shared_fs
 bind_mounts:
   - host_path: /mnt/ps/home/CORP/sharath.raparthy/
