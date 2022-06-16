@@ -5,17 +5,20 @@
 n_mp_procs=128
 n_train_steps=5000
 layers=4
-directory="results_thermo/"
+directory=$HOME"/sandbox/gridworld_results/results_final/"
 
 # Dirac Beta
-for r_dim in 3 4 5
-do
-    save_path="results_thermo/dirac_"$r_dim"d_horizon_"
-    for hor in 16 32 64
-    do
-        python grid_cond_gfn.py --n_mp_procs $n_mp_procs --horizon $hor --progress --save_path $save_path$hor".pkl.gz" --n_train_steps $n_train_steps --use_const_beta --const_beta 8 --n_layers $layers --r_dim $r_dim
-done
-done
+# for beta in 2 4 8 16
+# do
+# for r_dim in 3 4 5
+# do
+#     save_path="results_thermo/dirac_"$beta_$r_dim"d_horizon_"
+#     for hor in 16 32 64
+#     do
+#         python grid_cond_gfn.py --n_mp_procs $n_mp_procs --horizon $hor --progress --save_path $save_path$hor".pkl.gz" --n_train_steps $n_train_steps --use_const_beta --const_beta $beta --n_layers $layers --r_dim $r_dim
+# done
+# done
+# done
 
 # Const Dist Beta (2, 1)
 # for r_dim in 3 4 5

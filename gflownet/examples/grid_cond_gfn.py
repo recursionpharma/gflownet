@@ -507,7 +507,6 @@ def get_functions(dims):
     
 def main(args):
     # How to change temperature based on the timestep depending on the timestep?
-    
     args.dev = torch.device(args.device)
     args.ndim = 2 # Force this for Branin-Currin "beale"
     fs, _ = get_functions(args.r_dim)
