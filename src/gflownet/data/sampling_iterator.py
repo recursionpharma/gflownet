@@ -99,8 +99,8 @@ class SamplingIterator(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        wid = (worker_info.id if worker_info is not None else 0)
-        self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + wid)
+        self._wid = (worker_info.id if worker_info is not None else 0)
+        self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
         self.ctx.device = self.device
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
@@ -170,7 +170,7 @@ class SamplingIterator(IterableDataset):
         def un_tensor(v):
             if isinstance(v, torch.Tensor):
                 return v.data.numpy().tolist()
-
+        flat_rewards = np.asarray(flat_rewards)
         flat_rewards = un_tensor(torch.as_tensor(flat_rewards))
         for i in range(len(trajs)):
             serializable_ci = {k: un_tensor(v[i]) for k, v in cond_info.items() if k != 'encoding'}

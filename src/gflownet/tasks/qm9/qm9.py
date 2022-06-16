@@ -325,7 +325,7 @@ def main():
     hps = {
         'lr_decay': 10000,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/scratch/logs/qm9_gap_mxmnet',
+        'log_dir': '/mnt/ps/home/CORP/sharath.raparthy/sandbox/qm9_results/logs/',
         'num_training_steps': 100_000,
         'validate_every': 100,
         'number_of_objectives': 2,

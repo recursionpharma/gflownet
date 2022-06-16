@@ -1,9 +1,10 @@
-name:  Test Qm9 Gamma (2, 2) Online Experiments
+name:  Qm9 Uniform Online Experiments
 description: Experiments Sweep
 data:
   h5_path: /data/chem/qm9/qm9.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
+  log_dir: ~/sandbox/qm9_results/logs/
   qm9_h5_path: /data/chem/qm9/qm9.h5
   adam_eps: 1e-8
   bootstrap_own_reward: False
@@ -14,27 +15,29 @@ hyperparameters:
   learning_rate: 1e-4
   momentum: 0.9
   num_data_loader_workers: 8
-  num_emb: 128
-    # type: categorical
-    # vals:
-    #   - 128
-    #   - 256
-  num_layers: 4
+  num_emb:
+    type: categorical
+    vals:
+      - 128
+      - 256
+  num_layers:
      type: categorical
      vals:
        - 3
+       - 4
        - 5
   reward_loss_multiplier: 2
   random_action_prob: 0.001
   sampling_tau: 0.99
-  temperature_sample_dist: uniform
-#       type: categorical
-#       vals:
-#           - uniform
-#           - gamma
-#           - const
+  temperature_sample_dist:
+      type: categorical
+      vals:
+          - uniform
+          - gamma
+          - const
   uniform_temperature_dist_params: (0.2, 32)
-  gamma_temperature_dist_params: (2, 1)
+  gamma_temperature_dist_params: (2, 2)
+  beta_temperature_dist_params: (2, 1)
 #      type: categorical
 #      vals:
 #          - (2, 1)
