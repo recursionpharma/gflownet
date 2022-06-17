@@ -115,6 +115,10 @@ def beale(x):
 
 
 def thermometer(beta, vmin=0, vmax=32, nbins=50):
+    if isinstance(beta, float):
+        beta = np.array([beta])
+    elif isinstance(beta, list):
+        beta = np.array(beta)
     bins = np.linspace(vmin, vmax, nbins)
     gap = bins[1] - bins[0]
     thermometer_encoding = (beta[..., None] - bins.reshape((1,) * beta.ndim + (-1,))).clip(0, gap.item()) / gap
@@ -196,7 +200,7 @@ class GridEnv:
         else:
             temperature = [self.temperature]
         # Might get an error here
-        self.cond_obs = np.concatenate([self.coefficients, temperature])
+        self.cond_obs = np.concatenate([self.coefficients.reshape(-1, len(self.funcs)), temperature], axis=1)
         return self.obs(), self.s2r(self._state), self._state
 
     def parent_transitions(self, s, used_stop_action):
@@ -289,6 +293,7 @@ class FlowNet_TBAgent:
         self.n_forward_logits = args.ndim+1
         self.envs = envs
         self.ndim = args.ndim
+        self.exploration_matrix = np.zeros((args.horizon, args.horizon))
         
     def forward_logits(self, x):
         return self.model(x)[:, :self.n_forward_logits]
@@ -298,7 +303,7 @@ class FlowNet_TBAgent:
 
     def sample_many(self, mbsize, temp=None):
         if args.use_const_beta:
-            s = tf(np.float32([i.reset(temp=args.const_beta)[0] for i in self.envs]))
+            s = tf(np.float32([i.reset(temp=float(args.const_beta))[0] for i in self.envs]))
         elif args.annealing or args.uniform:
             s = tf(np.float32([i.reset(temp=temp)[0] for i in self.envs]))
         else:
@@ -332,7 +337,11 @@ class FlowNet_TBAgent:
             m = {j:next(c) for j in range(mbsize) if not done[j]}
             done = [bool(d or step[m[i]][2]) for i, d in enumerate(done)]
             s = tf(np.float32([i[0] for i in step if not i[2]]))
-
+            for env in self.envs:
+                self.exploration_matrix[env._state[0], env._state[1]] += 1
+        # print(self.exploration_matrix)
+        # print("Inside the learning loop:")
+        # print(self.get_exploration_matrix())
         numerator = torch.stack([sum(i) for i in fwd_prob])
         denominator = torch.stack([sum(i) for i in bck_prob])
         log_ratio = numerator - denominator
@@ -345,6 +354,8 @@ class FlowNet_TBAgent:
             log_ratio = batch
         loss = log_ratio.pow(2).mean()
         return loss, self._Z[0]
+    def save_exploration_matrix(self, checkpoint):
+        np.save(args.save_path + f"exploration_{checkpoint}.npy", self.exploration_matrix)
 
 def make_opt(params, args):
     params = list(params)
@@ -358,11 +369,11 @@ def make_opt(params, args):
         opt = torch.optim.SGD(params, args.learning_rate, momentum=args.momentum)
     return opt
 
-def get_hv(agent, funcs, ref, mbsize, num_samples):
-    # sample points
+def collect_data(envs, agent, num_samples, k, functions, ndim=2):
     data = []
-    for i in range(num_samples // mbsize):
-        s = tf(np.float32([i.reset(temp=2.)[0] for i in agent.envs]))
+    mbsize = 1
+    for i in range(num_samples):
+        s = torch.FloatTensor(np.float32([i.reset()[0] for i in envs]))
         done = [False] * mbsize
         while not all(done):
             cat = Categorical(logits=agent.model(s))
@@ -372,26 +383,21 @@ def get_hv(agent, funcs, ref, mbsize, num_samples):
                 racts = np.random.randint(0, cat.logits.shape[1], len(ridx))
                 acts[ridx] = torch.tensor(racts)
             logp = cat.log_prob(acts)
-            step = [i.step(a) for i,a in zip([e for d, e in zip(done, agent.envs) if not d], acts)]
-            p_a = [agent.envs[0].parent_transitions(sp_state, a == agent.ndim)
+            step = [i.step(a) for i,a in zip([e for d, e in zip(done, envs) if not d], acts)]
+            p_a = [envs[0].parent_transitions(sp_state, a == 2)
                    for a, (sp, r, done, sp_state) in zip(acts, step)]
             c = count(0)
             m = {j:next(c) for j in range(mbsize) if not done[j]}
             done = [bool(d or step[m[i]][2]) for i, d in enumerate(done)]
             s = tf(np.float32([i[0] for i in step if not i[2]]))
-        for env in agent.envs:
+        for env in envs:
             data.append(env.s2x(env._state))
-    data = np.array(data)
-    problem = BraninCurrin(negate=True)
-    beval = problem(tf(data))
-    # evaluate points
-    # vals = np.stack([func(data, nonorm=True) for func in funcs])
-    # vals = tf(vals)
-    # import pdb; pdb.set_trace();
-    # compute hypervolume
-    bd = DominatedPartitioning(ref_point=problem.ref_point, Y=beval)
-    volume = bd.compute_hypervolume().item()
-    return volume
+    data = np.array(data).reshape(-1, num_samples, ndim)
+    rewards = np.zeros((len(envs), num_samples, len(functions)))
+    for i in range(data.shape[0]):
+        rew = np.asarray([f(data[i]) for f in functions])
+        rewards[i] = rew.reshape(rew.shape[1], rew.shape[0])
+    return rewards
 
 def compute_exact_dag_distribution(envs, agent, args):
     env = envs[0]
@@ -456,7 +462,7 @@ def worker(args, agent, events, outq, step):
             if step % 625 == 0:
                 alphas.pop(0)
         elif args.use_const_beta:
-            data = agent.sample_many(mbs, args.const_beta)
+            data = agent.sample_many(mbs, float(args.const_beta))
         elif args.uniform:
             temp = np.random.uniform(0, 16)
             data = agent.sample_many(mbs, temp)
@@ -468,6 +474,8 @@ def worker(args, agent, events, outq, step):
         outq.put([losses[0].item()] + list(losses[1:]))
         backprop_barrier.wait()
         step += 1
+        if step % 1000 == 0:
+            agent.save_exploration_matrix(step)
         
 
 def get_true_loss(r, coefs, final_dist):
@@ -509,6 +517,12 @@ def main(args):
     # How to change temperature based on the timestep depending on the timestep?
     args.dev = torch.device(args.device)
     args.ndim = 2 # Force this for Branin-Currin "beale"
+    save_path = args.save_path
+    if save_path is not None: 
+        root = os.path.split(save_path)[0]
+        if len(root):
+            os.makedirs(root, exist_ok=True)
+            
     fs, _ = get_functions(args.r_dim)
     envs = [
         GridEnv(
@@ -536,14 +550,14 @@ def main(args):
     # We want to test our model on a series of conditional configurations
     if len(fs) == 2:
         cond_confs = [
-            ([a,1-a], temp)
+            (np.asarray([a,1-a]), float(temp))
             for a in np.linspace(0,1,11)
             for temp in [1,2,4,8,16]
         ]
     elif len(fs) == 3:
         n = 10
         cond_confs = [
-            ([i/n,j/n,1-(i+j)/n], temp)
+            (np.asarray([i/n,j/n,1-(i+j)/n]), float(temp))
             for i in np.arange(n)
             for j in np.arange(n)
             for temp in [1,2,4,8,16]
@@ -552,7 +566,7 @@ def main(args):
     elif len(fs) == 4:
         n = 10
         cond_confs = [
-            ([i/n,j/n, k/ n, 1-(i+j+k)/n], temp)
+            (np.asarray([i/n,j/n, k/ n, 1-(i+j+k)/n]), float(temp))
             for i in np.arange(n)
             for j in np.arange(n)
             for k in range(n)
@@ -562,7 +576,7 @@ def main(args):
     elif len(fs) == 5:
         n = 10
         cond_confs = [
-            ([i/n,j/n, k/ n, l/n,  1-(i+j+k + l)/n], temp)
+            (np.asarray([i/n,j/n, k/ n, l/n,  1-(i+j+k + l)/n]), float(temp))
             for i in np.arange(n)
             for j in np.arange(n)
             for k in range(n)
@@ -613,12 +627,10 @@ def main(args):
                 env.reset(*cfg)
             final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
             s, r, pos = env.state_info()
-            
             loss = get_true_loss(r, cond_confs, final_distribution)
             distributions.append(final_distribution)
             true_losses.append(loss)
-            # volume = get_hv(agent, fs, torch.tensor([18.0, 6]), args.mbsize, 5000)
-            # hyper_volumes.append(volume)
+
         # Workers add to the .grad even if they take the mean of the
         # loss, so let's divide here
         [i.grad.mul_(1 / args.n_mp_procs) for i in agent.parameters()]
@@ -635,21 +647,20 @@ def main(args):
     for cfg, env in zip(cond_confs, test_envs):
         env.reset(*cfg)
     final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
-    
+    data = collect_data(test_envs, agent, functions=fs, num_samples=100, k=1, ndim=2)
     results = {'losses': np.float32(all_losses),
                'params': [i.data.to('cpu').numpy() for i in agent.parameters()],
                'distributions': distributions,
+               'data': data,
                'final_distribution': final_distribution,
                'true_losses': true_losses,
                'cond_confs': cond_confs,
                'state_info': envs[0].state_info(),
                'args':args}
+    
     save_path = args.save_path
     if save_path is not None: 
-        root = os.path.split(save_path)[0]
-        if len(root):
-            os.makedirs(root, exist_ok=True)
-        pickle.dump(results, gzip.open(save_path, 'wb'))
+        pickle.dump(results, gzip.open(save_path + "results.pkl.gz", 'wb'))
     else:
         return results
     
