@@ -301,7 +301,7 @@ class FlowNet_TBAgent:
     def parameters(self):
         return chain(self.model.parameters(), self.Z.parameters())
 
-    def sample_many(self, mbsize, temp=None):
+    def sample_many(self, mbsize, temp=None, exploration_matrix=None):
         if args.use_const_beta:
             s = tf(np.float32([i.reset(temp=float(args.const_beta))[0] for i in self.envs]))
         elif args.annealing or args.uniform:
@@ -337,11 +337,10 @@ class FlowNet_TBAgent:
             m = {j:next(c) for j in range(mbsize) if not done[j]}
             done = [bool(d or step[m[i]][2]) for i, d in enumerate(done)]
             s = tf(np.float32([i[0] for i in step if not i[2]]))
-            for env in self.envs:
-                self.exploration_matrix[env._state[0], env._state[1]] += 1
-        # print(self.exploration_matrix)
-        # print("Inside the learning loop:")
-        # print(self.get_exploration_matrix())
+            for idx, env in enumerate(self.envs):
+                if not done[idx]:
+                    exploration_matrix[env._state[0], env._state[1]] += 1
+        
         numerator = torch.stack([sum(i) for i in fwd_prob])
         denominator = torch.stack([sum(i) for i in bck_prob])
         log_ratio = numerator - denominator
@@ -354,8 +353,7 @@ class FlowNet_TBAgent:
             log_ratio = batch
         loss = log_ratio.pow(2).mean()
         return loss, self._Z[0]
-    def save_exploration_matrix(self, checkpoint):
-        np.save(args.save_path + f"exploration_{checkpoint}.npy", self.exploration_matrix)
+
 
 def make_opt(params, args):
     params = list(params)
@@ -432,7 +430,7 @@ def compute_exact_dag_distribution(envs, agent, args):
         end_prob[i] for i in map(tuple,all_int_states[state_mask])])
     return distribution
 
-def worker(args, agent, events, outq, step):
+def worker(args, agent, events, outq, step, exploration_matrix):
     stop_event, backprop_barrier = events
     torch.set_num_threads(1)
     torch.manual_seed(os.getpid())
@@ -458,16 +456,16 @@ def worker(args, agent, events, outq, step):
             if len(alphas) == 0:
                 alphas = [8]
             temp = np.random.gamma(alphas[0], args.beta)
-            data = agent.sample_many(mbs, temp)
+            data = agent.sample_many(mbs, temp, exploration_matrix)
             if step % 625 == 0:
                 alphas.pop(0)
         elif args.use_const_beta:
-            data = agent.sample_many(mbs, float(args.const_beta))
+            data = agent.sample_many(mbs, float(args.const_beta), exploration_matrix)
         elif args.uniform:
             temp = np.random.uniform(0, 16)
-            data = agent.sample_many(mbs, temp)
+            data = agent.sample_many(mbs, temp, exploration_matrix)
         else:
-            data = agent.sample_many(mbs)
+            data = agent.sample_many(mbs, None, exploration_matrix)
         
         losses = agent.learn_from(-1, data) # returns (opt loss, *metrics)
         losses[0].backward()
@@ -475,7 +473,7 @@ def worker(args, agent, events, outq, step):
         backprop_barrier.wait()
         step += 1
         if step % 1000 == 0:
-            agent.save_exploration_matrix(step)
+            np.save(args.save_path + f'exploration_{step}.npy', exploration_matrix.numpy())
         
 
 def get_true_loss(r, coefs, final_dist):
@@ -518,6 +516,7 @@ def main(args):
     args.dev = torch.device(args.device)
     args.ndim = 2 # Force this for Branin-Currin "beale"
     save_path = args.save_path
+    exploration_matrix = torch.zeros((args.horizon, args.horizon))
     if save_path is not None: 
         root = os.path.split(save_path)[0]
         if len(root):
@@ -542,6 +541,7 @@ def main(args):
         i.grad = torch.zeros_like(i)
     agent.model.share_memory()
     agent.Z.share_memory()
+    exploration_matrix.share_memory_()
 
     assert args.mbsize % args.n_mp_procs == 0    
     opt = make_opt(agent.model.parameters(), args)
@@ -603,7 +603,7 @@ def main(args):
     current_step = 0
 
     processes = [
-        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q, current_step))
+        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q, current_step, exploration_matrix))
         for i in range(args.n_mp_procs)]
     [i.start() for i in processes]
     
