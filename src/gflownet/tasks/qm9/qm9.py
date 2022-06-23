@@ -26,13 +26,7 @@ from gflownet.train import GFNTask
 from gflownet.train import GFNTrainer
 from gflownet.train import RewardScalar
 
-'''
-gap: minimize
-logP: around 4
-QED: maximize
-molecular_weight: median
 
-'''
 def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
     bins = torch.linspace(vmin, vmax, n_bins)
     gap = bins[1] - bins[0]
@@ -226,9 +220,14 @@ class QM9GapTrainer(GFNTrainer):
         self.env = GraphBuildingEnv()
         cond_dim = 32 + self.hps["number_of_objectives"]
         self.ctx = MolBuildingEnvContext(['H', 'C', 'N', 'F', 'O'], num_cond_dim=cond_dim)
-        self.training_data = QM9Dataset(hps['qm9_h5_path'], train=True, targets=hps['targets'][:hps['number_of_objectives']])
-        self.test_data = QM9Dataset(hps['qm9_h5_path'], train=False, targets=hps['targets'][:hps['number_of_objectives']])
+        if hps['is_specific_target']:
+            specific_target = hps['specific_target']
+        else:
+            specific_target = hps['targets'][:hps['number_of_objectives']]
 
+        self.training_data = QM9Dataset(hps['qm9_h5_path'], train=True, targets=specific_target)
+        self.test_data = QM9Dataset(hps['qm9_h5_path'], train=False, targets=specific_target)
+        hps['log_dir'] += '{}/obj_{}/seed_{}'.format(hps['temperature_sample_dist'], hps['number_of_objectives'], self.context.get_trial_seed())
         model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'])
         self.model = model
         # Separate Z parameters from non-Z to allow for LR decay on the former
@@ -258,7 +257,7 @@ class QM9GapTrainer(GFNTrainer):
             const_temp=hps['const_temp'],
             number_of_objectives=hps['number_of_objectives'],
             reward_transform=hps['reward_transform'],
-            targets=hps['targets'][:hps['number_of_objectives']],
+            targets=specific_target,
             wrap_model=self._wrap_model_mp
         )
         self.mb_size = hps['global_batch_size']
