@@ -46,9 +46,11 @@ parser.add_argument("--use_thermo_encoding", action='store_true')
 parser.add_argument("--use_const_beta", action='store_true')
 parser.add_argument("--annealing", action='store_true')
 parser.add_argument("--uniform", action='store_true')
+parser.add_argument("--uniform_upper_limit", default=8, type=int)
 
-# Measurement
+# Measurement n_checkpoints
 parser.add_argument("--n_distr_measurements", default=50, type=int)
+parser.add_argument("--n_checkpoints", default=50, type=int)
 
 # Training
 parser.add_argument("--n_mp_procs", default=4, type=int)
@@ -198,7 +200,7 @@ class GridEnv:
         if self.use_thermo_encoding:
             temperature = thermometer(self.temperature)
         else:
-            temperature = [self.temperature]
+            temperature = np.array([[self.temperature]])
         # Might get an error here
         self.cond_obs = np.concatenate([self.coefficients.reshape(-1, len(self.funcs)), temperature], axis=1)
         return self.obs(), self.s2r(self._state), self._state
@@ -344,7 +346,9 @@ class FlowNet_TBAgent:
         numerator = torch.stack([sum(i) for i in fwd_prob])
         denominator = torch.stack([sum(i) for i in bck_prob])
         log_ratio = numerator - denominator
-        return log_ratio
+        
+        non_zero_visitations = torch.count_nonzero(exploration_matrix > 0)
+        return log_ratio, non_zero_visitations
 
     def learn_from(self, it, batch):
         if type(batch) is list:
@@ -390,12 +394,12 @@ def collect_data(envs, agent, num_samples, k, functions, ndim=2):
             s = tf(np.float32([i[0] for i in step if not i[2]]))
         for env in envs:
             data.append(env.s2x(env._state))
-    data = np.array(data).reshape(-1, num_samples, ndim)
+    data = np.array(data).reshape(num_samples, -1, ndim).transpose(1, 0, 2)
     rewards = np.zeros((len(envs), num_samples, len(functions)))
     for i in range(data.shape[0]):
         rew = np.asarray([f(data[i]) for f in functions])
         rewards[i] = rew.reshape(rew.shape[1], rew.shape[0])
-    return rewards
+    return rewards, data
 
 def compute_exact_dag_distribution(envs, agent, args):
     env = envs[0]
@@ -430,13 +434,14 @@ def compute_exact_dag_distribution(envs, agent, args):
         end_prob[i] for i in map(tuple,all_int_states[state_mask])])
     return distribution
 
-def worker(args, agent, events, outq, step, exploration_matrix):
+def worker(args, agent, events, outq, step, exploration_matrix, quatitative_exploration_matrix, checkpoint_idx):
     stop_event, backprop_barrier = events
     torch.set_num_threads(1)
     torch.manual_seed(os.getpid())
     np.random.seed(os.getpid())
     mbs = args.mbsize // args.n_mp_procs
-    alphas = list(range(1, 9, -1))
+    alphas = list(range(1, args.alpha, 1))
+    annealing_scheduler_frequency = int(args.n_train_steps // len(alphas))
     agent.envs = [
         GridEnv(
             args.horizon,
@@ -454,18 +459,23 @@ def worker(args, agent, events, outq, step, exploration_matrix):
         # I have to pass the annealing temperature here 
         if args.annealing:
             if len(alphas) == 0:
-                alphas = [8]
+                alphas = [args.alpha]
             temp = np.random.gamma(alphas[0], args.beta)
-            data = agent.sample_many(mbs, temp, exploration_matrix)
-            if step % 625 == 0:
+            data, non_zero_visitations = agent.sample_many(mbs, temp, exploration_matrix)
+            if step % annealing_scheduler_frequency == 0:
                 alphas.pop(0)
         elif args.use_const_beta:
-            data = agent.sample_many(mbs, float(args.const_beta), exploration_matrix)
+            data, non_zero_visitations = agent.sample_many(mbs, float(args.const_beta), exploration_matrix)
         elif args.uniform:
-            temp = np.random.uniform(0, 16)
-            data = agent.sample_many(mbs, temp, exploration_matrix)
+            temp = np.random.uniform(0, args.uniform_upper_limit)
+            data, non_zero_visitations = agent.sample_many(mbs, temp, exploration_matrix)
         else:
-            data = agent.sample_many(mbs, None, exploration_matrix)
+            data, non_zero_visitations = agent.sample_many(mbs, None, exploration_matrix)
+        current = mp.current_process()
+        worker_id = int(current._identity[0]) - 1
+        if int(step // checkpoint_idx[worker_id]) == args.n_checkpoints:
+            quatitative_exploration_matrix[checkpoint_idx[worker_id], worker_id] = int(non_zero_visitations.item())
+            checkpoint_idx[worker_id] += 1
         
         losses = agent.learn_from(-1, data) # returns (opt loss, *metrics)
         losses[0].backward()
@@ -474,6 +484,7 @@ def worker(args, agent, events, outq, step, exploration_matrix):
         step += 1
         if step % 1000 == 0:
             np.save(args.save_path + f'exploration_{step}.npy', exploration_matrix.numpy())
+            np.save(args.save_path + f'exploration_counts.npy', quatitative_exploration_matrix.numpy())
         
 
 def get_true_loss(r, coefs, final_dist):
@@ -517,6 +528,8 @@ def main(args):
     args.ndim = 2 # Force this for Branin-Currin "beale"
     save_path = args.save_path
     exploration_matrix = torch.zeros((args.horizon, args.horizon))
+    quatitative_exploration_matrix = torch.zeros((args.n_train_steps // args.n_checkpoints, args.n_mp_procs))
+    checkpoint_idx = torch.ones((args.n_mp_procs), dtype=torch.int8)
     if save_path is not None: 
         root = os.path.split(save_path)[0]
         if len(root):
@@ -542,12 +555,14 @@ def main(args):
     agent.model.share_memory()
     agent.Z.share_memory()
     exploration_matrix.share_memory_()
-
+    quatitative_exploration_matrix.share_memory_()
+    checkpoint_idx.share_memory_()
     assert args.mbsize % args.n_mp_procs == 0    
     opt = make_opt(agent.model.parameters(), args)
     optZ = make_opt(agent.Z.parameters(), args)
               
     # We want to test our model on a series of conditional configurations
+    temps = 
     if len(fs) == 2:
         cond_confs = [
             (np.asarray([a,1-a]), float(temp))
@@ -603,7 +618,7 @@ def main(args):
     current_step = 0
 
     processes = [
-        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q, current_step, exploration_matrix))
+        mp.Process(target=worker, args=(args, agent, (stop_event, backprop_barrier), losses_q, current_step, exploration_matrix, quatitative_exploration_matrix, checkpoint_idx))
         for i in range(args.n_mp_procs)]
     [i.start() for i in processes]
     
@@ -647,11 +662,14 @@ def main(args):
     for cfg, env in zip(cond_confs, test_envs):
         env.reset(*cfg)
     final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
-    data = collect_data(test_envs, agent, functions=fs, num_samples=100, k=1, ndim=2)
+    for cfg, env in zip(cond_confs, test_envs):
+        env.reset(*cfg)
+    collected_rewards, collected_data = collect_data(test_envs, agent, functions=fs, num_samples=100, k=1, ndim=2)
     results = {'losses': np.float32(all_losses),
                'params': [i.data.to('cpu').numpy() for i in agent.parameters()],
                'distributions': distributions,
-               'data': data,
+               'collected_rewards': collected_rewards,
+               'collected_data': collected_data,
                'final_distribution': final_distribution,
                'true_losses': true_losses,
                'cond_confs': cond_confs,
