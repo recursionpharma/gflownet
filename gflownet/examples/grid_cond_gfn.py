@@ -482,7 +482,7 @@ def worker(args, agent, events, outq, step, exploration_matrix, quatitative_expl
         outq.put([losses[0].item()] + list(losses[1:]))
         backprop_barrier.wait()
         step += 1
-        if step % 1000 == 0:
+        if step % 100 == 0:
             np.save(args.save_path + f'exploration_{step}.npy', exploration_matrix.numpy())
             np.save(args.save_path + f'exploration_counts.npy', quatitative_exploration_matrix.numpy())
         
@@ -562,7 +562,6 @@ def main(args):
     optZ = make_opt(agent.Z.parameters(), args)
               
     # We want to test our model on a series of conditional configurations
-    temps = 
     if len(fs) == 2:
         cond_confs = [
             (np.asarray([a,1-a]), float(temp))

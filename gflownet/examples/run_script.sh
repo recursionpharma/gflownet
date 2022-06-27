@@ -14,7 +14,7 @@ echo "Runing dirac now"
 # Dirac Beta
 for hor in 64
 do
-for beta in 2 4 8 16
+for beta in 8 16
     do
     for r_dim in 2 3 4 5
     do
@@ -32,7 +32,7 @@ then
 echo "Runing const now"
 for hor in 64
     do
-    for beta in 2 4 8 16
+    for beta in 8 16
     do
         for r_dim in 2 3 4 5
         do
@@ -51,7 +51,7 @@ then
 echo "Runing annealing now"
 for hor in 64
     do
-    for beta in 2 4 5 16
+    for beta in 8 16
     do
         for r_dim in 2 3 4 5
         do
@@ -70,7 +70,7 @@ then
 # Uniform
 for hor in 64
     do
-    for beta in 2 4 8 16
+    for beta in 8 16
     do
         for r_dim in 2 3 4 5
         do
