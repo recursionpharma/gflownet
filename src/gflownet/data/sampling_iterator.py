@@ -31,7 +31,8 @@ class SamplingIterator(IterableDataset):
             device,
             ratio=0.0,
             stream=True,
-            log_dir: str = None
+            log_dir: str = None,
+            train: bool = True
     ):
         """Parameters
         ----------
@@ -66,6 +67,7 @@ class SamplingIterator(IterableDataset):
         self.device = device
         self.stream = stream
         self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        self.train=train
 
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
@@ -77,13 +79,14 @@ class SamplingIterator(IterableDataset):
             # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()
             n = len(self.data)
+            
             if worker_info is None:
                 start, end, wid = 0, n, -1
             else:
                 nw = worker_info.num_workers
                 wid = worker_info.id
                 start, end = int(np.floor(n / nw * wid)), int(np.ceil(n / nw * (wid + 1)))
-            bs = self.offline_batch_size
+            bs = self.offline_batch_size if self.train else self.online_batch_size
             if end - start < bs:
                 yield np.arange(start, end)
                 return
@@ -96,7 +99,8 @@ class SamplingIterator(IterableDataset):
         if self.stream:
             return int(1e6)
         return len(self.data)
-
+    
+    # Aim is to have a seperate valid batch where we generate 128 samples per preference
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = (worker_info.id if worker_info is not None else 0)
@@ -106,19 +110,26 @@ class SamplingIterator(IterableDataset):
             os.makedirs(self.log_dir, exist_ok=True)
             self.generated_logfile = open(f'{self.log_dir}/generated_mols_{self._wid}.csv', 'a')
         for idcs in self._idx_iterator():
-            num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
+            num_offline = idcs.shape[0] if self.train else 0  # This is in [1, self.offline_batch_size]
+            
             # Sample conditional info such as temperature, trade-off weights, etc.
             
-            cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
+            cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size, train=self.train)
             is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
 
             # Sample some dataset data
-            mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs]))
-            flat_rewards = list(np.vstack(self.task.flat_reward_transform(flat_rewards)))
-            graphs = [self.ctx.mol_to_graph(m) for m in mols]
-            trajs = self.algo.create_training_data_from_graphs(graphs)
+            if self.train:
+                mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs]))
+                flat_rewards = list(np.vstack(self.task.flat_reward_transform(flat_rewards)))
+                graphs = [self.ctx.mol_to_graph(m) for m in mols]
+                trajs = self.algo.create_training_data_from_graphs(graphs)
+            else:
+                flat_rewards = list()
+                trajs = list()
+                num_offline = 0
+            
             # Sample some on-policy data
-            if self.online_batch_size > 0:
+            if self.online_batch_size > 0 or not self.train:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, self.online_batch_size,
                                                                              cond_info['encoding'][num_offline:])
@@ -152,7 +163,7 @@ class SamplingIterator(IterableDataset):
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
+            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards, np.vstack(flat_rewards), mols)
             batch.num_offline = num_offline
             # TODO: There is a smarter way to do this
             # batch.pin_memory()
@@ -177,3 +188,6 @@ class SamplingIterator(IterableDataset):
             self.generated_logfile.write(
                 f'{mols[i]},{rewards[i]},{json.dumps(flat_rewards[i])},{json.dumps(serializable_ci)}\n')
         self.generated_logfile.flush()
+        
+    # def generate_valid_batch(self, cond_info):
+        
