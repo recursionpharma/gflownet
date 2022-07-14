@@ -1,5 +1,6 @@
 import ast
 import copy
+from itertools import product
 from typing import Any, Callable, Dict, List, Tuple, Union, NewType
 
 from determined.pytorch import LRScheduler
@@ -16,9 +17,11 @@ from torch.utils.data import Dataset
 import torch_geometric.data as gd
 from torch.distributions.dirichlet import Dirichlet
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.data.qm9 import QM9Dataset
+from gflownet.data.qm9 import QM9Dataset, QM9DatasetDummy
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.utils.metrics import get_hypervolume, pareto_frontier, uniform_reference_points, r2_indicator_set, HSR_Calculator, Normalizer, compute_diverse_top_k, get_topk
+
 from gflownet.models import mxmnet
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards
@@ -33,21 +36,22 @@ def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
     return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
 
 class RewardInfo:
-    def __init__(self, _min: float, _max: float, _median:float,  _percentile_95: float):
+    def __init__(self, _min: float, _max: float, _median:float,  _percentile_95: float, _std: float):
         self._min = _min
         self._max = _max
         self._percentile_95 = _percentile_95
         self._median = _median
+        self._std = _std
         self._width = self._max - self._min
 
 def gap_reward(_input, _info):
     return 1 - (_input - _info._percentile_95) / _info._width
 
 def logP_reward(_input, _info):
-    return np.exp(-(_input  - 1) ** 2 / (2 * np.pi * _info._width))
+    return np.exp(-(_input - 2.5) ** 2 / (0.3 *_info._width))
 
 def molecular_weight_reward(_input, _info):
-    return np.exp(-(_input-_info._median)**2 /(2 * np.pi * _info._width))
+    return np.exp(-(_input - 105) ** 2 / (1.2* _info._width))
 
 def qed_reward(_input, _info):
     return _input / _info._width
@@ -66,6 +70,7 @@ class QM9GapTask(GFNTask):
             number_of_objectives: int,
             reward_transform: str,
             targets: list,
+            number_test_samples: int, 
             wrap_model: Callable[[nn.Module], nn.Module] = None
     ):
         self._wrap_model = wrap_model
@@ -86,9 +91,17 @@ class QM9GapTask(GFNTask):
         self._rtrans = reward_transform
         self.reward_stat_info = []
         self.targets = targets
+        self.number_test_samples = number_test_samples
+        number_of_test_bins = {
+            "1": 120,
+            "2": 120,
+            "3": 15,
+            "4": 8,
+        }
+        self.test_preferences = self.get_fixed_preferences(number_of_samples=number_of_test_bins[str(number_of_objectives)])
         for i in range(number_of_objectives):
-            _min, _max, _median,  _percentile_95 = self.dataset.get_stats(percentile=0.05, target=targets[i])
-            self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _median=_median, _percentile_95=_percentile_95))
+            _min, _max, _median, _percentile_95, _std = self.dataset.get_stats(percentile=0.05, target=targets[i])
+            self.reward_stat_info.append(RewardInfo(_min=_min, _max=_max, _median=_median, _percentile_95=_percentile_95, _std=_std))
 
     def flat_reward_transform(self, y: Union[list, np.ndarray, float, Tensor]) -> FlatRewards:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
@@ -98,8 +111,8 @@ class QM9GapTask(GFNTask):
         rewards = []
         for i in range(self.number_of_objectives):
             rew = self._transform(y[:, i], self.reward_stat_info[i], self.targets[i])
-            rewards.append(rew)
-        rewards = np.vstack(rewards).reshape(-1, self.number_of_objectives)
+            rewards.append(rew.T)
+        rewards = np.vstack(rewards).T
         return rewards
 
     def _transform(self, y: Union[float, Tensor], reward_stat_info, target: str):
@@ -130,7 +143,7 @@ class QM9GapTask(GFNTask):
         gap_model, self.device = self._wrap_model(gap_model)
         return {'mxmnet_gap': gap_model}
 
-    def sample_conditional_information(self, n):
+    def sample_conditional_information(self, n, train=True):
         # Beta Info
         beta = None
         # TODO Sharath: Inlcude Annealing
@@ -143,16 +156,23 @@ class QM9GapTask(GFNTask):
         elif self.temperature_sample_dist == 'const':
             beta = np.ones(n).astype(np.float32)
             beta = beta * self.const_temp
+        # Get the preferences
+        if train:
+            m = Dirichlet(torch.FloatTensor([1.5] * self.number_of_objectives))
+            preferences = m.sample([n])
+        else:
+            preferences = self.test_preferences
         # Thermometer encode the beta
         beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)
-        # Get the preferences
-        m = Dirichlet(torch.FloatTensor([1.5] * self.number_of_objectives))
-        preferences = m.sample([n])
         encoding = torch.cat([preferences, beta_enc], dim=-1)
-        return {'beta': torch.tensor(beta).unsqueeze(1), 'encoding': encoding, 'preferences': preferences}
+        
+        return {
+            'beta': torch.tensor(beta).unsqueeze(1),
+            'encoding': encoding,
+            'preferences': preferences,
+        }
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        # print(f"Flat Before: {flat_reward}")
         if isinstance(flat_reward, list):
             flat_reward = np.vstack(flat_reward)
             flat_reward = torch.bmm(
@@ -186,6 +206,26 @@ class QM9GapTask(GFNTask):
         all_preds = np.hstack(all_preds)
         preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
         return FlatRewards(preds), is_valid
+
+    def get_fixed_preferences(self, number_of_samples: int) -> Tensor:
+        """
+        Get the fixed set of preferences for the given number of objectives.
+        Docstring from the original code:
+        The preferences are chosen from a dirichlet distribution.
+        Parameters
+        ----------
+        number_of_samples : int
+             The number of objectives.
+        Returns: Tensor of preferences of shape (number_of_samples, number_of_objectives)
+        ----------
+        """
+        if self.number_of_objectives == 1:
+            return torch.ones(number_of_samples, 1).float()
+        spaces = [np.linspace(0.0, 1.0, number_of_samples) for _ in range(self.number_of_objectives)]
+        test_preferences = torch.tensor([comb for comb in product(*spaces)
+                         if np.allclose(sum(comb), 1.0)]).float()
+        
+        return test_preferences
 
 
 class QM9GapTrainer(GFNTrainer):
@@ -226,8 +266,8 @@ class QM9GapTrainer(GFNTrainer):
             specific_target = hps['targets'][:hps['number_of_objectives']]
 
         self.training_data = QM9Dataset(hps['qm9_h5_path'], train=True, targets=specific_target)
-        self.test_data = QM9Dataset(hps['qm9_h5_path'], train=False, targets=specific_target)
-        hps['log_dir'] += '{}/obj_{}/seed_{}'.format(hps['temperature_sample_dist'], hps['number_of_objectives'], self.context.get_trial_seed())
+        self.test_data = QM9DatasetDummy(120 * 64, train=False)
+        hps['log_dir'] += '{}/obj_{}/seed_{}'.format(hps['temperature_sample_dist'], hps['number_of_objectives'], hps['seed'])
         model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'])
         self.model = model
         # Separate Z parameters from non-Z to allow for LR decay on the former
@@ -258,6 +298,7 @@ class QM9GapTrainer(GFNTrainer):
             number_of_objectives=hps['number_of_objectives'],
             reward_transform=hps['reward_transform'],
             targets=specific_target,
+            number_test_samples=hps["number_test_samples"],
             wrap_model=self._wrap_model_mp
         )
         self.mb_size = hps['global_batch_size']
@@ -281,6 +322,11 @@ class QM9GapTrainer(GFNTrainer):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
+                
+    
+            
+            
+            
 
 
 # Determined-specific code:
@@ -317,14 +363,15 @@ class QM9Trial(QM9GapTrainer, PyTorchTrial):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
+                
 
 
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'lr_decay': 10000,
-        'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/mnt/ps/home/CORP/sharath.raparthy/sandbox/qm9_results/logs/',
+        'qm9_h5_path': '/data/chem/qm9/qm9_new.h5',
+        'log_dir': '/sandbox/qm9_results/logs/',
         'num_training_steps': 100_000,
         'validate_every': 100,
         'number_of_objectives': 2,
@@ -348,6 +395,14 @@ def main():
         'num_emb': 128,
         'num_layers': 4,
         'const_temp': 8,
+        'is_specific_target': False,
+        'seed': 10,
+        'uniform_temperature_dist_params': '(0.2, 32)',
+        'gamma_temperature_dist_params': '(32, 2)',
+        'beta_temperature_dist_params': '(2, 1)',
+        'number_test_samples': 50,
+        'k_value': 10,
+        'hsri_epsilon': 0.4
     }
     trial = QM9GapTrainer(hps, torch.device('cuda'))
     trial.run()
