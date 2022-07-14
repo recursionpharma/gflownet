@@ -14,6 +14,9 @@ from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.utils.metrics import get_hypervolume, pareto_frontier, uniform_reference_points, r2_indicator_set, HSR_Calculator, Normalizer, compute_diverse_top_k, get_topk
+
+from gflownet.utils.multiprocessing_proxy import MPModelPlaceholder
 
 class TrajectoryBalanceModel(nn.Module):
     def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
@@ -89,7 +92,11 @@ class TrajectoryBalance:
         """
         ctx = self.ctx
         env = self.env
-        dev = self.ctx.device
+        # dev = self.ctx.device
+        if isinstance(model, MPModelPlaceholder):
+            dev = self.ctx.device
+        else:
+            dev = next(model.parameters()).device
         cond_info = cond_info.to(dev)
         logZ_pred = model.logZ(cond_info)
         # This will be returned as training data
@@ -204,7 +211,7 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards):
+    def construct_batch(self, trajs, cond_info, rewards, flat_rewards, mols):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
@@ -215,7 +222,8 @@ class TrajectoryBalance:
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         rewards: Tensor
             The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
-
+        flat_rewards: Numpy array
+            The untransformed reward for each trajectory. Shape (N, number of objectives)
         Returns
         -------
         batch: gd.Batch
@@ -238,10 +246,13 @@ class TrajectoryBalance:
         batch.actions = torch.tensor(actions)
         batch.rewards = rewards
         batch.cond_info = cond_info
+        batch.flat_rewards = flat_rewards
+        batch.mols = mols
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
 
-    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
+    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0, train=False, track_online_metrics=False,
+                             hsri_epsilon=0.3):
         """Compute the losses over trajectories contained in the batch
 
         Parameters
@@ -324,7 +335,15 @@ class TrajectoryBalance:
             online_loss = 0
         else:
             online_loss = traj_losses[batch.num_offline:].mean()
-        info = {
+        target_min = batch.flat_rewards.min(0).copy()
+        target_range = batch.flat_rewards.max(axis=0).copy() - target_min
+        hypercube_transform = Normalizer(
+            loc=target_min,
+            scale=target_range,
+        )
+        info = {}
+        if train:
+            offline_info = {
             'offline_loss': traj_losses[:batch.num_offline].mean(),
             'online_loss': online_loss,
             'reward_loss': reward_loss,
@@ -332,8 +351,47 @@ class TrajectoryBalance:
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             'logZ': Z.mean(),
-        }
-
+            }
+            info.update(offline_info)
+        if track_online_metrics or not train:
+            flat_rewards = batch.flat_rewards[batch.num_offline:].copy()
+            gfn_pareto = pareto_frontier(flat_rewards)
+            normed_gfn_pareto = hypercube_transform(gfn_pareto)
+            hypervolume_with_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=True)
+            hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=False)
+            unnorm_hypervolume_with_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
+            unnorm_hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
+            reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
+            r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
+            upper = np.zeros(normed_gfn_pareto.shape[-1]) + hsri_epsilon
+            lower = np.ones(normed_gfn_pareto.shape[-1]) * -1 - hsri_epsilon
+            hsr_indicator = HSR_Calculator(lower, upper)
+            try:
+                hsri_w_pareto, x = hsr_indicator.calculate_hsr(-1 * gfn_pareto)
+            except:
+                hsri_w_pareto = 0
+            try:
+                hsri_on_flat, _ =  hsr_indicator.calculate_hsr(-1 * flat_rewards)
+            except:
+                hsri_on_flat = 0
+            topk_rewards = get_topk(batch.rewards, 10)
+            diverse_topk = 0
+            online_info = {
+                'offline_loss': 0,
+                'HV with zero ref': hypervolume_with_zero_ref,
+                'HV w/o zero ref': hypervolume_wo_zero_ref,
+                'r2_dist': r2_dist,
+                'Unnormalized HV with zero ref':unnorm_hypervolume_with_zero_ref,
+                'Unnormalized HV w/o zero ref':unnorm_hypervolume_wo_zero_ref,
+                'hsri_with_pareto': hsri_w_pareto,
+                'hsri_on_flat_rew': hsri_on_flat,
+                'top_k_diversity': diverse_topk,
+                'top_k rewards': topk_rewards
+            }
+            
+            info.update(online_info)
+            
+            
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
         return loss, info
