@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from rdkit.Chem import Descriptors
 
 class QM9Dataset(Dataset):
-    def __init__(self, h5_file=None, xyz_file=None, train=True, targets='gap', split_seed=142857, ratio=0.9):
+    def __init__(self, h5_file=None, xyz_file=None, train=True, targets='gap', split_seed=142857, ratio=0.9, load_from_scratch=False):
         if h5_file is not None:
             self.df = pd.HDFStore(h5_file, 'r')['df']
         elif xyz_file is not None:
@@ -21,13 +21,14 @@ class QM9Dataset(Dataset):
         else:
             self.idcs = idcs[int(np.floor(ratio * len(self.df))):]
         self.length = len(self.df["SMILES"])
-        for target in self.targets:
-            if target == "logP":
-                self.calculate_logP()
-            elif target == "molecular_weight":
-                self.calculate_molwt()
-            elif target == "QED":  
-                self.calculate_QED()
+        if load_from_scratch:
+            for target in self.targets:
+                if target == "logP":
+                    self.calculate_logP()
+                elif target == "molecular_weight":
+                    self.calculate_molwt()
+                elif target == "QED":  
+                    self.calculate_QED()
 
     def gather_rewards(self, idx):
         rewards = []
@@ -38,7 +39,7 @@ class QM9Dataset(Dataset):
     def get_stats(self, target, percentile=0.95):
         # Return a list of stats
         y = self.df[target]
-        stats = (y.min(), y.max(), y.median(), np.sort(y)[int(y.shape[0] * percentile)])
+        stats = (y.min(), y.max(), y.median(), np.sort(y)[int(y.shape[0] * percentile)], y.std())
         return stats
 
     def calculate_logP(self):
@@ -81,3 +82,15 @@ class QM9Dataset(Dataset):
     def __getitem__(self, idx):
         rewards = self.gather_rewards(idx)
         return (Chem.MolFromSmiles(self.df['SMILES'][self.idcs[idx]]), rewards)
+
+    
+class QM9DatasetDummy(Dataset):
+    def __init__(self, num_online_samples, train=False):
+        self.idcs = range(num_online_samples)
+        
+    def __len__(self):
+        return len(self.idcs)
+    
+    def __getitem__(self, idx):
+        return (self.idcs[idx], None)
+    
