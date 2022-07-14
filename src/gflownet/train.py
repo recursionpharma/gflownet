@@ -116,25 +116,30 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, self.hps['number_of_objectives'], dev, ratio=0.5, log_dir=self.hps['log_dir'])
+        iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, self.hps['number_of_objectives'], dev, ratio=0.5, log_dir=self.hps['log_dir'], train=True)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, self.hps['number_of_objectives'], dev, ratio=1,
-                                    stream=False)
+        iterator = SamplingIterator(self.test_data, model, 120, self.ctx, self.algo, self.task, self.hps['number_of_objectives'], dev, ratio=0,
+                                    stream=False, train=False)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
+        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size, track_online_metrics=True, train=True)
         self.step(loss)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
 
-    def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline)
+    def evaluate_offline_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
+        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline, track_online_metrics=True, train=False)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
+    
+    def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
+        info = self.evaluate_offline_batch(batch=batch, epoch_idx=epoch_idx, batch_idx=batch_idx)
+        return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
+        
 
     def run(self):
         """Trains the GFN for `num_training_steps` minibatches, performing
@@ -142,19 +147,23 @@ class GFNTrainer:
         """
         self.model.to(self.device)
         self.sampling_model.to(self.device)
+        print(f"Device in train loop is {self.device}")
         epoch_length = len(self.training_data)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
-        for it, batch in zip(range(1, 1 + self.hps['num_training_steps']), train_dl):
+        for it, batch in zip(range(0, 1 + self.hps['num_training_steps']), train_dl):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
             self.log(info, it, 'train')
 
             if it % self.hps['validate_every'] == 0:
+                print("validating")
                 for batch in valid_dl:
+                    print(batch, len(valid_dl))
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, 'valid')
+                    print(info)
                 torch.save({
                     'models_state_dict': [self.model.state_dict()],
                     'hps': self.hps,
