@@ -1,11 +1,11 @@
-name:  Qm9 Uniform Online Experiments
+name:  Qm9 Full Sweep
 description: Experiments Sweep
 data:
-  h5_path: /data/chem/qm9/qm9.h5
+  h5_path: /data/chem/qm9/qm9_new.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  log_dir: ~/sandbox/qm9_results/logs/
-  qm9_h5_path: /data/chem/qm9/qm9.h5
+  log_dir: /sandbox/qm9_results/logs/
+  qm9_h5_path: /data/chem/qm9/qm9_new.h5
   adam_eps: 1e-8
   bootstrap_own_reward: False
   clip_grad_type: norm
@@ -15,16 +15,19 @@ hyperparameters:
   learning_rate: 1e-4
   momentum: 0.9
   num_data_loader_workers: 8
+  is_specific_target: False
+  specific_target: ["QED"]
+  seed: 100
   num_emb:
     type: categorical
     vals:
-      - 128
+      # - 128
       - 256
   num_layers:
      type: categorical
      vals:
-       - 3
-       - 4
+       # - 3
+       # - 4
        - 5
   reward_loss_multiplier: 2
   random_action_prob: 0.001
@@ -36,7 +39,7 @@ hyperparameters:
           - gamma
           - const
   uniform_temperature_dist_params: (0.2, 32)
-  gamma_temperature_dist_params: (2, 2)
+  gamma_temperature_dist_params: (32, 2)
   beta_temperature_dist_params: (2, 1)
 #      type: categorical
 #      vals:
@@ -44,7 +47,7 @@ hyperparameters:
 #          - (2, 2)
 #          - (2, 3)
 #          - (3, 3)
-  const_temp : 8
+  const_temp : 32
 #       type: categorical
 #       vals:
 #           - 8
@@ -54,7 +57,7 @@ hyperparameters:
   number_of_objectives:
       type: categorical
       vals:
-          - 1
+          # - 1
           - 2
           - 3
           - 4
@@ -67,14 +70,19 @@ hyperparameters:
   #temperature_dist_params: (1.5, 1.5)
   #temperature_sample_dist: beta
   #temperature_dist_params: (1.25, 2)
+  number_test_samples: 50
+  k_value: 10
+  hsri_epsilon: 0.4
+  num_test_preferences: 120
 searcher:
   name: grid
-  metric: offline_loss
+  metric: r2_dist
   max_length:
       batches: 100000
   smaller_is_better: true
 min_validation_period:
-  batches: 500
+  batches: 200
+perform_initial_validation: True
 entrypoint: qm9:QM9Trial
 checkpoint_policy: best
 checkpoint_storage:
@@ -91,7 +99,8 @@ bind_mounts:
   - host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/
     container_path: /sandbox/
 environment:
-  image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
+  # image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
+  image: gcr.io/eng-infrastructure/gflownet:libxrender
   add_capabilities:
     - IPC_LOCK
   force_pull_image: false
@@ -102,3 +111,5 @@ resources:
   slots_per_trial: 1
 # profiling:
 #  enabled: true
+
+
