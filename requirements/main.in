@@ -1,7 +1,7 @@
 
 --find-links https://data.pyg.org/whl/torch-1.10.0+cu113.html
 
-torch>=1.10
+torch==1.11
 # These pins are specific on purpose, some of these packages have
 # unstable APIs since they are fairly new. We could instead pin
 # them as >= in dev until something breaks?
@@ -14,3 +14,6 @@ tables
 sympy
 scipy
 networkx
+cvxopt
+botorch
+pymoo
