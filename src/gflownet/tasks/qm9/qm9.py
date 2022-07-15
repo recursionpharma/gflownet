@@ -119,23 +119,11 @@ class QM9GapTask(GFNTask):
         if target == 'gap':
             return gap_reward(y, reward_stat_info)
         elif target == 'logP':
-            try:
-                reward = logP_reward(y, reward_stat_info)
-            except:
-                reward = 0
-            return reward
+            return logP_reward(y, reward_stat_info)
         elif target == 'molecular_weight':
-            try: 
-                reward = molecular_weight_reward(y, reward_stat_info)
-            except:
-                reward = 0
-            return reward
+            return molecular_weight_reward(y, reward_stat_info)
         elif target == 'QED':
-            try:
-                reward = qed_reward(y, reward_stat_info)
-            except:
-                reward = 0
-            return reward
+            return qed_reward(y, reward_stat_info)
         raise ValueError(self._rtrans)
 
     def inverse_flat_reward_transform(self, rp):
@@ -206,11 +194,35 @@ class QM9GapTask(GFNTask):
                 batch.to(self.device)
                 preds = self.models['mxmnet_gap'](batch).reshape((-1, 1)).data.cpu().numpy() / mxmnet.HAR2EV  # type: ignore[attr-defined]                
             elif target == 'logP':
-                preds = np.asarray([Descriptors.MolLogP(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1,1 ))
+                preds = []
+                for idx, i in enumerate(mols):
+                    if graphs[idx] is not None:
+                        try:
+                            logP = Descriptors.MolLogP(i)
+                        except:
+                            logP = 0
+                        preds.append(logP)
+                    preds = np.asarray(preds).reshape((-1, 1))
             elif target == 'molecular_weight':
-                preds = np.asarray([Descriptors.MolWt(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1, 1))
+                preds = []
+                for idx, i in enumerate(mols):
+                    if graphs[idx] is not None:
+                        try:
+                            molwt = Descriptors.MolWt(i)
+                        except:
+                            qemolwtd = 0
+                        preds.append(molwt)
+                    preds = np.asarray(preds).reshape((-1, 1))
             elif target == 'QED':
-                preds = np.asarray([Descriptors.qed(i) for idx, i in enumerate(mols) if graphs[idx] is not None]).reshape((-1, 1))
+                preds = []
+                for idx, i in enumerate(mols):
+                    if graphs[idx] is not None:
+                        try:
+                            qed = Descriptors.qed(i)
+                        except:
+                            qed = 0
+                        preds.append(qed)
+                preds = np.asarray(preds).reshape((-1, 1))
             else:
                 preds = []
             preds[np.isnan(preds)] = 1
