@@ -30,7 +30,16 @@ The GNN model can be trained on a mix of existing data (offline) and self-genera
     -  [qm9](https://github.com/recursionpharma/gflownet/blob/trunk/gflownet/tasks/qm9/qm9.py), temperature-conditional molecule sampler based on QM9's HOMO-LUMO gap data as a reward.
 - [utils](gflownet/utils), contains utilities (multiprocessing).
 - [`train.py`](gflownet/train.py), general GFlowNet training setup.
-## Installation
+
+### Multi-Objective Integration
+This repo also supports multi-objective GFlowNet training. The core idea is to condition GFlowNet on a set of preferences and inverse temperature. The preferences signify the relative importance of each objective, and the inverse temperature governs the peakyness and flatness of the reward distribution.
+The scalar reward is obtained by taking the sum of the weighted objectives with the preferences as weights then raising to the inverse temperature. We train this conditional GFlowNet to generate trajectories from which we can sample the candidates in a way the these are pareto optimal.
+
+#### Features:
+1. Supports 4 objectives: [Gap, logP, MolWT, QED](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L118-L139)
+2. Supports different sampling strategies for temperature sampling: [Uniform, Dirac, Gamma](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L162-L168)
+3. Supports [preference conditioning](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L179)
+4. Supports 4 different pareto metrics: [R2 distance](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L66), [Hypervolume metric](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L24), [HSR Indicator](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L263), [top k rewards](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L329)
 
 ### PIP
 

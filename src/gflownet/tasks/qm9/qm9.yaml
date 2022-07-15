@@ -99,7 +99,8 @@ bind_mounts:
   - host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/
     container_path: /sandbox/
 environment:
-  image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
+  # image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
+  image: gcr.io/eng-infrastructure/gflownet:libxrender
   add_capabilities:
     - IPC_LOCK
   force_pull_image: false
