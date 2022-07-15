@@ -131,13 +131,9 @@ class GFNTrainer:
         loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size, track_online_metrics=True, train=True)
         self.step(loss)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
-
-    def evaluate_offline_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline, track_online_metrics=True, train=False)
-        return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
     
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
-        info = self.evaluate_offline_batch(batch=batch, epoch_idx=epoch_idx, batch_idx=batch_idx)
+        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline, track_online_metrics=True, train=False)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
         
 
