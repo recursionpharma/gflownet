@@ -54,7 +54,7 @@ def molecular_weight_reward(_input, _info):
     return np.exp(-(_input - 105) ** 2 / (1.2* _info._width))
 
 def qed_reward(_input, _info):
-    return _input / _info._width
+    return _input
 
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
@@ -119,11 +119,23 @@ class QM9GapTask(GFNTask):
         if target == 'gap':
             return gap_reward(y, reward_stat_info)
         elif target == 'logP':
-            return logP_reward(y, reward_stat_info)
+            try:
+                reward = logP_reward(y, reward_stat_info)
+            except:
+                reward = 0
+            return reward
         elif target == 'molecular_weight':
-            return molecular_weight_reward(y, reward_stat_info)
+            try: 
+                reward = molecular_weight_reward(y, reward_stat_info)
+            except:
+                reward = 0
+            return reward
         elif target == 'QED':
-            return qed_reward(y, reward_stat_info)
+            try:
+                reward = qed_reward(y, reward_stat_info)
+            except:
+                reward = 0
+            return reward
         raise ValueError(self._rtrans)
 
     def inverse_flat_reward_transform(self, rp):

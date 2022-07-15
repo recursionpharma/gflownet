@@ -361,8 +361,11 @@ class TrajectoryBalance:
             hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=False)
             unnorm_hypervolume_with_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
             unnorm_hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
-            reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
-            r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
+            try:
+                reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
+                r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
+            except:
+                r2_dist = 0
             upper = np.zeros(normed_gfn_pareto.shape[-1]) + hsri_epsilon
             lower = np.ones(normed_gfn_pareto.shape[-1]) * -1 - hsri_epsilon
             hsr_indicator = HSR_Calculator(lower, upper)
