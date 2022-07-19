@@ -13,7 +13,20 @@ from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
 
 class FragMolBuildingEnvContext(GraphBuildingEnvContext):
-    def __init__(self, max_frags=9, num_cond_dim=0):
+    """A specification of what is being generated for a GraphBuildingEnv
+
+    This context specifies how to create molecules fragment by fragment as encoded by a junction tree.
+    Fragments are obtained from the original GFlowNet paper, Bengio et al., 2021.
+    """
+    def __init__(self, max_frags: int = 9, num_cond_dim: int = 0):
+        """Construct a fragment environment
+        Parameters
+        ----------
+        max_frags: int
+            The maximum number of fragments the agent is allowed to insert.
+        num_cond_dim: int
+            The dimensionality of the observations' conditional information vector (if >0)
+        """
         self.max_frags = max_frags
         self.frags_smi = open(os.path.split(__file__)[0] + '/frags_72.txt', 'r').read().splitlines()
         self.frags_mol = [Chem.MolFromSmiles(i) for i in self.frags_smi]
@@ -39,7 +52,20 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.device = torch.device('cpu')
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]):
-        """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
+        """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
+
+        Parameters
+        ----------
+        g: gd.Data
+            The graph object on which this action would be applied.
+        action_idx: Tuple[int, int, int]
+             A triple describing the type of action, and the corresponding row and column index for
+             the corresponding Categorical matrix.
+
+        Returns
+        action: GraphAction
+            A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
+        """
         act_type, act_row, act_col = [int(i) for i in action_idx]
         t = self.action_type_order[act_type]
         if t is GraphActionType.Stop:
@@ -57,7 +83,21 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
 
     def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
-        """Translate a GraphAction to an index tuple"""
+        """Translate a GraphAction to an index tuple
+
+        Parameters
+        ----------
+        g: gd.Data
+            The graph object on which this action would be applied.
+        action: GraphAction
+            A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
+
+        Returns
+        -------
+        action_idx: Tuple[int, int, int]
+             A triple describing the type of action, and the corresponding row and column index for
+             the corresponding Categorical matrix.
+        """
         if action.action is GraphActionType.Stop:
             row = col = 0
         elif action.action is GraphActionType.AddNode:
@@ -76,8 +116,18 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         type_idx = self.action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph):
-        """Convert a networkx Graph to a torch geometric Data instance"""
+    def graph_to_Data(self, g: Graph) -> gd.Data:
+        """Convert a networkx Graph to a torch geometric Data instance
+        Parameters
+        ----------
+        g: Graph
+            A Graph object representing a fragment junction tree
+
+        Returns
+        -------
+        data:  gd.Data
+            The corresponding torch_geometric object.
+        """
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
         for i, n in enumerate(g.nodes):
@@ -102,31 +152,37 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
         return gd.Data(x, edge_index, edge_attr, add_node_mask=add_node_mask, set_edge_attr_mask=set_edge_attr_mask)
 
-    def collate(self, graphs: List[gd.Data]):
-        """Batch Data instances"""
+    def collate(self, graphs: List[gd.Data]) -> gd.Batch:
+        """Batch Data instances
+
+        Parameters
+        ----------
+        graphs: List[gd.Data]
+            A list of gd.Data objects (e.g. given by graph_to_Data).
+
+        Returns
+        batch: gd.Batch
+            A torch_geometric Batch object
+        """
         return gd.Batch.from_data_list(graphs, follow_batch=['edge_index'])
 
     def mol_to_graph(self, mol):
         """Convert an RDMol to a Graph"""
         raise NotImplementedError()
-        g = Graph()
-        # Only set an attribute tag if it is not the default attribute
-        for a in mol.GetAtoms():
-            attrs = {
-                'chi': a.GetChiralTag(),
-                'charge': a.GetFormalCharge(),
-                'expl_H': a.GetNumExplicitHs(),
-                'no_impl': a.GetNoImplicit()
-            }
-            g.add_node(a.GetIdx(), v=a.GetSymbol(),
-                       **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]})
-        for b in mol.GetBonds():
-            attrs = {'type': b.GetBondType()}
-            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(),
-                       **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]})
-        return g
 
-    def graph_to_mol(self, g):
+    def graph_to_mol(self, g: Graph) -> Chem.Mol:
+        """Convert a Graph to an RDKit molecule
+
+        Parameters
+        ----------
+        g: Graph
+            A Graph instance representing a fragment junction tree.
+
+        Returns
+        -------
+        m: Chem.Mol
+            The corresponding RDKit molecule
+        """
         offsets = np.cumsum([0] + [self.frags_numatm[g.nodes[i]['v']] for i in g])
         mol = None
         for i in g.nodes:
@@ -155,7 +211,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         list(map(_pop_H, bond_atoms))
         return mol
 
-    def is_sane(self, g):
+    def is_sane(self, g: Graph) -> bool:
+        """Verifies whether the given Graph is valid according to RDKit"""
         try:
             mol = self.graph_to_mol(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None

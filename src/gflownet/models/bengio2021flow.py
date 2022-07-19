@@ -26,6 +26,8 @@ from torch_geometric.nn import NNConv
 from torch_geometric.nn import Set2Set
 from torch_sparse import coalesce
 
+NUM_ATOMIC_NUMBERS = 56  # Number of atoms used in the molecules (i.e. up to Ba)
+
 
 class MPNNet(nn.Module):
     def __init__(self, num_feat=14, num_vec=3, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_out_per_bond=1,
@@ -43,15 +45,12 @@ class MPNNet(nn.Module):
         self.conv = NNConv(dim, dim, net, aggr='mean')
         self.gru = nn.GRU(dim, dim)
 
-        self.lin1 = nn.Linear(dim, dim * 8)
-        self.lin2 = nn.Linear(dim * 8, num_out_per_stem)
-
         self.set2set = Set2Set(dim, processing_steps=3)
         self.lin3 = nn.Linear(dim * 2, num_out_per_mol)
         self.bond2out = nn.Sequential(nn.Linear(dim * 2, dim), self.act, nn.Linear(dim, dim), self.act,
                                       nn.Linear(dim, num_out_per_bond))
 
-    def forward(self, data, vec_data=None, do_stems=True, do_bonds=False, k=None, do_dropout=False):
+    def forward(self, data, do_dropout=False):
         out = self.act(self.lin0(data.x))
         h = out.unsqueeze(0)
         h = F.dropout(h, training=do_dropout, p=self.dropout_rate)
@@ -70,7 +69,7 @@ class MPNNet(nn.Module):
 
 
 def load_original_model():
-    num_feat = (14 + 1 + len(atomic_numbers))
+    num_feat = (14 + 1 + NUM_ATOMIC_NUMBERS)
     mpnn = MPNNet(num_feat=num_feat, num_vec=0, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_conv_steps=12)
     f = requests.get("https://github.com/GFNOrg/gflownet/raw/master/mols/data/pretrained_proxy/best_params.pkl.gz",
                      stream=True)
@@ -88,10 +87,6 @@ def load_original_model():
         'gru.weight_hh_l0': params[9],
         'gru.bias_ih_l0': params[10],
         'gru.bias_hh_l0': params[11],
-        'lin1.weight': params[12],
-        'lin1.bias': params[13],
-        'lin2.weight': params[14],
-        'lin2.bias': params[15],
         'set2set.lstm.weight_ih_l0': params[16],
         'set2set.lstm.weight_hh_l0': params[17],
         'set2set.lstm.bias_ih_l0': params[18],
@@ -103,65 +98,6 @@ def load_original_model():
         mpnn.get_parameter(k).data = torch.tensor(v)
     return mpnn
 
-
-atomic_numbers = {
-    "H": 1,
-    "He": 2,
-    "Li": 3,
-    "Be": 4,
-    "B": 5,
-    "C": 6,
-    "N": 7,
-    "O": 8,
-    "F": 9,
-    "Ne": 10,
-    "Na": 11,
-    "Mg": 12,
-    "Al": 13,
-    "Si": 14,
-    "P": 15,
-    "S": 16,
-    "Cl": 17,
-    "Ar": 18,
-    "K": 19,
-    "Ca": 20,
-    "Sc": 21,
-    "Ti": 22,
-    "V": 23,
-    "Cr": 24,
-    "Mn": 25,
-    "Fe": 26,
-    "Co": 27,
-    "Ni": 28,
-    "Cu": 29,
-    "Zn": 30,
-    "Ga": 31,
-    "Ge": 32,
-    "As": 33,
-    "Se": 34,
-    "Br": 35,
-    "Kr": 36,
-    "Rb": 37,
-    "Sr": 38,
-    "Y": 39,
-    "Zr": 40,
-    "Nb": 41,
-    "Mo": 42,
-    "Tc": 43,
-    "Ru": 44,
-    "Rh": 45,
-    "Pd": 46,
-    "Ag": 47,
-    "Cd": 48,
-    "In": 49,
-    "Sn": 50,
-    "Sb": 51,
-    "Te": 52,
-    "I": 53,
-    "Xe": 54,
-    "Cs": 55,
-    "Ba": 56
-}
 
 _mpnn_feat_cache = [None]
 
@@ -178,7 +114,7 @@ def mpnn_feat(mol, ifcoord=True, panda_fmt=False, one_hot_atom=False, donor_feat
 
     nfeat = ntypes + 1 + 8
     if one_hot_atom:
-        nfeat += len(atomic_numbers)
+        nfeat += NUM_ATOMIC_NUMBERS
     atmfeat = np.zeros((natm, nfeat))
 
     # featurize
@@ -260,7 +196,7 @@ def onehot(arr, num_classes, dtype=np.int):
 def mol2graph(mol, floatX=torch.float, bonds=False, nblocks=False):
     rdmol = mol
     if rdmol is None:
-        g = Data(x=torch.zeros((1, 14 + len(atomic_numbers))), edge_attr=torch.zeros((0, 4)), edge_index=torch.zeros(
+        g = Data(x=torch.zeros((1, 14 + NUM_ATOMIC_NUMBERS)), edge_attr=torch.zeros((0, 4)), edge_index=torch.zeros(
             (0, 2)).long())
     else:
         atmfeat, _, bond, bondfeat = mpnn_feat(mol, ifcoord=False, one_hot_atom=True, donor_features=False)

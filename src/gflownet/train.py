@@ -82,10 +82,21 @@ class GFNTask:
 
 class GFNTrainer:
     def __init__(self, hps: Dict[str, Any], device: torch.device):
+        """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
+
+        Parameters
+        ----------
+        hps: Dict[str, Any]
+            A dictionary of hyperparameters. These override default values obtained by the `default_hps` method.
+        device: torch.device
+            The torch device of the main worker.
+        """
         # self.setup should at least set these up:
         self.training_data: Dataset
         self.test_data: Dataset
         self.model: nn.Module
+        # `sampling_model` is used by the data workers to sample new objects from the model. Can be
+        # the same as `model`.
         self.sampling_model: nn.Module
         self.mb_size: int
         self.env: GraphBuildingEnv
@@ -93,10 +104,15 @@ class GFNTrainer:
         self.task: GFNTask
         self.algo: GFNAlgorithm
 
+        # Override default hyperparameters with the constructor arguments
         self.hps = {**self.default_hps(), **hps}
         self.device = device
+        # The number of processes spawned to sample object and do CPU work
         self.num_workers: int = self.hps.get('num_data_loader_workers', 0)
+        # The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
+        # `self.sampling_model`.
         self.offline_ratio = 0.5
+        # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
         self.verbose = False
         self.setup()

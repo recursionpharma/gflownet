@@ -39,6 +39,8 @@ class SamplingIterator(IterableDataset):
         stream: bool
             If True, data is sampled iid for every batch. Otherwise, this is a normal in-order
             dataset iterator.
+        log_dir: str
+            If not None, logs each SamplingIterator worker's generated molecules to that file.
 
         """
         self.data = dataset
