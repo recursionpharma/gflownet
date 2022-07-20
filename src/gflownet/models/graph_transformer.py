@@ -8,12 +8,43 @@ from gflownet.envs.graph_building_env import GraphActionCategorical
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
+    """Creates a fully-connected network with no activation after the last layer.
+    If `n_layer` is 0 then this corresponds to `nn.Linear(n_in, n_out)`.
+    """
     n = [n_in] + [n_hid] * n_layer + [n_out]
     return nn.Sequential(*sum([[nn.Linear(n[i], n[i + 1]), act()] for i in range(n_layer + 1)], [])[:-1])
 
 
 class GraphTransformer(nn.Module):
+    """An agnostic GraphTransformer class, and the main model used by other model classes
+
+    This graph model takes in node features, edge features, and graph features (referred to as
+    conditional information, since they condition the output). The graph features are projected to
+    virtual nodes (one per graph), which are fully connected.
+
+    The per node outputs are the concatenation of the final (post graph-convolution) node embeddings
+    and of the final virtual node embedding of the graph each node corresponds to.
+
+    The per graph outputs are the concatenation of a global mean pooling operation, of the final
+    virtual node embeddings, and of the conditional information embedding.
+    """
     def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2):
+        """
+        Parameters
+        ----------
+        x_dim: int
+            The number of node features
+        e_dim: int
+            The number of edge features
+        g_dim: int
+            The number of graph-level features
+        num_emb: int
+            The number of hidden dimensions, i.e. embedding size. Default 64.
+        num_layers: int
+            The number of Transformer layers.
+        num_heads: int
+            The number of Transformer heads per layer.
+        """
         super().__init__()
         self.num_layers = num_layers
 
@@ -31,6 +62,21 @@ class GraphTransformer(nn.Module):
             ] for i in range(self.num_layers)], []))
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
+        """Forward pass
+
+        Parameters
+        ----------
+        g: gd.Batch
+            A standard torch_geometric Batch object. Expects `edge_attr` to be set.
+        cond: torch.Tensor
+            The per-graph conditioning information. Shape: (g.num_graphs, self.g_dim).
+
+        Returns
+        node_embeddings: torch.Tensor
+            Per node embeddings. Shape: (g.num_nodes, self.num_emb * 2).
+        graph_embeddings: torch.Tensor
+            Per graph embeddings. Shape: (g.num_graphs, self.num_emb * 3).
+        """
         o = self.x2h(g.x)
         e = self.e2h(g.edge_attr)
         c = self.c2h(cond)
@@ -61,7 +107,19 @@ class GraphTransformer(nn.Module):
 
 
 class GraphTransformerGFN(nn.Module):
+    """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical. Meant for atom-wise
+    generation.
+
+    Outputs logits for the following actions
+    - Stop
+    - AddNode
+    - SetNodeAttr
+    - AddEdge
+    - SetEdgeAttr
+
+    """
     def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2):
+        """See `GraphTransformer` for argument values"""
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
@@ -92,6 +150,57 @@ class GraphTransformerGFN(nn.Module):
                 self.emb2set_edge_attr(node_embeddings[e_row] + node_embeddings[e_col]),
             ],
             keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
+            types=self.action_type_order,
+        )
+        return cat, self.emb2reward(graph_embeddings)
+
+
+class GraphTransformerFragGFN(nn.Module):
+    """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical. Meant for
+    fragment-wise generation.
+
+    Outputs logits for the following actions
+    - Stop
+    - AddNode
+    - SetEdgeAttr
+    """
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2):
+        super().__init__()
+        self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
+                                       g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
+                                       num_heads=num_heads)
+        num_final = num_emb * 2
+        num_mlp_layers = 0
+        self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
+        # Edge attr logits are "sided", so we will compute both sides independently
+        self.emb2set_edge_attr = mlp(num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2, num_mlp_layers)
+        self.emb2stop = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
+        self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
+        self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
+        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
+        self.action_type_order = env_ctx.action_type_order
+
+    def forward(self, g: gd.Batch, cond: torch.Tensor):
+        """See `GraphTransformer` for argument values"""
+        node_embeddings, graph_embeddings = self.transf(g, cond)
+        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
+        e_row, e_col = g.edge_index[:, ::2]
+        edge_emb = self.edge2emb(node_embeddings[e_row] + node_embeddings[e_col])
+        src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_row]], 1))
+        dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_col]], 1))
+
+        def _mask(x, m):
+            # mask logit vector x with binary mask m, -1000 is a tiny log-value
+            return x * m + -1000 * (1 - m)
+
+        cat = GraphActionCategorical(
+            g,
+            logits=[
+                self.emb2stop(graph_embeddings),
+                _mask(self.emb2add_node(node_embeddings), g.add_node_mask),
+                _mask(torch.cat([src_anchor_logits, dst_anchor_logits], 1), g.set_edge_attr_mask),
+            ],
+            keys=[None, 'x', 'edge_index'],
             types=self.action_type_order,
         )
         return cat, self.emb2reward(graph_embeddings)
