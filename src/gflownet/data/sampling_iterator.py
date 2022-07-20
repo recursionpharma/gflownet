@@ -96,7 +96,7 @@ class SamplingIterator(IterableDataset):
         self.ctx.device = self.device
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
-            self.generated_logfile = open(f'{self.log_dir}/generated_mols_{self._wid}.csv', 'a')
+            self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.csv'
         for idcs in self._idx_iterator():
             num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
@@ -161,9 +161,8 @@ class SamplingIterator(IterableDataset):
             if isinstance(v, torch.Tensor):
                 return v.data.numpy().tolist()
 
-        flat_rewards = un_tensor(torch.as_tensor(flat_rewards))
-        for i in range(len(trajs)):
-            serializable_ci = {k: un_tensor(v[i]) for k, v in cond_info.items() if k != 'encoding'}
-            self.generated_logfile.write(
-                f'{mols[i]},{rewards[i]},{json.dumps(flat_rewards[i])},{json.dumps(serializable_ci)}\n')
-        self.generated_logfile.flush()
+        with open(self.log_path, 'a') as logfile:
+            flat_rewards = un_tensor(torch.as_tensor(flat_rewards))
+            for i in range(len(trajs)):
+                serializable_ci = {k: un_tensor(v[i]) for k, v in cond_info.items() if k != 'encoding'}
+                logfile.write(f'{mols[i]},{rewards[i]},{json.dumps(flat_rewards[i])},{json.dumps(serializable_ci)}\n')
