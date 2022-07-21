@@ -1,3 +1,4 @@
+import time
 import copy
 from itertools import count
 from typing import Any, Dict, List, Tuple
@@ -361,11 +362,11 @@ class TrajectoryBalance:
             hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=False)
             unnorm_hypervolume_with_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
             unnorm_hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
-            try:
-                reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
-                r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
-            except:
-                r2_dist = 0
+            # try:
+            #     reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
+            #     r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
+            # except:
+            #     r2_dist = 0
             upper = np.zeros(normed_gfn_pareto.shape[-1]) + hsri_epsilon
             lower = np.ones(normed_gfn_pareto.shape[-1]) * -1 - hsri_epsilon
             hsr_indicator = HSR_Calculator(lower, upper)
@@ -377,21 +378,19 @@ class TrajectoryBalance:
                 hsri_on_flat, _ =  hsr_indicator.calculate_hsr(-1 * flat_rewards)
             except:
                 hsri_on_flat = 0
-            topk_rewards = get_topk(batch.rewards, 10)
+            #topk_rewards = get_topk(batch.rewards, 10)
             diverse_topk = 0
             online_info = {
-                'offline_loss': 0,
                 'HV with zero ref': hypervolume_with_zero_ref,
                 'HV w/o zero ref': hypervolume_wo_zero_ref,
-                'r2_dist': r2_dist,
+                # 'r2_dist': r2_dist,
                 'Unnormalized HV with zero ref':unnorm_hypervolume_with_zero_ref,
                 'Unnormalized HV w/o zero ref':unnorm_hypervolume_wo_zero_ref,
                 'hsri_with_pareto': hsri_w_pareto,
                 'hsri_on_flat_rew': hsri_on_flat,
-                'top_k_diversity': diverse_topk,
-                'top_k rewards': topk_rewards
+                #'top_k_diversity': diverse_topk,
+                #'top_k_rewards': topk_rewards
             }
-            
             info.update(online_info)
             
             

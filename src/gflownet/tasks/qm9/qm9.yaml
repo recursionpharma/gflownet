@@ -4,7 +4,7 @@ data:
   h5_path: /data/chem/qm9/qm9_new.h5
   path: /data/chem/qm9/qm9.xyz.tar
 hyperparameters:
-  log_dir: /sandbox/qm9_results/logs/
+  log_dir: /scratch/qm9_logs/
   qm9_h5_path: /data/chem/qm9/qm9_new.h5
   adam_eps: 1e-8
   bootstrap_own_reward: False
@@ -26,9 +26,9 @@ hyperparameters:
   num_layers:
      type: categorical
      vals:
-       # - 3
+       - 3
        # - 4
-       - 5
+       # - 5
   reward_loss_multiplier: 2
   random_action_prob: 0.001
   sampling_tau: 0.99
@@ -89,15 +89,15 @@ checkpoint_storage:
   save_trial_best: 1
   save_trial_latest: 1
   save_experiment_best: 0
-  host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/qm9_results/
+  host_path: /mnt/ps/home/CORP/emmanuel.bengio/sandbox/det_logs/
   type: shared_fs
 bind_mounts:
-  - host_path: /mnt/ps/home/CORP/sharath.raparthy/
+  - host_path: /mnt/ps/home/CORP/emmanuel.bengio/rs/tmp_sharath_gfn/
     container_path: /run/determined/workdir/home/
   - host_path: /mnt/bh1/data/
     container_path: /data
-  - host_path: /mnt/ps/home/CORP/sharath.raparthy/sandbox/
-    container_path: /sandbox/
+  - host_path: /mnt/bh1/scratch/emmanuel.bengio/
+    container_path: /scratch
 environment:
   # image: determinedai/environments:cuda-11.3-pytorch-1.10-lightning-1.5-tf-2.8-gpu-0.17.12
   image: gcr.io/eng-infrastructure/gflownet:libxrender

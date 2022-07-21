@@ -1,3 +1,4 @@
+import time
 import ast
 import copy
 from itertools import product
@@ -183,53 +184,52 @@ class QM9GapTask(GFNTask):
         return flat_reward**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
-        all_preds = []
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return RewardScalar(torch.zeros((0,))), is_valid
-        for target in self.targets:
-            if target == 'gap':
-                batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-                batch.to(self.device)
-                preds = self.models['mxmnet_gap'](batch).reshape((-1, 1)).data.cpu().numpy() / mxmnet.HAR2EV  # type: ignore[attr-defined]                
-            elif target == 'logP':
-                preds = []
-                for idx, i in enumerate(mols):
-                    if graphs[idx] is not None:
-                        try:
-                            logP = Descriptors.MolLogP(i)
-                        except:
-                            logP = 0
-                        preds.append(logP)
-                    preds = np.asarray(preds).reshape((-1, 1))
-            elif target == 'molecular_weight':
-                preds = []
-                for idx, i in enumerate(mols):
-                    if graphs[idx] is not None:
-                        try:
-                            molwt = Descriptors.MolWt(i)
-                        except:
-                            qemolwtd = 0
-                        preds.append(molwt)
-                    preds = np.asarray(preds).reshape((-1, 1))
-            elif target == 'QED':
-                preds = []
-                for idx, i in enumerate(mols):
-                    if graphs[idx] is not None:
-                        try:
-                            qed = Descriptors.qed(i)
-                        except:
-                            qed = 0
-                        preds.append(qed)
-                preds = np.asarray(preds).reshape((-1, 1))
-            else:
-                preds = []
-            preds[np.isnan(preds)] = 1
-            all_preds.append(preds)
-        all_preds = np.hstack(all_preds)
-        preds = self.flat_reward_transform(all_preds).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
-        return FlatRewards(preds), is_valid
+        properties = {}
+        if 'gap' in self.targets:
+            batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
+            batch.to(self.device)
+
+            preds = self.models['mxmnet_gap'](batch).reshape((-1, 1)).data.cpu().numpy()[:, 0] / mxmnet.HAR2EV  # type: ignore[attr-defined]
+            properties['gap'] = preds
+        if 'logP' in self.targets:
+            preds = []
+            for idx, i in enumerate(mols):
+                if graphs[idx] is not None:
+                    try:
+                        logP = Descriptors.MolLogP(i)
+                    except:
+                        logP = 0
+                    preds.append(logP)
+            properties['logP'] = preds
+        if 'molecular_weight' in self.targets:
+            preds = []
+            for idx, i in enumerate(mols):
+                if graphs[idx] is not None:
+                    try:
+                        molwt = Descriptors.MolWt(i)
+                    except:
+                        molwt = 0
+                    preds.append(molwt)
+            properties['molecular_weight'] = preds
+        if 'QED' in self.targets:
+            preds = []
+            for idx, i in enumerate(mols):
+                if graphs[idx] is not None:
+                    try:
+                        qed = Descriptors.qed(i)
+                    except:
+                        qed = 0
+                    preds.append(qed)
+            properties['QED'] = preds
+            
+        properties = np.array([properties[i] for i in self.targets], dtype=np.float32).T
+        properties[np.isnan(properties)] = 1
+        rs = self.flat_reward_transform(properties).clip(1e-4, 2) # TODO: Is this clipping valid for all the rewards?
+        return FlatRewards(rs), is_valid
 
     def get_fixed_preferences(self, number_of_samples: int) -> Tensor:
         """
@@ -393,9 +393,8 @@ class QM9Trial(QM9GapTrainer, PyTorchTrial):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'lr_decay': 10000,
         'qm9_h5_path': '/data/chem/qm9/qm9_new.h5',
-        'log_dir': '/sandbox/qm9_results/logs/',
+        'log_dir': '/scratch/qm9_logs/',
         'num_training_steps': 100_000,
         'validate_every': 100,
         'number_of_objectives': 2,
@@ -415,7 +414,7 @@ def main():
         'illegal_action_logreward': -50,
         'learning_rate': 1e-4,
         'momentum': 0.9,
-        'num_data_loader_workers': 1,
+        'num_data_loader_workers': 0,
         'num_emb': 128,
         'num_layers': 4,
         'const_temp': 8,
