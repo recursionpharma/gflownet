@@ -6,9 +6,9 @@
 #
 --find-links https://data.pyg.org/whl/torch-1.10.0+cu113.html
 
-certifi==2022.5.18.1
+certifi==2022.6.15
     # via requests
-charset-normalizer==2.0.12
+charset-normalizer==2.1.0
     # via requests
 googledrivedownloader==0.4
     # via torch-geometric
@@ -24,13 +24,13 @@ markupsafe==2.1.1
     # via jinja2
 mpmath==1.2.1
     # via sympy
-networkx==2.8.2
+networkx==2.8.5
     # via
     #   -r requirements/main.in
     #   torch-geometric
-numexpr==2.8.1
+numexpr==2.8.3
     # via tables
-numpy==1.22.4
+numpy==1.23.1
     # via
     #   numexpr
     #   pandas
@@ -43,9 +43,9 @@ packaging==21.3
     # via
     #   numexpr
     #   tables
-pandas==1.4.2
+pandas==1.4.3
     # via torch-geometric
-pillow==9.1.1
+pillow==9.2.0
     # via rdkit-pypi
 pyparsing==3.0.9
     # via
@@ -62,13 +62,13 @@ pyyaml==6.0
     #   yacs
 rdflib==6.1.1
     # via torch-geometric
-rdkit-pypi==2022.3.2.1
+rdkit-pypi==2022.3.4
     # via -r requirements/main.in
-requests==2.27.1
+requests==2.28.1
     # via torch-geometric
 scikit-learn==1.1.1
     # via torch-geometric
-scipy==1.8.1
+scipy==1.9.0
     # via
     #   -r requirements/main.in
     #   scikit-learn
@@ -84,7 +84,7 @@ tables==3.7.0
     # via -r requirements/main.in
 threadpoolctl==3.1.0
     # via scikit-learn
-torch==1.11.0
+torch==1.12.0
     # via -r requirements/main.in
 torch-cluster==1.6.0
     # via -r requirements/main.in
@@ -96,9 +96,9 @@ torch-sparse==0.6.13
     # via -r requirements/main.in
 tqdm==4.64.0
     # via torch-geometric
-typing-extensions==4.2.0
+typing-extensions==4.3.0
     # via torch
-urllib3==1.26.9
+urllib3==1.26.11
     # via requests
 yacs==0.1.8
     # via torch-geometric
