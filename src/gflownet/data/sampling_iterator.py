@@ -2,10 +2,12 @@ import os
 import sqlite3
 
 import numpy as np
+from rdkit import Chem
+from rdkit import RDLogger
 import torch
 import torch.nn as nn
-from rdkit import Chem, RDLogger
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset
 
 
 class SamplingIterator(IterableDataset):
@@ -166,12 +168,13 @@ class SamplingIterator(IterableDataset):
         flat_rewards = torch.as_tensor(flat_rewards).reshape((len(flat_rewards), -1)).data.numpy().tolist()
         rewards = torch.as_tensor(rewards).data.numpy().tolist()
 
-        data = [[mols[i], rewards[i]] + flat_rewards[i] +
-                [cond_info[k][i].item() for k in sorted(cond_info.keys()) if k != 'encoding'] for i in range(len(trajs))
-               ]
+        data = ([
+            [mols[i], rewards[i]] + flat_rewards[i] +
+            [cond_info[k][i].item() for k in sorted(cond_info.keys()) if k != 'encoding'] for i in range(len(trajs))
+        ])
 
-        data_labels = ['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))
-                                     ] + [f'ci_{i}' for i in sorted(cond_info.keys()) if i != 'encoding']
+        data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
+                       [f'ci_{i}' for i in sorted(cond_info.keys()) if i != 'encoding'])
 
         self.log.insert_many(data, data_labels)
 
@@ -208,6 +211,6 @@ class SQLiteLog:
         if not self._has_results_table:
             self._make_results_table([type(i) for i in rows[0]], column_names)
         cur = self.db.cursor()
-        cur.executemany(f'insert into results values ({",".join("?"*len(rows[0]))})', rows)
+        cur.executemany(f'insert into results values ({",".join("?"*len(rows[0]))})', rows)  # nosec
         cur.close()
         self.db.commit()
