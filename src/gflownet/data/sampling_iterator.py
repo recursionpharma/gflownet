@@ -1,13 +1,11 @@
-import json
 import os
+import sqlite3
 
 import numpy as np
-from rdkit import Chem
-from rdkit import RDLogger
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.utils.data import IterableDataset
+from rdkit import Chem, RDLogger
+from torch.utils.data import Dataset, IterableDataset
 
 
 class SamplingIterator(IterableDataset):
@@ -55,6 +53,11 @@ class SamplingIterator(IterableDataset):
         self.device = device
         self.stream = stream
         self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
+        # don't want to initialize per-worker things just yet, such as the log the worker writes
+        # to. This must be done in __iter__, which is called by the DataLoader once this instance
+        # has been copied into a new python process.
+        self.log = SQLiteLog()
 
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
@@ -92,13 +95,16 @@ class SamplingIterator(IterableDataset):
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = (worker_info.id if worker_info is not None else 0)
+        # Now that we know we are in a worker instance, we can initialize per-worker things
         self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
         self.ctx.device = self.device
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
-            self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.csv'
+            self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.db'
+            self.log.connect(self.log_path)
+
         for idcs in self._idx_iterator():
-            num_offline = idcs.shape[0]  # This is in [1, self.offline_batch_size]
+            num_offline = idcs.shape[0]  # This is in [0, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
             cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
             is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
@@ -157,12 +163,51 @@ class SamplingIterator(IterableDataset):
             for i in range(len(trajs))
         ]
 
-        def un_tensor(v):
-            if isinstance(v, torch.Tensor):
-                return v.data.numpy().tolist()
+        flat_rewards = torch.as_tensor(flat_rewards).reshape((len(flat_rewards), -1)).data.numpy().tolist()
+        rewards = torch.as_tensor(rewards).data.numpy().tolist()
 
-        with open(self.log_path, 'a') as logfile:
-            flat_rewards = un_tensor(torch.as_tensor(flat_rewards))
-            for i in range(len(trajs)):
-                serializable_ci = {k: un_tensor(v[i]) for k, v in cond_info.items() if k != 'encoding'}
-                logfile.write(f'{mols[i]},{rewards[i]},{json.dumps(flat_rewards[i])},{json.dumps(serializable_ci)}\n')
+        data = [[mols[i], rewards[i]] + flat_rewards[i] +
+                [cond_info[k][i].item() for k in sorted(cond_info.keys()) if k != 'encoding'] for i in range(len(trajs))
+               ]
+
+        data_labels = ['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))
+                                     ] + [f'ci_{i}' for i in sorted(cond_info.keys()) if i != 'encoding']
+
+        self.log.insert_many(data, data_labels)
+
+
+class SQLiteLog:
+    def __init__(self):
+        """Creates a log instance, but does not connect it to any db."""
+        self.is_connected = False
+        self.db = None
+
+    def connect(self, db_path: str):
+        """Connects to db_path
+
+        Parameters
+        ----------
+        db_path: str
+            The sqlite3 database path. If it does not exist, it will be created.
+        """
+        self.db = sqlite3.connect(db_path)
+        cur = self.db.cursor()
+        self._has_results_table = len(
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='results'").fetchall())
+        cur.close()
+
+    def _make_results_table(self, types, names):
+        type_map = {str: 'text', float: 'real', int: 'real'}
+        col_str = ', '.join(f'{name} {type_map[t]}' for t, name in zip(types, names))
+        cur = self.db.cursor()
+        cur.execute(f'create table results ({col_str})')
+        self._has_results_table = True
+        cur.close()
+
+    def insert_many(self, rows, column_names):
+        if not self._has_results_table:
+            self._make_results_table([type(i) for i in rows[0]], column_names)
+        cur = self.db.cursor()
+        cur.executemany(f'insert into results values ({",".join("?"*len(rows[0]))})', rows)
+        cur.close()
+        self.db.commit()
