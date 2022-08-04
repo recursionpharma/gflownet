@@ -2,6 +2,7 @@ from typing import List, Tuple
 
 import networkx as nx
 import numpy as np
+from rdkit.Chem import Mol
 import rdkit.Chem as Chem
 from rdkit.Chem.rdchem import BondType
 from rdkit.Chem.rdchem import ChiralType
@@ -124,7 +125,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         type_idx = self.action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g):
+    def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
@@ -150,7 +151,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         """Batch Data instances"""
         return gd.Batch.from_data_list(graphs, follow_batch=['edge_index', 'non_edge_index'])
 
-    def mol_to_graph(self, mol):
+    def mol_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
         g = Graph()
         # Only set an attribute tag if it is not the default attribute
@@ -169,7 +170,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                        **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]})
         return g
 
-    def graph_to_mol(self, g):
+    def graph_to_mol(self, g: Graph) -> Mol:
         mp = Chem.RWMol()
         mp.BeginBatchEdit()
         for i in range(len(g.nodes)):
@@ -184,14 +185,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             if 'no_impl' in d:
                 a.SetNoImplicit(d['no_impl'])
             mp.AddAtom(a)
-        for i in g.edges:
-            d = g.edges[i]
-            mp.AddBond(i[0], i[1], d.get('type', BondType.SINGLE))
+        for e in g.edges:
+            d = g.edges[e]
+            mp.AddBond(e[0], e[1], d.get('type', BondType.SINGLE))
         mp.CommitBatchEdit()
         Chem.SanitizeMol(mp)
         return mp
 
-    def is_sane(self, g):
+    def is_sane(self, g: Graph) -> bool:
         try:
             mol = self.graph_to_mol(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None

@@ -1,4 +1,3 @@
-import time
 import copy
 from itertools import count
 from typing import Any, Dict, List, Tuple
@@ -15,9 +14,7 @@ from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
-from gflownet.utils.metrics import get_hypervolume, pareto_frontier, uniform_reference_points, r2_indicator_set, HSR_Calculator, Normalizer, compute_diverse_top_k, get_topk
 
-from gflownet.utils.multiprocessing_proxy import MPModelPlaceholder
 
 class TrajectoryBalanceModel(nn.Module):
     def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
@@ -29,12 +26,36 @@ class TrajectoryBalanceModel(nn.Module):
 
 class TrajectoryBalance:
     """
-    See, Trajectory Balance: Improved Credit Assignment in GFlowNets
-    Nikolay Malkin, Moksh Jain, Emmanuel Bengio, Chen Sun, Yoshua Bengio
-    https://arxiv.org/abs/2201.13259
     """
     def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
                  hps: Dict[str, Any], max_len=None, max_nodes=None):
+        """TB implementation, see
+        "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
+        Emmanuel Bengio, Chen Sun, Yoshua Bengio"
+        https://arxiv.org/abs/2201.13259
+
+        Hyperparameters used:
+        random_action_prob: float, probability of taking a uniform random action when sampling
+        illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
+        bootstrap_own_reward: bool, if True, uses the .reward batch data to predict rewards for sampled data
+        tb_epsilon: float, if not None, adds this epsilon in the numerator and denominator of the log-ratio
+        reward_loss_multiplier: float, multiplying constant for the bootstrap loss.
+
+        Parameters
+        ----------
+        env: GraphBuildingEnv
+            A graph environment.
+        ctx: GraphBuildingEnvContext
+            A context.
+        rng: np.random.RandomState
+            rng used to take random actions
+        hps: Dict[str, Any]
+            Hyperparameter dictionary, see above for used keys.
+        max_len: int
+            If not None, ends trajectories of more than max_len steps.
+        max_nodes: int
+            If not None, ends trajectories of graphs with more than max_nodes steps (illegal action).
+        """
         self.ctx = ctx
         self.env = env
         self.rng = rng
@@ -93,11 +114,7 @@ class TrajectoryBalance:
         """
         ctx = self.ctx
         env = self.env
-        # dev = self.ctx.device
-        if isinstance(model, MPModelPlaceholder):
-            dev = self.ctx.device
-        else:
-            dev = next(model.parameters()).device
+        dev = self.ctx.device
         cond_info = cond_info.to(dev)
         logZ_pred = model.logZ(cond_info)
         # This will be returned as training data
@@ -117,7 +134,7 @@ class TrajectoryBalance:
         mol_too_big = 0
         mol_not_sane = 0
         invalid_act = 0
-        logprob_of_illegal = []
+        logprob_of_illegal: List[Tensor] = []
 
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         if self.epsilon is not None:
@@ -142,7 +159,7 @@ class TrajectoryBalance:
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
                 data[i]['traj'].append((graphs[i], graph_actions[j]))
                 # Check if we're done
-                if graph_actions[j].action is GraphActionType.Stop:
+                if graph_actions[j].action is GraphActionType.Stop or (self.max_len and t == self.max_len - 1):
                     done[i] = True
                     if self.sanitize_samples and not ctx.is_sane(graphs[i]):
                         # check if the graph is sane (e.g. RDKit can
@@ -185,7 +202,7 @@ class TrajectoryBalance:
             data[i]['logZ'] = logZ_pred[i].item()
             data[i]['fwd_logprob'] = sum(fwd_logprob[i])
             data[i]['bck_logprob'] = sum(bck_logprob[i])
-            if self.bootstrap_own_reward:
+            if self.bootstrap_own_reward and False:  # TODO: verify
                 if not data[i]['is_valid']:
                     logprob_of_illegal.append(data[i]['fwd_logprob'].item())
                 # If we are bootstrapping, we can report the theoretical loss as well
@@ -223,7 +240,7 @@ class TrajectoryBalance:
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         rewards: Tensor
             The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
-        flat_rewards: Numpy array
+        flat_rewards: np.array
             The untransformed reward for each trajectory. Shape (N, number of objectives)
         Returns
         -------
@@ -252,8 +269,7 @@ class TrajectoryBalance:
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
 
-    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0, train=False, track_online_metrics=False,
-                             hsri_epsilon=0.3):
+    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
         """Compute the losses over trajectories contained in the batch
 
         Parameters
@@ -297,6 +313,7 @@ class TrajectoryBalance:
         # Compute log numerator and denominator of the TB objective
         numerator = Z + traj_log_prob
         denominator = Rp + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+
         if self.epsilon is not None:
             # Numerical stability epsilon
             epsilon = torch.tensor([self.epsilon], device=dev).float()
@@ -310,6 +327,7 @@ class TrajectoryBalance:
             # logprobablity of this trajetcory is it should be smaller
             # (thus the `numerator - 1`). Why 1? Intuition?
             denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
+
         if self.tb_loss_is_mae:
             traj_losses = abs(numerator - denominator)
         elif self.tb_loss_is_huber:
@@ -332,68 +350,16 @@ class TrajectoryBalance:
             reward_loss = 0
 
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
-        if len(traj_losses[batch.num_offline:]) == 0:
-            online_loss = 0
-        else:
-            online_loss = traj_losses[batch.num_offline:].mean()
-        target_min = batch.flat_rewards.min(0).copy()
-        target_range = batch.flat_rewards.max(axis=0).copy() - target_min
-        hypercube_transform = Normalizer(
-            loc=target_min,
-            scale=target_range,
-        )
-        info = {}
-        if train:
-            offline_info = {
+        info = {
             'offline_loss': traj_losses[:batch.num_offline].mean(),
-            'online_loss': online_loss,
+            'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
             'reward_loss': reward_loss,
             'invalid_trajectories': invalid_mask.mean() * 2,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             'logZ': Z.mean(),
-            }
-            info.update(offline_info)
-        if track_online_metrics or not train:
-            flat_rewards = batch.flat_rewards[batch.num_offline:].copy()
-            gfn_pareto = pareto_frontier(flat_rewards)
-            normed_gfn_pareto = hypercube_transform(gfn_pareto)
-            hypervolume_with_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=True)
-            hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=False)
-            unnorm_hypervolume_with_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
-            unnorm_hypervolume_wo_zero_ref = get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
-            # try:
-            #     reference_points = uniform_reference_points(flat_rewards.shape[-1], p=100)
-            #     r2_dist = r2_indicator_set(reference_points, flat_rewards, np.ones(flat_rewards.shape[-1]))
-            # except:
-            #     r2_dist = 0
-            upper = np.zeros(normed_gfn_pareto.shape[-1]) + hsri_epsilon
-            lower = np.ones(normed_gfn_pareto.shape[-1]) * -1 - hsri_epsilon
-            hsr_indicator = HSR_Calculator(lower, upper)
-            try:
-                hsri_w_pareto, x = hsr_indicator.calculate_hsr(-1 * gfn_pareto)
-            except:
-                hsri_w_pareto = 0
-            try:
-                hsri_on_flat, _ =  hsr_indicator.calculate_hsr(-1 * flat_rewards)
-            except:
-                hsri_on_flat = 0
-            #topk_rewards = get_topk(batch.rewards, 10)
-            diverse_topk = 0
-            online_info = {
-                'HV with zero ref': hypervolume_with_zero_ref,
-                'HV w/o zero ref': hypervolume_wo_zero_ref,
-                # 'r2_dist': r2_dist,
-                'Unnormalized HV with zero ref':unnorm_hypervolume_with_zero_ref,
-                'Unnormalized HV w/o zero ref':unnorm_hypervolume_wo_zero_ref,
-                'hsri_with_pareto': hsri_w_pareto,
-                'hsri_on_flat_rew': hsri_on_flat,
-                #'top_k_diversity': diverse_topk,
-                #'top_k_rewards': topk_rewards
-            }
-            info.update(online_info)
-            
-            
+        }
+
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
         return loss, info
