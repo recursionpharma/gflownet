@@ -134,7 +134,7 @@ class TrajectoryBalance:
         mol_too_big = 0
         mol_not_sane = 0
         invalid_act = 0
-        logprob_of_illegal = []
+        logprob_of_illegal: List[Tensor] = []
 
         illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
         if self.epsilon is not None:
@@ -159,7 +159,7 @@ class TrajectoryBalance:
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
                 data[i]['traj'].append((graphs[i], graph_actions[j]))
                 # Check if we're done
-                if graph_actions[j].action is GraphActionType.Stop:
+                if graph_actions[j].action is GraphActionType.Stop or t == self.max_len - 1:
                     done[i] = True
                     if self.sanitize_samples and not ctx.is_sane(graphs[i]):
                         # check if the graph is sane (e.g. RDKit can
@@ -202,7 +202,7 @@ class TrajectoryBalance:
             data[i]['logZ'] = logZ_pred[i].item()
             data[i]['fwd_logprob'] = sum(fwd_logprob[i])
             data[i]['bck_logprob'] = sum(bck_logprob[i])
-            if self.bootstrap_own_reward:
+            if self.bootstrap_own_reward and False:  # TODO: verify
                 if not data[i]['is_valid']:
                     logprob_of_illegal.append(data[i]['fwd_logprob'].item())
                 # If we are bootstrapping, we can report the theoretical loss as well
@@ -349,7 +349,7 @@ class TrajectoryBalance:
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
         info = {
             'offline_loss': traj_losses[:batch.num_offline].mean(),
-            'online_loss': traj_losses[batch.num_offline:].mean(),
+            'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
             'reward_loss': reward_loss,
             'invalid_trajectories': invalid_mask.mean() * 2,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
