@@ -104,7 +104,6 @@ class SamplingIterator(IterableDataset):
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.db'
             self.log.connect(self.log_path)
-
         for idcs in self._idx_iterator():
             num_offline = idcs.shape[0]  # This is in [0, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
