@@ -235,8 +235,7 @@ def HSRindicator(A, low, up, managedup=False):
 
     # if u is not strongly dominated by l or A is the empty set
     if (up <= low).any():
-        raise ValueError("The lower reference point does not strongly"
-                         "dominate the upper reference point!")
+        raise ValueError("The lower reference point does not strongly dominate the upper reference point!")
 
     if len(A) == 0:
         return 0, x
