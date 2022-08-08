@@ -1,7 +1,8 @@
 #
 # calculation of synthetic accessibility score as described in:
 #
-# Estimation of Synthetic Accessibility Score of Drug-like Molecules based on Molecular Complexity and Fragment Contributions
+#   Estimation of Synthetic Accessibility Score of Drug-like Molecules based on
+#   Molecular Complexity and Fragment Contributions
 # Peter Ertl and Ansgar Schuffenhauer
 # Journal of Cheminformatics 1:8 (2009)
 # http://www.jcheminf.com/content/1/1/8
@@ -16,10 +17,9 @@
 # peter ertl & greg landrum, september 2013
 #
 
-from collections import defaultdict
 import math
 import os.path as op
-import pickle
+import pickle  # nosec
 
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
@@ -33,7 +33,7 @@ def readFragmentScores(name='fpscores'):
     # generate the full path filename:
     if name == "fpscores":
         name = op.join(op.dirname(__file__), name)
-    data = pickle.load(gzip.open('%s.pkl.gz' % name))
+    data = pickle.load(gzip.open('%s.pkl.gz' % name))  # nosec
     outDict = {}
     for i in data:
         for j in range(1, len(i)):

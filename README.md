@@ -37,10 +37,10 @@ A scalar reward is obtained by taking the  weighted sum of the objectives, with 
 
 #### QM9
 See for example the QM9 implementation:
-1. 4 objectives: [Gap, logP, MolWT, QED](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L118-L139)
-2. different sampling strategies for temperature sampling: [Uniform, Dirac, Gamma](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L162-L168)
-3. [preference conditioning](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L179)
-4. 4 different pareto metrics: [R2 distance](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L66), [Hypervolume metric](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L24), [HSR Indicator](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L263), [top k rewards](https://github.com/recursionpharma/gflownet/blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L329)
+1. 4 objectives: [Gap, logP, MolWT, QED](../../blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L118-L139)
+2. different sampling strategies for temperature sampling: [Uniform, Dirac, Gamma](../../blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L162-L168)
+3. [preference conditioning](../../blob/sharath-mol-expts/src/gflownet/tasks/qm9/qm9.py#L179)
+4. 4 different pareto metrics: [R2 distance](../../blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L66), [Hypervolume metric](../../blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L24), [HSR Indicator](../../blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L263), [top k rewards](../../blob/sharath-mol-expts/src/gflownet/utils/metrics.py#L329)
 
 ### PIP
 
