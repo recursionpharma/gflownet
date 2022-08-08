@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Dict, List, NewType, Optional, Tuple
+from typing import Any, Dict, List, NewType, Optional, Tuple, Callable
 
 from rdkit.Chem.rdchem import Mol as RDMol
 import torch
@@ -63,7 +63,7 @@ class GFNTask:
         """
         raise NotImplementedError()
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         """Compute the flat rewards of mols according the the tasks' proxies
 
         Parameters
@@ -72,8 +72,8 @@ class GFNTask:
             A list of RDKit molecules.
         Returns
         -------
-        reward: RewardScalar
-            A 1d tensor, a scalar reward for each molecule.
+        reward: FlatRewards
+            A 2d tensor, a vector of scalar reward for valid each molecule.
         is_valid: Tensor
             A 1d tensor, a boolean indicating whether the molecule is valid.
         """
@@ -114,7 +114,11 @@ class GFNTrainer:
         self.offline_ratio = 0.5
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
+        # If True, print messages during training
         self.verbose = False
+        # These hooks allow us to compute extra quantities when sampling data
+        self.sampling_hooks: List[Callable] = []
+        
         self.setup()
 
     def default_hps(self) -> Dict[str, Any]:
@@ -138,6 +142,8 @@ class GFNTrainer:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
                                     ratio=self.offline_ratio, log_dir=self.hps['log_dir'])
+        for hook in self.sampling_hooks:
+            iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
@@ -151,6 +157,8 @@ class GFNTrainer:
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
         loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
         self.step(loss)
+        if hasattr(batch, 'extra_info'):
+            info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
 
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:

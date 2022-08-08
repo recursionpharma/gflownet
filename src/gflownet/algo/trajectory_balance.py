@@ -229,7 +229,7 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards, flat_rewards, mols):
+    def construct_batch(self, trajs, cond_info, rewards):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
@@ -240,8 +240,6 @@ class TrajectoryBalance:
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         rewards: Tensor
             The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
-        flat_rewards: np.array
-            The untransformed reward for each trajectory. Shape (N, number of objectives)
         Returns
         -------
         batch: gd.Batch
@@ -264,8 +262,6 @@ class TrajectoryBalance:
         batch.actions = torch.tensor(actions)
         batch.rewards = rewards
         batch.cond_info = cond_info
-        batch.flat_rewards = flat_rewards
-        batch.mols = mols
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
 
@@ -307,7 +303,8 @@ class TrajectoryBalance:
         # The log prob of each backward action
         log_p_B = (1 / batch.num_backward).log()
         # Take log rewards, and clip
-        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev)).squeeze(1)
+        assert rewards.ndim == 1
+        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev))
         # This is the log probability of each trajectory
         traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
         # Compute log numerator and denominator of the TB objective
@@ -351,10 +348,10 @@ class TrajectoryBalance:
 
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
         info = {
-            'offline_loss': traj_losses[:batch.num_offline].mean(),
+            'offline_loss': traj_losses[:batch.num_offline].mean() if batch.num_offline > 0 else 0,
             'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
             'reward_loss': reward_loss,
-            'invalid_trajectories': invalid_mask.mean() * 2,
+            'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             'logZ': Z.mean(),

@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from typing import Callable, List
 
 import numpy as np
 from rdkit import Chem
@@ -60,6 +61,10 @@ class SamplingIterator(IterableDataset):
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
         # has been copied into a new python process.
         self.log = SQLiteLog()
+        self.log_hooks: List[Callable] = []
+
+    def add_log_hook(self, hook: Callable):
+        self.log_hooks.append(hook)
 
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
@@ -138,7 +143,7 @@ class SamplingIterator(IterableDataset):
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    pred_reward = np.zeros((self.online_batch_size, preds.shape[1]))
+                    pred_reward = torch.zeros((self.online_batch_size, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
                     # if preds.shape[0] > 0:
                     #     for i in range(self.number_of_objectives):
@@ -149,18 +154,25 @@ class SamplingIterator(IterableDataset):
                     # Override the is_valid key in case the task made some mols invalid
                     for i in range(self.online_batch_size):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
+            flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
             # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards, np.vstack(flat_rewards), mols)
+            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
             batch.num_offline = num_offline
             batch.num_online = self.online_batch_size
-            # TODO: There is a smarter way to do this
-            # batch.pin_memory()
+            batch.flat_rewards = flat_rewards
+            batch.mols = mols
+
             if self.online_batch_size > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
+            if self.online_batch_size > 0:
+                extra_info = {}
+                for hook in self.log_hooks:
+                    extra_info.update(hook(trajs, rewards, flat_rewards, cond_info))
+                batch.extra_info = extra_info
             yield batch
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
@@ -169,17 +181,15 @@ class SamplingIterator(IterableDataset):
             for i in range(len(trajs))
         ]
 
-        flat_rewards = torch.as_tensor(flat_rewards).reshape((len(flat_rewards), -1)).data.numpy().tolist()
-        rewards = torch.as_tensor(rewards).data.numpy().tolist()
+        flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
+        rewards = rewards.data.numpy().tolist()
+        preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
+        logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences']]
 
-        data = ([
-            [mols[i], rewards[i]] + flat_rewards[i] +
-            [cond_info[k][i].item() for k in sorted(cond_info.keys()) if k != 'encoding'] for i in range(len(trajs))
-        ])
-
+        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] +
+                 [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
         data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
-                       [f'ci_{i}' for i in sorted(cond_info.keys()) if i != 'encoding'])
-
+                       [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
         self.log.insert_many(data, data_labels)
 
 

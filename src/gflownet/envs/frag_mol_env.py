@@ -209,6 +209,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 atom.SetNumExplicitHs(nh - 1)
 
         list(map(_pop_H, bond_atoms))
+        Chem.SanitizeMol(mol)
         return mol
 
     def is_sane(self, g: Graph) -> bool:
