@@ -2,20 +2,24 @@ import ast
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
+from rdkit.Chem import Descriptors
+from rdkit.Chem import QED
+from rdkit.Chem.rdchem import Mol as RDMol
 import scipy.stats as stats
 import torch
-import torch.nn as nn
-import torch_geometric.data as gd
-from rdkit.Chem import QED, Descriptors
-from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
+import torch.nn as nn
 from torch.utils.data import Dataset
+import torch_geometric.data as gd
 
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer
-from gflownet.train import FlatRewards, GFNTask, RewardScalar
-from gflownet.utils import sascore, metrics
+from gflownet.train import FlatRewards
+from gflownet.train import GFNTask
+from gflownet.train import RewardScalar
+from gflownet.utils import metrics
+from gflownet.utils import sascore
 from gflownet.utils.transforms import thermometer
 
 
@@ -64,7 +68,7 @@ class SEHMOOTask(GFNTask):
             m = Dirichlet(torch.FloatTensor([1.5] * 4))
             preferences = m.sample([n])
         else:
-            a = np.random.dirichlet([1]*4, n)
+            a = np.random.dirichlet([1] * 4, n)
             b = np.random.exponential(1, n)[:, None]
             preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
         encoding = torch.cat([beta_enc, preferences], 1)

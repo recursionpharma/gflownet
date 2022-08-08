@@ -1,12 +1,15 @@
-import math
 from copy import deepcopy
+import math
 
-import numpy as np
-import torch
-from botorch.utils.multi_objective import pareto, infer_reference_point
+from botorch.utils.multi_objective import infer_reference_point
+from botorch.utils.multi_objective import pareto
 from botorch.utils.multi_objective.hypervolume import Hypervolume
-from cvxopt import solvers, matrix
-from rdkit import Chem, DataStructs
+from cvxopt import matrix
+from cvxopt import solvers
+import numpy as np
+from rdkit import Chem
+from rdkit import DataStructs
+import torch
 
 
 def pareto_frontier(obj_vals, maximize=True):

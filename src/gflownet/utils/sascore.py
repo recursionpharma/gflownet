@@ -16,15 +16,13 @@
 # peter ertl & greg landrum, september 2013
 #
 
+from collections import defaultdict
+import math
+import os.path as op
+import pickle
 
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
-import pickle
-
-import math
-from collections import defaultdict
-
-import os.path as op
 
 _fscores = None
 
@@ -55,8 +53,7 @@ def calculateScore(m):
 
     # fragment score
     try:
-        fp = rdMolDescriptors.GetMorganFingerprint(m,
-                                                   2)  # <- 2 is the *radius* of the circular fingerprint
+        fp = rdMolDescriptors.GetMorganFingerprint(m, 2)  # <- 2 is the *radius* of the circular fingerprint
     except RuntimeError:
         return 9.99
     fps = fp.GetNonzeroElements()
@@ -141,8 +138,7 @@ if __name__ == '__main__':
     processMols(suppl)
     t4 = time.time()
 
-    print('Reading took %.2f seconds. Calculating took %.2f seconds' % ((t2 - t1), (t4 - t3)),
-          file=sys.stderr)
+    print('Reading took %.2f seconds. Calculating took %.2f seconds' % ((t2 - t1), (t4 - t3)), file=sys.stderr)
 
 #
 #  Copyright (c) 2013, Novartis Institutes for BioMedical Research Inc.

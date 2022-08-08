@@ -32,7 +32,7 @@ The GNN model can be trained on a mix of existing data (offline) and self-genera
 - [`train.py`](gflownet/train.py), general GFlowNet training setup.
 
 ### Multi-Objective Optimization
-This repo also supports multi-objective GFlowNet training. The core idea is to condition a GFlowNet on a set of preferences and temperature. The preferences signify the relative importance of each objective, and the inverse temperature governs the peakyness and flatness of the reward distribution.  
+This repo also supports multi-objective GFlowNet training. The core idea is to condition a GFlowNet on a set of preferences and temperature. The preferences signify the relative importance of each objective, and the inverse temperature governs the peakyness and flatness of the reward distribution.
 A scalar reward is obtained by taking the  weighted sum of the objectives, with the preferences as weights, then raising to the inverse temperature. We train this conditional GFlowNet to generate trajectories from which we can sample candidates, which in principle can generate a Pareto front.
 
 #### QM9

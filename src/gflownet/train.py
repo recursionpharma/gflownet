@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Dict, List, NewType, Optional, Tuple, Callable
+from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol
 import torch
@@ -118,7 +118,7 @@ class GFNTrainer:
         self.verbose = False
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
-        
+
         self.setup()
 
     def default_hps(self) -> Dict[str, Any]:
