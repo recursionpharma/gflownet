@@ -60,10 +60,10 @@ class SEHTask(GFNTask):
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
 
-    def _flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
+    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
 
-    def _inverse_flat_reward_transform(self, rp):
+    def inverse_flat_reward_transform(self, rp):
         return rp * 8
 
     def _load_task_models(self):
@@ -100,7 +100,7 @@ class SEHTask(GFNTask):
         batch.to(self.device)
         preds = self.models['seh'](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 0
-        preds = self._flat_reward_transform(preds).clip(1e-4, 100)
+        preds = self.flat_reward_transform(preds).clip(1e-4, 100)
         return RewardScalar(preds), is_valid
 
 
