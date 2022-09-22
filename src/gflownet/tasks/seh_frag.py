@@ -21,29 +21,7 @@ from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
 from gflownet.train import GFNTrainer
 from gflownet.train import RewardScalar
-
-
-def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
-    """Thermometer encoding of a scalar quantity.
-
-    Parameters
-    ----------
-    v: Tensor
-        Value(s) to encode. Can be any shape
-    n_bins: int
-        The number of dimensions to encode the values into
-    vmin: float
-        The smallest value, below which the encoding is equal to torch.zeros(n_bins)
-    vmax: float
-        The largest value, beyond which the encoding is equal to torch.ones(n_bins)
-    Returns
-    -------
-    encoding: Tensor
-        The encoded values, shape: `v.shape + (n_bins,)`
-    """
-    bins = torch.linspace(vmin, vmax, n_bins)
-    gap = bins[1] - bins[0]
-    return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
+from gflownet.utils.transforms import thermometer
 
 
 class SEHTask(GFNTask):
@@ -51,6 +29,9 @@ class SEHTask(GFNTask):
     Soluble Epoxide Hydrolases.
 
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
+
+    This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
+    objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
     def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
@@ -91,17 +72,17 @@ class SEHTask(GFNTask):
             flat_reward = torch.tensor(flat_reward)
         return flat_reward**cond_info['beta']
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return RewardScalar(torch.zeros((0,))), is_valid
+            return FlatRewards(torch.zeros((0,))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['seh'](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 0
-        preds = self.flat_reward_transform(preds).clip(1e-4, 100)
-        return RewardScalar(preds), is_valid
+        preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1, 1))
+        return FlatRewards(preds), is_valid
 
 
 class SEHFragTrainer(GFNTrainer):
@@ -127,6 +108,7 @@ class SEHFragTrainer(GFNTrainer):
             'clip_grad_param': 10,
             'random_action_prob': 0.,
             'sampling_tau': 0.,
+            'num_cond_dim': 32,
         }
 
     def setup(self):
@@ -134,7 +116,7 @@ class SEHFragTrainer(GFNTrainer):
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=32)
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=hps['num_cond_dim'])
         self.training_data = []
         self.test_data = []
         self.offline_ratio = 0

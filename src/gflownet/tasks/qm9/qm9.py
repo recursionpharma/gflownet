@@ -23,12 +23,7 @@ from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
 from gflownet.train import GFNTrainer
 from gflownet.train import RewardScalar
-
-
-def thermometer(v: Tensor, n_bins=50, vmin=0, vmax=1) -> Tensor:
-    bins = torch.linspace(vmin, vmax, n_bins)
-    gap = bins[1] - bins[0]
-    return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
+from gflownet.utils.transforms import thermometer
 
 
 class QM9GapTask(GFNTask):
@@ -89,19 +84,19 @@ class QM9GapTask(GFNTask):
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return RewardScalar(flat_reward**cond_info['beta'])
+        return RewardScalar(flat_reward.flatten()**cond_info['beta'])
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[RewardScalar, Tensor]:
+    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return RewardScalar(torch.zeros((0,))), is_valid
+            return FlatRewards(torch.zeros((0, 1))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['mxmnet_gap'](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
         preds[preds.isnan()] = 1
-        preds = self.flat_reward_transform(preds).clip(1e-4, 2)
-        return RewardScalar(preds), is_valid
+        preds = self.flat_reward_transform(preds).clip(1e-4, 2).reshape((-1, 1))
+        return FlatRewards(preds), is_valid
 
 
 class QM9GapTrainer(GFNTrainer):
