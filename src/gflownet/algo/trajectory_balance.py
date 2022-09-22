@@ -159,7 +159,7 @@ class TrajectoryBalance:
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
                 data[i]['traj'].append((graphs[i], graph_actions[j]))
                 # Check if we're done
-                if graph_actions[j].action is GraphActionType.Stop or t == self.max_len - 1:
+                if graph_actions[j].action is GraphActionType.Stop or (self.max_len and t == self.max_len - 1):
                     done[i] = True
                     if self.sanitize_samples and not ctx.is_sane(graphs[i]):
                         # check if the graph is sane (e.g. RDKit can
