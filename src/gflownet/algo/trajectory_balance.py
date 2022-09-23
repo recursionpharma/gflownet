@@ -339,7 +339,7 @@ class TrajectoryBalance:
         if self.reward_normalize_losses:
             # multiply each loss by how important it is, using R as the importance factor
             # factor = Rp.exp() / Rp.exp().sum()
-            factor = -Rp.min()+Rp+1
+            factor = -Rp.min() + Rp + 1
             factor = factor / factor.sum()
             assert factor.shape == traj_losses.shape
             # * num_trajs because we're doing a convex combination, and a .mean() later, which would

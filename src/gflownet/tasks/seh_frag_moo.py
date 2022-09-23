@@ -188,7 +188,6 @@ def main():
         'num_data_loader_workers': 12,
         'temperature_dist_params': '(1, 192)',
         'global_batch_size': 256,
-        #'preference_distribution': 'const',
     }
     trial = SEHMOOFragTrainer(hps, torch.device('cuda'))
     trial.verbose = True
