@@ -73,6 +73,7 @@ class TrajectoryBalance:
         self.tb_loss_is_huber = False
         self.mask_invalid_rewards = False
         self.length_normalize_losses = False
+        self.reward_normalize_losses = False
         self.sample_temp = 1
 
     def _corrupt_actions(self, actions: List[Tuple[int, int, int]], cat: GraphActionCategorical):
@@ -240,7 +241,6 @@ class TrajectoryBalance:
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         rewards: Tensor
             The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
-
         Returns
         -------
         batch: gd.Batch
@@ -304,6 +304,7 @@ class TrajectoryBalance:
         # The log prob of each backward action
         log_p_B = (1 / batch.num_backward).log()
         # Take log rewards, and clip
+        assert rewards.ndim == 1
         Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev))
         # This is the log probability of each trajectory
         traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
@@ -335,6 +336,15 @@ class TrajectoryBalance:
         # Normalize losses by trajectory length
         if self.length_normalize_losses:
             traj_losses = traj_losses / batch.traj_lens
+        if self.reward_normalize_losses:
+            # multiply each loss by how important it is, using R as the importance factor
+            # factor = Rp.exp() / Rp.exp().sum()
+            factor = -Rp.min() + Rp + 1
+            factor = factor / factor.sum()
+            assert factor.shape == traj_losses.shape
+            # * num_trajs because we're doing a convex combination, and a .mean() later, which would
+            # undercount (by 2N) the contribution of each loss
+            traj_losses = factor * traj_losses * num_trajs
 
         if self.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(rewards)
@@ -348,10 +358,10 @@ class TrajectoryBalance:
 
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
         info = {
-            'offline_loss': traj_losses[:batch.num_offline].mean(),
+            'offline_loss': traj_losses[:batch.num_offline].mean() if batch.num_offline > 0 else 0,
             'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
             'reward_loss': reward_loss,
-            'invalid_trajectories': invalid_mask.mean() * 2,
+            'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             'logZ': Z.mean(),
