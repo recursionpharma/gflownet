@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from typing import Callable, List
 
 import numpy as np
 from rdkit import Chem
@@ -60,6 +61,10 @@ class SamplingIterator(IterableDataset):
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
         # has been copied into a new python process.
         self.log = SQLiteLog()
+        self.log_hooks: List[Callable] = []
+
+    def add_log_hook(self, hook: Callable):
+        self.log_hooks.append(hook)
 
     def _idx_iterator(self):
         RDLogger.DisableLog('rdApp.*')
@@ -104,9 +109,11 @@ class SamplingIterator(IterableDataset):
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.db'
             self.log.connect(self.log_path)
+
         for idcs in self._idx_iterator():
             num_offline = idcs.shape[0]  # This is in [0, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
+
             cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
             is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
 
@@ -130,20 +137,24 @@ class SamplingIterator(IterableDataset):
                     valid_idcs = torch.tensor([
                         i + num_offline for i in range(self.online_batch_size) if trajs[i + num_offline]['is_valid']
                     ]).long()
-                    pred_reward = torch.zeros((self.online_batch_size))
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
+                    pred_reward = torch.zeros((self.online_batch_size, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
+                    # if preds.shape[0] > 0:
+                    #     for i in range(self.number_of_objectives):
+                    #         pred_reward[valid_idcs - num_offline, i] = preds[range(preds.shape[0]), i]
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)
                     # Override the is_valid key in case the task made some mols invalid
                     for i in range(self.online_batch_size):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
+            flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
             rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
@@ -151,11 +162,17 @@ class SamplingIterator(IterableDataset):
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
             batch.num_offline = num_offline
             batch.num_online = self.online_batch_size
-            # TODO: There is a smarter way to do this
-            # batch.pin_memory()
+            batch.flat_rewards = flat_rewards
+            batch.mols = mols
+
             if self.online_batch_size > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
+            if self.online_batch_size > 0:
+                extra_info = {}
+                for hook in self.log_hooks:
+                    extra_info.update(hook(trajs, rewards, flat_rewards, cond_info))
+                batch.extra_info = extra_info
             yield batch
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
@@ -164,25 +181,24 @@ class SamplingIterator(IterableDataset):
             for i in range(len(trajs))
         ]
 
-        flat_rewards = torch.as_tensor(flat_rewards).reshape((len(flat_rewards), -1)).data.numpy().tolist()
-        rewards = torch.as_tensor(rewards).data.numpy().tolist()
+        flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
+        rewards = rewards.data.numpy().tolist()
+        preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
+        logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences']]
 
-        data = ([
-            [mols[i], rewards[i]] + flat_rewards[i] +
-            [cond_info[k][i].item() for k in sorted(cond_info.keys()) if k != 'encoding'] for i in range(len(trajs))
-        ])
-
+        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] +
+                 [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
         data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
-                       [f'ci_{i}' for i in sorted(cond_info.keys()) if i != 'encoding'])
-
+                       [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
         self.log.insert_many(data, data_labels)
 
 
 class SQLiteLog:
-    def __init__(self):
+    def __init__(self, timeout=300):
         """Creates a log instance, but does not connect it to any db."""
         self.is_connected = False
         self.db = None
+        self.timeout = timeout
 
     def connect(self, db_path: str):
         """Connects to db_path
@@ -192,7 +208,7 @@ class SQLiteLog:
         db_path: str
             The sqlite3 database path. If it does not exist, it will be created.
         """
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, timeout=self.timeout)
         cur = self.db.cursor()
         self._has_results_table = len(
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='results'").fetchall())

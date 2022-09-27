@@ -23,7 +23,7 @@ coverage[toml]==6.4
     # via pytest-cov
 distlib==0.3.4
     # via virtualenv
-dparse==0.5.1
+dparse==0.5.2
     # via safety
 filelock==3.7.0
     # via virtualenv
