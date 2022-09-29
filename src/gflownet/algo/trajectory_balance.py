@@ -1,6 +1,4 @@
-import copy
-from itertools import count
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import torch
@@ -9,9 +7,9 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from torch_scatter import scatter
 
+from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.graph_building_env import GraphActionCategorical
-from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
@@ -61,10 +59,8 @@ class TrajectoryBalance:
         self.rng = rng
         self.max_len = max_len
         self.max_nodes = max_nodes
-        self.random_action_prob = hps['random_action_prob']
         self.illegal_action_logreward = hps['illegal_action_logreward']
         self.bootstrap_own_reward = hps['bootstrap_own_reward']
-        self.sanitize_samples = True
         self.epsilon = hps['tb_epsilon']
         self.reward_loss_multiplier = hps['reward_loss_multiplier']
         # Experimental flags
@@ -75,20 +71,8 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
-
-    def _corrupt_actions(self, actions: List[Tuple[int, int, int]], cat: GraphActionCategorical):
-        """Sample from the uniform policy with probability `self.random_action_prob`"""
-        # Should this be a method of GraphActionCategorical?
-        if self.random_action_prob <= 0:
-            return
-        corrupted, = (self.rng.uniform(size=len(actions)) < self.random_action_prob).nonzero()
-        for i in corrupted:
-            n_in_batch = [int((b == i).sum()) for b in cat.batch]
-            n_each = np.array([float(logit.shape[1]) * nb for logit, nb in zip(cat.logits, n_in_batch)])
-            which = self.rng.choice(len(n_each), p=n_each / n_each.sum())
-            row = self.rng.choice(n_in_batch[which])
-            col = self.rng.choice(cat.logits[which].shape[1])
-            actions[i] = (which, row, col)
+        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
+        self.graph_sampler.random_action_prob = hps['random_action_prob']
 
     def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
         """Generate trajectories by sampling a model
@@ -113,106 +97,12 @@ class TrajectoryBalance:
            - loss: predicted loss (if bootstrapping)
            - is_valid: is the generated graph valid according to the env & ctx
         """
-        ctx = self.ctx
-        env = self.env
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev)
         logZ_pred = model.logZ(cond_info)
-        # This will be returned as training data
-        data = [{'traj': [], 'reward_pred': None, 'is_valid': True} for i in range(n)]
-        # Let's also keep track of trajectory statistics according to the model
-        zero = torch.tensor([0], device=dev).float()
-        fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
-        bck_logprob: List[List[Tensor]] = [[zero] for i in range(n)]  # zero in case there is a single invalid action
-
-        graphs = [env.new() for i in range(n)]
-        done = [False] * n
-
-        def not_done(lst):
-            return [e for i, e in enumerate(lst) if not done[i]]
-
-        # TODO report these stats:
-        mol_too_big = 0
-        mol_not_sane = 0
-        invalid_act = 0
-        logprob_of_illegal: List[Tensor] = []
-
-        illegal_action_logreward = torch.tensor([self.illegal_action_logreward], device=dev)
-        if self.epsilon is not None:
-            epsilon = torch.tensor([self.epsilon], device=dev).float()
-        for t in (range(self.max_len) if self.max_len is not None else count(0)):
-            # Construct graphs for the trajectories that aren't yet done
-            torch_graphs = [ctx.graph_to_Data(i) for i in not_done(graphs)]
-            not_done_mask = torch.tensor(done, device=dev).logical_not()
-            # Forward pass to get GraphActionCategorical
-            fwd_cat, log_reward_preds = model(ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
-            if self.sample_temp != 1:
-                sample_cat = copy.copy(fwd_cat)
-                sample_cat.logits = [i / self.sample_temp for i in fwd_cat.logits]
-                actions = sample_cat.sample()
-            else:
-                actions = fwd_cat.sample()
-            self._corrupt_actions(actions, fwd_cat)
-            graph_actions = [ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
-            log_probs = fwd_cat.log_prob(actions)
-            for i, j in zip(not_done(range(n)), range(n)):
-                # Step each trajectory, and accumulate statistics
-                fwd_logprob[i].append(log_probs[j].unsqueeze(0))
-                data[i]['traj'].append((graphs[i], graph_actions[j]))
-                # Check if we're done
-                if graph_actions[j].action is GraphActionType.Stop or (self.max_len and t == self.max_len - 1):
-                    done[i] = True
-                    if self.sanitize_samples and not ctx.is_sane(graphs[i]):
-                        # check if the graph is sane (e.g. RDKit can
-                        # construct a molecule from it) otherwise
-                        # treat the done action as illegal
-                        mol_not_sane += 1
-                        data[i]['reward_pred'] = illegal_action_logreward.exp()
-                        data[i]['is_valid'] = False
-                    elif self.bootstrap_own_reward:
-                        # if we're bootstrapping, extract reward prediction
-                        data[i]['reward_pred'] = log_reward_preds[j].detach().exp()
-                else:  # If not done, try to step the environment
-                    gp = graphs[i]
-                    try:
-                        # env.step can raise AssertionError if the action is illegal
-                        gp = env.step(graphs[i], graph_actions[j])
-                        if self.max_nodes is not None:
-                            assert len(gp.nodes) <= self.max_nodes
-                    except AssertionError:
-                        if len(gp.nodes) > self.max_nodes:
-                            mol_too_big += 1
-                        else:
-                            invalid_act += 1
-                        done[i] = True
-                        data[i]['reward_pred'] = illegal_action_logreward.exp()
-                        data[i]['is_valid'] = False
-                        continue
-                    # Add to the trajectory
-                    # P_B = uniform backward
-                    n_back = env.count_backward_transitions(gp)
-                    bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
-                    graphs[i] = gp
-            if all(done):
-                break
-
         for i in range(n):
-            # If we're not bootstrapping, we could query the reward
-            # model here, but this is expensive/impractical.  Instead
-            # just report forward and backward flows
             data[i]['logZ'] = logZ_pred[i].item()
-            data[i]['fwd_logprob'] = sum(fwd_logprob[i])
-            data[i]['bck_logprob'] = sum(bck_logprob[i])
-            if self.bootstrap_own_reward and False:  # TODO: verify
-                if not data[i]['is_valid']:
-                    logprob_of_illegal.append(data[i]['fwd_logprob'].item())
-                # If we are bootstrapping, we can report the theoretical loss as well
-                numerator = data[i]['fwd_logprob'] + logZ_pred[i]
-                denominator = data[i]['bck_logprob'] + data[i]['reward_pred'].log()
-                if self.epsilon is not None:
-                    numerator = torch.logaddexp(numerator, epsilon)
-                    denominator = torch.logaddexp(denominator, epsilon)
-                data[i]['loss'] = (numerator - denominator).pow(2)
         return data
 
     def create_training_data_from_graphs(self, graphs):
@@ -365,6 +255,7 @@ class TrajectoryBalance:
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             'logZ': Z.mean(),
+            'loss': loss.item(),
         }
 
         if not torch.isfinite(traj_losses).all():
