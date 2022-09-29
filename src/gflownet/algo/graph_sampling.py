@@ -1,13 +1,11 @@
 import copy
 from itertools import count
-from typing import List, Tuple
+from typing import List
 
-import numpy as np
 import torch
 from torch import Tensor
 import torch.nn as nn
 
-from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphActionType
 
 
@@ -22,21 +20,6 @@ class GraphSampler:
         self.sample_temp = sample_temp
         self.random_action_prob = 0
         self.sanitize_samples = True
-
-    def _corrupt_actions(self, actions: List[Tuple[int, int, int]], cat: GraphActionCategorical):
-        """Sample from the uniform policy with probability `self.random_action_prob`"""
-        # TODO: retire this method, make sure nothing depends on it
-        # Should this be a method of GraphActionCategorical?
-        if self.random_action_prob <= 0:
-            return
-        corrupted, = (self.rng.uniform(size=len(actions)) < self.random_action_prob).nonzero()
-        for i in corrupted:
-            n_in_batch = [int((b == i).sum()) for b in cat.batch]
-            n_each = np.array([float(logit.shape[1]) * nb for logit, nb in zip(cat.logits, n_in_batch)])
-            which = self.rng.choice(len(n_each), p=n_each / n_each.sum())
-            row = self.rng.choice(n_in_batch[which])
-            col = self.rng.choice(cat.logits[which].shape[1])
-            actions[i] = (which, row, col)
 
     def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device):
         # This will be returned as training data
@@ -61,9 +44,7 @@ class GraphSampler:
             if self.random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 is_random_action = torch.tensor(
-                    self.rng.uniform(size=len(torch_graphs)) < self.random_action_prob,
-                    device=dev
-                ).float()
+                    self.rng.uniform(size=len(torch_graphs)) < self.random_action_prob, device=dev).float()
                 fwd_cat.logits = [
                     # We don't multiply m by i on the right because we're assume the model forward()
                     # method already does that
@@ -76,8 +57,6 @@ class GraphSampler:
                 actions = sample_cat.sample()
             else:
                 actions = fwd_cat.sample()
-            # This is broken when there are masks
-            # self._corrupt_actions(actions, fwd_cat)
             graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
             log_probs = fwd_cat.log_prob(actions)
             for i, j in zip(not_done(range(n)), range(n)):
