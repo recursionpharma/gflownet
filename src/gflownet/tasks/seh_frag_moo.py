@@ -1,8 +1,4 @@
 import ast
-from collections import defaultdict
-import pathlib
-import queue
-import threading
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -13,7 +9,6 @@ import scipy.stats as stats
 import torch
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
-import torch.multiprocessing as mp
 import torch.nn as nn
 from torch.utils.data import Dataset
 import torch_geometric.data as gd
