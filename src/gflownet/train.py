@@ -118,6 +118,7 @@ class GFNTrainer:
         self.verbose = False
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
+        self.valid_sampling_hooks: List[Callable] = []
 
         self.setup()
 
@@ -138,6 +139,9 @@ class GFNTrainer:
             return placeholder, torch.device('cpu')
         return model, self.device
 
+    def build_callbacks(self):
+        return {}
+
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
@@ -150,7 +154,10 @@ class GFNTrainer:
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
         iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.valid_offline_ratio, stream=False)
+                                    ratio=self.valid_offline_ratio, stream=False,
+                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True))
+        for hook in self.valid_sampling_hooks:
+            iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0)
 
@@ -163,6 +170,8 @@ class GFNTrainer:
 
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
         loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline)
+        if hasattr(batch, 'extra_info'):
+            info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
 
     def run(self):
@@ -174,6 +183,7 @@ class GFNTrainer:
         epoch_length = max(len(self.training_data), 1)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
+        callbacks = self.build_callbacks()
         for it, batch in zip(range(1, 1 + self.hps['num_training_steps']), train_dl):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
@@ -186,6 +196,11 @@ class GFNTrainer:
                 for batch in valid_dl:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, 'valid')
+                end_metrics = {}
+                for c in callbacks.values():
+                    if hasattr(c, 'on_validation_end'):
+                        c.on_validation_end(end_metrics)
+                self.log(end_metrics, it, 'valid_end')
                 torch.save({
                     'models_state_dict': [self.model.state_dict()],
                     'hps': self.hps,
