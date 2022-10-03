@@ -111,6 +111,16 @@ class SEHFragTrainer(GFNTrainer):
             'num_cond_dim': 32,
         }
 
+    def setup_algo(self):
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
+
+    def setup_task(self):
+        self.task = SEHTask(self.training_data, self.hps['temperature_sample_dist'],
+                            ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+
+    def setup_model(self):
+        self.model = GraphTransformerFragGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+
     def setup(self):
         hps = self.hps
         RDLogger.DisableLog('rdApp.*')
@@ -121,11 +131,12 @@ class SEHFragTrainer(GFNTrainer):
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
+        self.setup_algo()
+        self.setup_task()
+        self.setup_model()
 
-        model = GraphTransformerFragGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'])
-        self.model = model
         # Separate Z parameters from non-Z to allow for LR decay on the former
-        Z_params = list(model.logZ.parameters())
+        Z_params = list(self.model.logZ.parameters())
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = torch.optim.Adam(non_Z_params, hps['learning_rate'], (hps['momentum'], 0.999),
                                     weight_decay=hps['weight_decay'], eps=hps['adam_eps'])
@@ -135,15 +146,12 @@ class SEHFragTrainer(GFNTrainer):
 
         self.sampling_tau = hps['sampling_tau']
         if self.sampling_tau > 0:
-            self.sampling_model = copy.deepcopy(model)
+            self.sampling_model = copy.deepcopy(self.model)
         else:
             self.sampling_model = self.model
         eps = hps['tb_epsilon']
         hps['tb_epsilon'] = ast.literal_eval(eps) if isinstance(eps, str) else eps
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
-        self.task = SEHTask(self.training_data, hps['temperature_sample_dist'],
-                            ast.literal_eval(hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']
         self.clip_grad_callback = {
