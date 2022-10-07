@@ -159,6 +159,7 @@ class SamplingIterator(IterableDataset):
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
+                    assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
                     valid_mols = [m for m, v in zip(mols, m_is_valid) if v]

@@ -14,6 +14,8 @@ from gflownet.envs.graph_building_env import GraphAction
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
+DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
+
 
 class MolBuildingEnvContext(GraphBuildingEnvContext):
     """A specification of what is being generated for a GraphBuildingEnv
@@ -21,13 +23,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
 
     """
-    def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0):
+    def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
+                 charges=[0, 1, -1]):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
             'v': atoms,
-            'chi': [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW],
-            'charge': [0, 1, -1],
-            'expl_H': list(range(4)),  # TODO: check what is the actual range of this
+            'chi': chiral_types,
+            'charge': charges,
+            'expl_H': [0, 1],
             'no_impl': [False, True],
         }
         self.atom_attr_defaults = {k: self.atom_attr_values[k][0] for k in self.atom_attr_values}

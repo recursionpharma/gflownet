@@ -70,13 +70,13 @@ class SEHTask(GFNTask):
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward**cond_info['beta']
+        return flat_reward.flatten()**cond_info['beta']
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return FlatRewards(torch.zeros((0,))), is_valid
+            return FlatRewards(torch.zeros((0, 1))), is_valid
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.device)
         preds = self.models['seh'](batch).reshape((-1,)).data.cpu()
