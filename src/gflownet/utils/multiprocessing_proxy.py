@@ -22,14 +22,14 @@ class MPModelPlaceholder:
         self._is_init = True
 
     # TODO: make a generic method for this based on __getattr__
-    def logZ(self, *a):
+    def logZ(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('logZ', *a))
+        self.in_queue.put(('logZ', a, kw))
         return self.out_queue.get()
 
-    def __call__(self, *a):
+    def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('__call__', *a))
+        self.in_queue.put(('__call__', a, kw))
         return self.out_queue.get()
 
 
@@ -72,6 +72,9 @@ class MPModelProxy:
     def __del__(self):
         self.stop.set()
 
+    def to_msg(self, i):
+        return i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i
+
     def run(self):
         while not self.stop.is_set():
             for qi, q in enumerate(self.in_queues):
@@ -81,15 +84,19 @@ class MPModelProxy:
                     continue
                 except ConnectionError:
                     break
-                attr, *args = r
+                attr, args, kwargs = r
                 f = getattr(self.model, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
-                result = f(*args)
+                kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
+                result = f(*args, **kwargs)
                 if isinstance(result, (list, tuple)):
-                    msg = [i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i for i in result]
+                    msg = [self.to_msg(i) for i in result]
+                    self.out_queues[qi].put(msg)
+                elif isinstance(result, dict):
+                    msg = {k: self.to_msg(i) for k, i in result.items()}
                     self.out_queues[qi].put(msg)
                 else:
-                    msg = result.detach().to(torch.device('cpu')) if isinstance(result, self.cuda_types) else result
+                    msg = self.to_msg(result)
                     self.out_queues[qi].put(msg)
 
 

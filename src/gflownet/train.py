@@ -1,3 +1,4 @@
+import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
@@ -179,6 +180,11 @@ class GFNTrainer:
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
+        os.makedirs(self.hps['log_dir'], exist_ok=True)
+        torch.save({
+            'hps': self.hps,
+        }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
+        
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)

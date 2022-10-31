@@ -137,17 +137,25 @@ class GraphTransformerGFN(nn.Module):
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         node_embeddings, graph_embeddings = self.transf(g, cond)
+        # "Non-edges" are edges not currently in the graph that we could add
         ne_row, ne_col = g.non_edge_index
+        non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
         e_row, e_col = g.edge_index[:, ::2]
+        edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+
+        def _mask(x, m):
+            # mask logit vector x with binary mask m, -1000 is a tiny log-value
+            return x * m + -1000 * (1 - m)
+
         cat = GraphActionCategorical(
             g,
             logits=[
                 self.emb2stop(graph_embeddings),
-                self.emb2add_node(node_embeddings),
-                self.emb2set_node_attr(node_embeddings),
-                self.emb2add_edge(node_embeddings[ne_row] + node_embeddings[ne_col]),
-                self.emb2set_edge_attr(node_embeddings[e_row] + node_embeddings[e_col]),
+                _mask(self.emb2add_node(node_embeddings), g.add_node_mask),
+                _mask(self.emb2set_node_attr(node_embeddings), g.set_node_attr_mask),
+                _mask(self.emb2add_edge(non_edge_embeddings), g.add_edge_mask),
+                _mask(self.emb2set_edge_attr(edge_embeddings), g.set_edge_attr_mask),
             ],
             keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
             types=self.action_type_order,
