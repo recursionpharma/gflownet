@@ -173,7 +173,7 @@ class GraphBuildingEnv:
         elif action.action is GraphActionType.SetNodeAttr:
             assert self.allow_node_attr
             assert action.source in gp.nodes
-            assert action.attr not in gp.nodes[action.source]
+            assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
             gp.nodes[action.source][action.attr] = action.value
 
         elif action.action is GraphActionType.SetEdgeAttr:
