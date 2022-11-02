@@ -351,7 +351,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
 
 class GraphActionCategorical:
     def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType],
-                 deduplicate_edge_index=True):
+                 deduplicate_edge_index=True, masks: List[torch.Tensor] = None):
         """A multi-type Categorical compatible with generating structured actions.
 
         What is meant by type here is that there are multiple types of
@@ -389,14 +389,19 @@ class GraphActionCategorical:
         deduplicate_edge_index: bool, default=True
            If true, this means that the 'edge_index' keys have been reduced
            by e_i[::2] (presumably because the graphs are undirected)
+        masks: List[Tensor], default=None
+           If not None, a list of broadcastable tensors that multiplicatively
+           mask out logits of invalid actions
         """
-        # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
         self.num_graphs = graphs.num_graphs
         # The logits
         self.logits = logits
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
+        # TODO: this is only used by graph_sampler, but maybe we should be more careful with it
+        # (e.g. in a softmax and such)
+        self.masks = masks
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
