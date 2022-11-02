@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory
@@ -73,6 +73,10 @@ class TrajectoryBalance:
         self.sample_temp = 1
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
         self.graph_sampler.random_action_prob = hps['random_action_prob']
+        self.is_doing_subTB = hps.get('tb_do_subtb', False)
+        if self.is_doing_subTB:
+            self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 1 if max_len is not None else 128)
+            self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
         """Generate trajectories by sampling a model
@@ -182,11 +186,11 @@ class TrajectoryBalance:
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
         # Forward pass of the model, returns a GraphActionCategorical and the optional bootstrap predictions
-        fwd_cat, log_reward_preds = model(batch, cond_info[batch_idx])
+        fwd_cat, per_mol_out = model(batch, cond_info[batch_idx])
 
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
-        log_reward_preds = log_reward_preds[final_graph_idx, 0]
+        log_reward_preds = per_mol_out[final_graph_idx, 0]
         # Compute trajectory balance objective
         Z = model.logZ(cond_info)[:, 0]
         # This is the log prob of each action in the trajectory
@@ -216,12 +220,20 @@ class TrajectoryBalance:
             # (thus the `numerator - 1`). Why 1? Intuition?
             denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
 
-        if self.tb_loss_is_mae:
-            traj_losses = abs(numerator - denominator)
-        elif self.tb_loss_is_huber:
-            pass  # TODO
+        if self.is_doing_subTB:
+            # SubTB interprets the per_mol_out predictions to predict the state flow F(s)
+            traj_losses = self.subtb_loss_fast(log_prob, log_p_B, per_mol_out[:, 0], Rp, batch.traj_lens)
+            # The position of the first graph of each trajectory
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            first_graph_idx = torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            Z = per_mol_out[first_graph_idx, 0]
         else:
-            traj_losses = (numerator - denominator).pow(2)
+            if self.tb_loss_is_mae:
+                traj_losses = abs(numerator - denominator)
+            elif self.tb_loss_is_huber:
+                pass  # TODO
+            else:
+                traj_losses = (numerator - denominator).pow(2)
 
         # Normalize losses by trajectory length
         if self.length_normalize_losses:
@@ -261,3 +273,38 @@ class TrajectoryBalance:
         if not torch.isfinite(traj_losses).all():
             raise ValueError('loss is not finite')
         return loss, info
+
+    def _init_subtb(self, dev):
+        # Precompute all possible subtrajectory indices that we will use for computing the loss
+        ar = torch.arange(self._subtb_max_len, device=dev)
+        tidx = [torch.tril_indices(i, i, device=dev)[1] for i in range(self._subtb_max_len)]
+        self._precomp = [
+            (torch.cat([i + tidx[T - i]
+                        for i in range(T)]),
+             torch.cat([ar[:T - i].repeat_interleave(ar[:T - i] + 1) + ar[T - i + 1:T + 1].sum()
+                        for i in range(T)]))
+            for T in range(1, self._subtb_max_len)
+        ]
+
+    def subtb_loss_fast(self, P_F, P_B, F, R, traj_lengths):
+        num_trajs = int(traj_lengths.shape[0])
+        max_len = int(traj_lengths.max() + 1)
+        dev = traj_lengths.device
+        cumul_lens = torch.cumsum(torch.cat([torch.zeros(1, device=dev), traj_lengths]), 0).long()
+        total_loss = torch.zeros(num_trajs, device=dev)
+        ar = torch.arange(max_len, device=dev)
+        car = torch.cumsum(ar, 0)
+        F_and_R = torch.cat([F, R])
+        R_start = F.shape[0]
+        for ep in range(traj_lengths.shape[0]):
+            offset = cumul_lens[ep]
+            T = int(traj_lengths[ep])
+            idces, dests = self._precomp[T - 1]
+            fidces = torch.cat(
+                [torch.cat([ar[i + 1:T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)])
+            P_F_sums = scatter_sum(P_F[idces + offset], dests)
+            P_B_sums = scatter_sum(P_B[idces + offset], dests)
+            F_start = F[offset:offset + T].repeat_interleave(T - ar[:T])
+            F_end = F_and_R[fidces]
+            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+        return total_loss
