@@ -154,17 +154,11 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.algo.task = self.task
 
     def build_callbacks(self):
-        # Unfortunately Determined checks if hooks passed to it are instances of
-        # PyTorchCallback. This means we have to make hooks that explicitly inherit it. It might be
-        # possible to hack our way around that by using __subclasshook__ in our internal
-        # determined-depending code (https://www.hillelwayne.com/post/python-abc/).
+        # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
+        # dependency is required.
         parent = self
-        try:
-            from determined.pytorch import PyTorchCallback
-        except ImportError:
-            PyTorchCallback = object
 
-        class TopKMetricCB(PyTorchCallback):
+        class TopKMetricCB:
             def on_validation_end(self, metrics: Dict[str, Any]):
                 top_k = parent._top_k_hook.finalize()
                 for i in range(len(top_k)):
