@@ -71,6 +71,9 @@ class SEHMOOTask(GFNTask):
         elif self.temperature_sample_dist == 'uniform':
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = self.temperature_dist_params[1]
+        elif self.temperature_sample_dist == 'loguniform':
+            beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
+            upper_bound = self.temperature_dist_params[1]
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = 1
