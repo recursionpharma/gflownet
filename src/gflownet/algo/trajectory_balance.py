@@ -124,7 +124,7 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards):
+    def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
@@ -133,8 +133,8 @@ class TrajectoryBalance:
             A list of N trajectories.
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
-        rewards: Tensor
-            The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
+        log_rewards: Tensor
+            The transformed reward (e.g. log(R(x) ** beta)) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch
@@ -155,7 +155,7 @@ class TrajectoryBalance:
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
         batch.num_backward = num_backward
         batch.actions = torch.tensor(actions)
-        batch.rewards = rewards
+        batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
@@ -175,7 +175,7 @@ class TrajectoryBalance:
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
-        rewards = batch.rewards
+        log_rewards = batch.log_rewards
         cond_info = batch.cond_info
 
         # This index says which trajectory each graph belongs to, so
@@ -192,19 +192,19 @@ class TrajectoryBalance:
         # i.e. the final graph of each trajectory
         log_reward_preds = per_mol_out[final_graph_idx, 0]
         # Compute trajectory balance objective
-        Z = model.logZ(cond_info)[:, 0]
+        log_Z = model.logZ(cond_info)[:, 0]
         # This is the log prob of each action in the trajectory
         log_prob = fwd_cat.log_prob(batch.actions)
         # The log prob of each backward action
         log_p_B = (1 / batch.num_backward).log()
-        # Take log rewards, and clip
-        assert rewards.ndim == 1
-        Rp = torch.maximum(rewards.log(), torch.tensor(-100.0, device=dev))
+        # Clip rewards
+        assert log_rewards.ndim == 1
+        clip_log_R = torch.maximum(log_rewards, torch.tensor(self.illegal_action_logreward, device=dev))
         # This is the log probability of each trajectory
         traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
         # Compute log numerator and denominator of the TB objective
-        numerator = Z + traj_log_prob
-        denominator = Rp + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        numerator = log_Z + traj_log_prob
+        denominator = clip_log_R + scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
 
         if self.epsilon is not None:
             # Numerical stability epsilon
@@ -222,11 +222,11 @@ class TrajectoryBalance:
 
         if self.is_doing_subTB:
             # SubTB interprets the per_mol_out predictions to predict the state flow F(s)
-            traj_losses = self.subtb_loss_fast(log_prob, log_p_B, per_mol_out[:, 0], Rp, batch.traj_lens)
+            traj_losses = self.subtb_loss_fast(log_prob, log_p_B, per_mol_out[:, 0], clip_log_R, batch.traj_lens)
             # The position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
             first_graph_idx = torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
-            Z = per_mol_out[first_graph_idx, 0]
+            log_Z = per_mol_out[first_graph_idx, 0]
         else:
             if self.tb_loss_is_mae:
                 traj_losses = abs(numerator - denominator)
@@ -241,7 +241,7 @@ class TrajectoryBalance:
         if self.reward_normalize_losses:
             # multiply each loss by how important it is, using R as the importance factor
             # factor = Rp.exp() / Rp.exp().sum()
-            factor = -Rp.min() + Rp + 1
+            factor = -clip_log_R.min() + clip_log_R + 1
             factor = factor / factor.sum()
             assert factor.shape == traj_losses.shape
             # * num_trajs because we're doing a convex combination, and a .mean() later, which would
@@ -249,11 +249,11 @@ class TrajectoryBalance:
             traj_losses = factor * traj_losses * num_trajs
 
         if self.bootstrap_own_reward:
-            num_bootstrap = num_bootstrap or len(rewards)
+            num_bootstrap = num_bootstrap or len(log_rewards)
             if self.reward_loss_is_mae:
-                reward_losses = abs(rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp())
+                reward_losses = abs(log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap])
             else:
-                reward_losses = (rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap].exp()).pow(2)
+                reward_losses = (log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap]).pow(2)
             reward_loss = reward_losses.mean()
         else:
             reward_loss = 0
@@ -266,7 +266,7 @@ class TrajectoryBalance:
             'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             'invalid_logprob': (invalid_mask * traj_log_prob).sum() / (invalid_mask.sum() + 1e-4),
             'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
-            'logZ': Z.mean(),
+            'logZ': log_Z.mean(),
             'loss': loss.item(),
         }
 
