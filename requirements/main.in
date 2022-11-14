@@ -14,3 +14,6 @@ sympy
 scipy
 networkx
 tensorboard
+botorch
+cvxopt
+pyarrow
