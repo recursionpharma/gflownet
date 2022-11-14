@@ -178,7 +178,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     s, e = self.atom_attr_logit_slice[k]
                     set_node_attr_mask[i, s:e] = 0
             # Account for charge and explicit Hs in atom as limiting the total valence
-            max_valence[n] = self._max_atom_valence[ad['v']] - abs(ad.get('charge', 0)) - ad.get('expl_H', 0)
+            max_atom_valence = self._max_atom_valence[ad.get('fill_wildcard', None) or ad['v']]
+            max_valence[n] = max_atom_valence - abs(ad.get('charge', 0)) - ad.get('expl_H', 0)
             # Compute explicitly defined valence:
             explicit_valence[n] = 0
             for ne in g[n]:
@@ -250,11 +251,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 'chi': a.GetChiralTag(),
                 'charge': a.GetFormalCharge(),
                 'expl_H': a.GetNumExplicitHs(),
-                'no_impl': a.GetNoImplicit(),
+                # RDKit makes * atoms have no implicit Hs, but we don't want this to trickle down.
+                'no_impl': a.GetNoImplicit() and a.GetSymbol() != '*',
             }
             g.add_node(a.GetIdx(), v=a.GetSymbol(),
                        **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]},
-                       **({'fill_wildcard': None} if a.GetSymbol() == '*' else {}))
+                       **({
+                           'fill_wildcard': None
+                       } if a.GetSymbol() == '*' else {}))
         for b in mol.GetBonds():
             attrs = {'type': b.GetBondType()}
             g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(),
@@ -288,7 +292,6 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         try:
             mol = self.graph_to_mol(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
-            #assert len(mol.GetAtomsMatchingQuery(AtomNumEqualsQueryAtom('*'))) == 0
         except Exception:
             return False
         if mol is None:
