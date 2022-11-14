@@ -230,7 +230,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             non_edge_index=non_edge_index,
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
-            add_edge_mask=torch.ones(1),  # Already filtered by is_ok_non_edge
+            add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
             set_edge_attr_mask=set_edge_attr_mask,
         )
 
