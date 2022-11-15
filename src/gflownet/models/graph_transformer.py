@@ -202,5 +202,7 @@ class GraphTransformerFragGFN(nn.Module):
             ],
             keys=[None, 'x', 'edge_index'],
             types=self.action_type_order,
+            masks=[torch.ones(1), g.add_node_mask.cpu(),
+                   g.set_edge_attr_mask.cpu()],
         )
         return cat, self.emb2reward(graph_embeddings)

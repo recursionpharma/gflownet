@@ -1,7 +1,7 @@
 from collections import defaultdict
 import copy
 import enum
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
@@ -351,7 +351,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
 
 class GraphActionCategorical:
     def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType],
-                 deduplicate_edge_index=True):
+                 deduplicate_edge_index=True, masks: List[torch.Tensor] = None):
         """A multi-type Categorical compatible with generating structured actions.
 
         What is meant by type here is that there are multiple types of
@@ -389,14 +389,21 @@ class GraphActionCategorical:
         deduplicate_edge_index: bool, default=True
            If true, this means that the 'edge_index' keys have been reduced
            by e_i[::2] (presumably because the graphs are undirected)
+        masks: List[Tensor], default=None
+           If not None, a list of broadcastable tensors that multiplicatively
+           mask out logits of invalid actions
         """
-        # TODO: handle legal action masks? (e.g. can't add a node attr to a node that already has an attr)
         self.num_graphs = graphs.num_graphs
         # The logits
         self.logits = logits
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
+        # TODO: mask is only used by graph_sampler, but maybe we should be more careful with it
+        # (e.g. in a softmax and such)
+        # Can be set to indicate which logits are masked out (shape must match logits or have
+        # broadcast dimensions already set)
+        self.masks: List[Any] = masks
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
@@ -460,7 +467,31 @@ class GraphActionCategorical:
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
         return self.logprobs
 
+    def logsumexp(self, x=None):
+        """Reduces `x` (the logits by default) to one scalar per graph"""
+        if x is None:
+            x = self.logits
+        # Use the `subtract by max` trick to avoid precision errors:
+        # compute max
+        maxl = torch.cat([scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(x, self.batch)],
+                         dim=1).max(1).values.detach()
+        # substract by max then take exp
+        # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
+        exp_vals = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(x, self.batch)]
+        # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
+        reduction = sum([
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_vals, self.batch)
+        ]).log()
+        # Add back max
+        return reduction + maxl
+
     def sample(self) -> List[Tuple[int, int, int]]:
+        """Samples this categorical
+        Returns
+        -------
+        actions: List[Tuple[int, int, int]]
+            A list of indices representing [action type, element index, action index]. See constructor.
+        """
         # Use the Gumbel trick to sample categoricals
         # i.e. if X ~ argmax(logits - log(-log(uniform(logits.shape))))
         # then  p(X = i) = exp(logits[i]) / Z
@@ -473,6 +504,26 @@ class GraphActionCategorical:
         u = [torch.rand(i.shape, device=self.dev) for i in self.logits]
         # Gumbel noise
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
+        # Take the argmax
+        return self.argmax(x=gumbel)
+
+    def argmax(self, x: List[torch.Tensor], batch: List[torch.Tensor] = None,
+               dim_size: int = None) -> List[Tuple[int, int, int]]:
+        """Takes the argmax, i.e. if x are the logits, returns the most likely action.
+
+        Parameters
+        ----------
+        x: List[Tensor]
+            Tensors in the same format as the logits (see constructor).
+        batch: List[Tensor]
+            Tensors in the same format as the batch indices of torch_geometric, default `self.batch`.
+        dim_size: int
+            The reduction dimension, default `self.num_graphs`.
+        Returns
+        -------
+        actions: List[Tuple[int, int, int]]
+            A list of indices representing [action type, element index, action index]. See constructor.
+        """
         # scatter_max and .max create a (values, indices) pair
         # These logits are 2d (num_obj_of_type, num_actions_of_type),
         # first reduce-max over the batch, which preserves the
@@ -481,8 +532,12 @@ class GraphActionCategorical:
         # there are no corresponding logits (this can happen if e.g. a
         # graph has no edges), we don't want to accidentally take the
         # max of that type.
-        mnb_max = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) - 1e6 for i in self.logits]
-        mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(gumbel, self.batch, mnb_max)]
+        if batch is None:
+            batch = self.batch
+        if dim_size is None:
+            dim_size = self.num_graphs
+        mnb_max = [torch.zeros(dim_size, i.shape[1], device=self.dev) - 1e6 for i in x]
+        mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(x, batch, mnb_max)]
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
         col_max = [values.max(1) for values, idx in mnb_max]
@@ -493,24 +548,62 @@ class GraphActionCategorical:
         # Now we need to check which type of logit has the actual max
         type_max_val, type_max_idx = torch.stack(maxs).max(0)
         if torch.isfinite(type_max_val).logical_not_().any():
-            raise ValueError('Non finite max value in sample', (type_max_val, self.logits))
+            raise ValueError('Non finite max value in sample', (type_max_val, x))
 
         # Now we can return the indices of where the actions occured
         # in the form List[(type, row, column)]
-        actions = []
+        assert dim_size == type_max_idx.shape[0]
+        argmaxes = []
         for i in range(type_max_idx.shape[0]):
             t = type_max_idx[i]
             # Subtract from the slice of that type and index, since the computed
             # row position is batch-wise rather graph-wise
-            actions.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
+            argmaxes.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
-        return actions
+        return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]]):
-        """The log-probability of a list of action tuples"""
-        logprobs = self.logsoftmax()
+    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None):
+        """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
+        slice indices.
+
+        Parameters
+        ----------
+        actions: List[Tuple[int, int, int]]
+            A list of n action tuples denoting indices
+        logprobs: List[Tensor]
+            The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
+            assumes there are n graphs represented by this object).
+
+        Returns
+        -------
+        log_prob: Tensor
+            The log probability of each action.
+        """
+        if logprobs is None:
+            logprobs = self.logsoftmax()
         return torch.stack([logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in enumerate(actions)])
+
+    def entropy(self, logprobs=None):
+        """The entropy for each graph categorical in the batch
+
+        Parameters
+        ----------
+        logprobs: List[Tensor]
+            The log-probablities of the policy (self.logsoftmax() by default)
+
+        Returns
+        -------
+        entropies: Tensor
+            The entropy for each graph categorical in the batch
+        """
+        if logprobs is None:
+            logprobs = self.logsoftmax()
+        entropy = -sum([
+            scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
+            for i, b in zip(logprobs, self.batch)
+        ])
+        return entropy
 
 
 class GraphBuildingEnvContext:
