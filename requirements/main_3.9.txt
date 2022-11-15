@@ -45,7 +45,7 @@ packaging==21.3
     #   tables
 pandas==1.4.4
     # via torch-geometric
-pillow==9.2.0
+pillow==9.3.0
     # via rdkit-pypi
 pyparsing==3.0.9
     # via
