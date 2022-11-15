@@ -21,7 +21,7 @@ class SamplingIterator(IterableDataset):
 
     """
     def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None):
+                 stream=True, log_dir: str = None, sample_cond_info=True):
         """Parameters
         ----------
         dataset: Dataset
@@ -42,6 +42,9 @@ class SamplingIterator(IterableDataset):
             dataset iterator.
         log_dir: str
             If not None, logs each SamplingIterator worker's generated molecules to that file.
+        sample_cond_info: bool
+            If True (default), then the dataset is a dataset of points used in offline training.
+            If False, then the dataset is a dataset of preferences (e.g. used to validate the model)
 
         """
         self.data = dataset
@@ -55,6 +58,13 @@ class SamplingIterator(IterableDataset):
         self.task = task
         self.device = device
         self.stream = stream
+        self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
+        self.sample_cond_info = sample_cond_info
+        if not sample_cond_info:
+            # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
+            # then "offline" refers to cond info and online to x, so no duplication and we don't end
+            # up with 2*batch_size accidentally
+            self.offline_batch_size = self.online_batch_size = batch_size
         self.log_dir = log_dir if self.ratio < 1 and self.stream else None
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as the log the worker writes
@@ -84,7 +94,7 @@ class SamplingIterator(IterableDataset):
             else:
                 nw = worker_info.num_workers
                 wid = worker_info.id
-                start, end = int(np.floor(n / nw * wid)), int(np.ceil(n / nw * (wid + 1)))
+                start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
             bs = self.offline_batch_size
             if end - start < bs:
                 yield np.arange(start, end)
@@ -97,6 +107,8 @@ class SamplingIterator(IterableDataset):
     def __len__(self):
         if self.stream:
             return int(1e6)
+        if len(self.data) == 0 and self.sample_online_once:
+            return 1
         return len(self.data)
 
     def __iter__(self):
@@ -114,18 +126,26 @@ class SamplingIterator(IterableDataset):
             num_offline = idcs.shape[0]  # This is in [0, self.offline_batch_size]
             # Sample conditional info such as temperature, trade-off weights, etc.
 
-            cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
-            is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
+            if self.sample_cond_info:
+                cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
+                # Sample some dataset data
+                mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
+                flat_rewards = list(self.task.flat_reward_transform(torch.tensor(flat_rewards)))
+                graphs = [self.ctx.mol_to_graph(m) for m in mols]
+                trajs = self.algo.create_training_data_from_graphs(graphs)
+                num_online = self.online_batch_size
+            else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
+                num_online = num_offline
+                num_offline = 0
+                cond_info = self.task.encode_conditional_information(torch.stack([self.data[i] for i in idcs]))
+                trajs, flat_rewards = [], []
 
-            # Sample some dataset data
-            mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
-            flat_rewards = list(self.task.flat_reward_transform(torch.tensor(flat_rewards)))
-            graphs = [self.ctx.mol_to_graph(m) for m in mols]
-            trajs = self.algo.create_training_data_from_graphs(graphs)
+            # TODO: maybe don't rely on 'beta'
+            is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
             # Sample some on-policy data
-            if self.online_batch_size > 0:
+            if num_online > 0:
                 with torch.no_grad():
-                    trajs += self.algo.create_training_data_from_own_samples(self.model, self.online_batch_size,
+                    trajs += self.algo.create_training_data_from_own_samples(self.model, num_online,
                                                                              cond_info['encoding'][num_offline:])
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
@@ -134,16 +154,16 @@ class SamplingIterator(IterableDataset):
                     flat_rewards += pred_reward
                 else:
                     # Otherwise, query the task for flat rewards
-                    valid_idcs = torch.tensor([
-                        i + num_offline for i in range(self.online_batch_size) if trajs[i + num_offline]['is_valid']
-                    ]).long()
+                    valid_idcs = torch.tensor(
+                        [i + num_offline for i in range(num_online) if trajs[i + num_offline]['is_valid']]).long()
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    pred_reward = torch.zeros((self.online_batch_size, preds.shape[1]))
+                    valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
+                    pred_reward = torch.zeros((num_online, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
                     # if preds.shape[0] > 0:
                     #     for i in range(self.number_of_objectives):
@@ -152,8 +172,10 @@ class SamplingIterator(IterableDataset):
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)
                     # Override the is_valid key in case the task made some mols invalid
-                    for i in range(self.online_batch_size):
+                    for i in range(num_online):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
+                    for i, m in zip(valid_idcs, valid_mols):
+                        trajs[i]['smi'] = Chem.MolToSmiles(m)
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
             rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
@@ -161,17 +183,26 @@ class SamplingIterator(IterableDataset):
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
             batch.num_offline = num_offline
-            batch.num_online = self.online_batch_size
+            batch.num_online = num_online
             batch.flat_rewards = flat_rewards
             batch.mols = mols
+            # TODO: we could very well just pass the cond_info dict to construct_batch above,
+            # and the algo can decide what it wants to put in the batch object
+            batch.preferences = cond_info.get('preferences', None)
+            if not self.sample_cond_info:
+                # If we're using a dataset of preferences, the user may want to know the id of the preference
+                for i, j in zip(trajs, idcs):
+                    i['data_idx'] = j
 
-            if self.online_batch_size > 0 and self.log_dir is not None:
+            if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
-            if self.online_batch_size > 0:
+            if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
-                    extra_info.update(hook(trajs, rewards, flat_rewards, cond_info))
+                    extra_info.update(
+                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
+                             {k: v[num_offline:] for k, v in cond_info.items()}))
                 batch.extra_info = extra_info
             yield batch
 
