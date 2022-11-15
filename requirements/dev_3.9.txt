@@ -94,7 +94,7 @@ pbr==5.10.0
     # via stevedore
 pep517==0.13.0
     # via build
-pillow==9.2.0
+pillow==9.3.0
     # via rdkit-pypi
 pip-compile-multi==2.4.6
     # via -r requirements/dev.in
