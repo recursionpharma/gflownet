@@ -67,7 +67,7 @@ class SamplingIterator(IterableDataset):
             self.offline_batch_size = self.online_batch_size = batch_size
         self.log_dir = log_dir if self.ratio < 1 and self.stream else None
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
-        # don't want to initialize per-worker things just yet, such as the log the worker writes
+        # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
         # has been copied into a new python process.
         self.log = SQLiteLog()
@@ -140,8 +140,7 @@ class SamplingIterator(IterableDataset):
                 cond_info = self.task.encode_conditional_information(torch.stack([self.data[i] for i in idcs]))
                 trajs, flat_rewards = [], []
 
-            # TODO: maybe don't rely on 'beta'
-            is_valid = torch.ones(cond_info['beta'].shape[0]).bool()
+            is_valid = torch.ones(num_offline + num_online).bool()
             # Sample some on-policy data
             if num_online > 0:
                 with torch.no_grad():
@@ -165,6 +164,7 @@ class SamplingIterator(IterableDataset):
                     valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
                     pred_reward = torch.zeros((num_online, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
+                    # TODO: reintegrate bootstrapped reward predictions
                     # if preds.shape[0] > 0:
                     #     for i in range(self.number_of_objectives):
                     #         pred_reward[valid_idcs - num_offline, i] = preds[range(preds.shape[0]), i]

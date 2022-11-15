@@ -13,7 +13,14 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 import torch_geometric.data as gd
 
+from gflownet.algo.advantage_actor_critic import A2C
+from gflownet.algo.envelope_q_learning import EnvelopeQLearning
+from gflownet.algo.envelope_q_learning import GraphTransformerFragEnvelopeQL
+from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
+from gflownet.algo.soft_q_learning import SoftQLearning
+from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.models import bengio2021flow
+from gflownet.models.graph_transformer import GraphTransformerFragGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
 from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
@@ -134,10 +141,36 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'preference_type': 'dirichlet',
         }
 
-    def setup(self):
-        super().setup()
+    def setup_algo(self):
+        hps = self.hps
+        if hps['algo'] == 'TB':
+            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
+        elif hps['algo'] == 'SQL':
+            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+        elif hps['algo'] == 'A2C':
+            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=9)
+        elif hps['algo'] == 'MOREINFORCE':
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=9)
+        elif hps['algo'] == 'MOQL':
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+
+    def setup_task(self):
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
                                ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+
+    def setup_model(self):
+        if self.hps['algo'] == 'MOQL':
+            model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
+                                                   num_layers=self.hps['num_layers'], num_objectives=4)
+        else:
+            model = GraphTransformerFragGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+
+        if self.hps['algo'] in ['A2C', 'MOQL']:
+            model.do_mask = False
+        self.model = model
+
+    def setup(self):
+        super().setup()
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4
