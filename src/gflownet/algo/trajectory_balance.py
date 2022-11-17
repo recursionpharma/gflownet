@@ -62,7 +62,7 @@ class TrajectoryBalance:
         self.illegal_action_logreward = hps['illegal_action_logreward']
         self.bootstrap_own_reward = hps['bootstrap_own_reward']
         self.epsilon = hps['tb_epsilon']
-        self.reward_loss_multiplier = hps['reward_loss_multiplier']
+        self.reward_loss_multiplier = hps.get('reward_loss_multiplier', 1)
         # Experimental flags
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = False
