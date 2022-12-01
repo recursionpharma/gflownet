@@ -18,13 +18,13 @@ markupsafe==2.1.1
     # via jinja2
 mpmath==1.2.1
     # via sympy
-networkx==2.8.7
+networkx==2.8.8
     # via
     #   -r requirements/main.in
     #   torch-geometric
 numexpr==2.8.4
     # via tables
-numpy==1.23.4
+numpy==1.23.5
     # via
     #   numexpr
     #   pandas
@@ -45,7 +45,7 @@ nvidia-cudnn-cu11==8.5.0.96
     # via torch
 packaging==21.3
     # via tables
-pandas==1.5.1
+pandas==1.5.2
     # via torch-geometric
 pillow==9.3.0
     # via rdkit-pypi
@@ -64,7 +64,7 @@ pyyaml==6.0
     #   yacs
 rdflib==6.2.0
     # via torch-geometric
-rdkit-pypi==2022.9.1
+rdkit-pypi==2022.9.2
     # via -r requirements/main.in
 requests==2.28.1
     # via torch-geometric
@@ -100,9 +100,9 @@ tqdm==4.64.1
     # via torch-geometric
 typing-extensions==4.4.0
     # via torch
-urllib3==1.26.12
+urllib3==1.26.13
     # via requests
-wheel==0.38.0
+wheel==0.38.4
     # via
     #   nvidia-cublas-cu11
     #   nvidia-cuda-runtime-cu11
