@@ -3,6 +3,7 @@ import sqlite3
 from typing import Callable, List
 
 import numpy as np
+import networkx as nx
 from rdkit import Chem
 from rdkit import RDLogger
 import torch
@@ -60,6 +61,7 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
+        self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
@@ -130,7 +132,7 @@ class SamplingIterator(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
                 # Sample some dataset data
                 mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
-                flat_rewards = list(self.task.flat_reward_transform(torch.tensor(flat_rewards)))
+                flat_rewards = list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
                 graphs = [self.ctx.mol_to_graph(m) for m in mols]
                 trajs = self.algo.create_training_data_from_graphs(graphs)
                 num_online = self.online_batch_size
@@ -175,8 +177,9 @@ class SamplingIterator(IterableDataset):
                     # Override the is_valid key in case the task made some mols invalid
                     for i in range(num_online):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
-                    for i, m in zip(valid_idcs, valid_mols):
-                        trajs[i]['smi'] = Chem.MolToSmiles(m)
+                    if self.log_molecule_smis:
+                        for i, m in zip(valid_idcs, valid_mols):
+                            trajs[i]['smi'] = Chem.MolToSmiles(m)
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
             log_rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
@@ -208,10 +211,14 @@ class SamplingIterator(IterableDataset):
             yield batch
 
     def log_generated(self, trajs, log_rewards, flat_rewards, cond_info):
-        mols = [
-            Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
-            for i in range(len(trajs))
-        ]
+        if self.log_molecule_smis:
+            mols = [
+                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
+                for i in range(len(trajs))
+            ]
+        else:
+            mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['traj'][-1][0], None, 'v')
+                    for t in trajs]
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         log_rewards = log_rewards.data.numpy().tolist()
