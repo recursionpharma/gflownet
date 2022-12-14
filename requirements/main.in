@@ -14,6 +14,6 @@ sympy
 scipy
 networkx
 tensorboard
-botorch
+botorch==0.6.6  # pin because of the torch==1.10.2 dependency, botorch>=0.8 requires torch>=1.11
 cvxopt
 pyarrow
