@@ -6,9 +6,9 @@ from rdkit.Chem.rdchem import Mol as RDMol
 import torch
 from torch import Tensor
 import torch.nn as nn
-import torch.utils.tensorboard
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+import torch.utils.tensorboard
 import torch_geometric.data as gd
 
 from gflownet.data.sampling_iterator import SamplingIterator

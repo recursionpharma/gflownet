@@ -5,7 +5,8 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
-from torch_scatter import scatter, scatter_sum
+from torch_scatter import scatter
+from torch_scatter import scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory

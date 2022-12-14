@@ -6,7 +6,6 @@ from rdkit.Chem import Mol
 import rdkit.Chem as Chem
 from rdkit.Chem.rdchem import BondType
 from rdkit.Chem.rdchem import ChiralType
-from rdkit.Chem.rdqueries import AtomNumEqualsQueryAtom
 import torch
 import torch_geometric.data as gd
 

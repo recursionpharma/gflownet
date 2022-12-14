@@ -132,7 +132,8 @@ class SamplingIterator(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
                 # Sample some dataset data
                 mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
-                flat_rewards = list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
+                flat_rewards = list(self.task.flat_reward_transform(
+                    torch.stack(flat_rewards))) if len(flat_rewards) else []
                 graphs = [self.ctx.mol_to_graph(m) for m in mols]
                 trajs = self.algo.create_training_data_from_graphs(graphs)
                 num_online = self.online_batch_size
@@ -217,8 +218,9 @@ class SamplingIterator(IterableDataset):
                 for i in range(len(trajs))
             ]
         else:
-            mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['traj'][-1][0], None, 'v')
-                    for t in trajs]
+            mols = [
+                nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['traj'][-1][0], None, 'v') for t in trajs
+            ]
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         log_rewards = log_rewards.data.numpy().tolist()
