@@ -2,8 +2,8 @@ import os
 import sqlite3
 from typing import Callable, List
 
-import numpy as np
 import networkx as nx
+import numpy as np
 from rdkit import Chem
 from rdkit import RDLogger
 import torch
