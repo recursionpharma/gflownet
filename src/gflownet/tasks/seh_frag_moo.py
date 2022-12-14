@@ -174,11 +174,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup(self):
         super().setup()
-<<<<<<< HEAD
-=======
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
                                ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
->>>>>>> 77c2014 (add hooks into training and evaluation loops)
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4
@@ -191,7 +188,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self._top_k_hook = TopKHook(10, 128, len(valid_preferences))
         self.test_data = RepeatedPreferenceDataset(valid_preferences, 128)
         self.valid_sampling_hooks.append(self._top_k_hook)
-<<<<<<< HEAD
 
         self.algo.task = self.task
 
@@ -208,35 +204,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 print('validation end', metrics)
 
         return {'topk': TopKMetricCB()}
-=======
->>>>>>> 77c2014 (add hooks into training and evaluation loops)
-
-        self.algo.task = self.task
-
-<<<<<<< HEAD
-=======
-    def build_callbacks(self):
-        # Unfortunately Determined checks if hooks passed to it are instances of
-        # PyTorchCallback. This means we have to make hooks that explicitly inherit it. It might be
-        # possible to hack our way around that by using __subclasshook__ in our internal
-        # determined-depending code (https://www.hillelwayne.com/post/python-abc/).
-        parent = self
-        try:
-            from determined.pytorch import PyTorchCallback
-        except ImportError:
-            PyTorchCallback = object
-
-        class TopKMetricCB(PyTorchCallback):
-            def on_validation_end(self, metrics: Dict[str, Any]):
-                top_k = parent._top_k_hook.finalize()
-                for i in range(len(top_k)):
-                    metrics[f'topk_rewards_{i}'] = top_k[i]
-                print('validation end', metrics)
-
-        return {'topk': TopKMetricCB()}
 
 
->>>>>>> 77c2014 (add hooks into training and evaluation loops)
 class RepeatedPreferenceDataset:
     def __init__(self, preferences, repeat):
         self.prefs = preferences
