@@ -24,13 +24,13 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     """
     def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
-                 charges=[0, 1, -1], allow_explicitly_aromatic=False):
+                 charges=[0, 1, -1], expl_H_range=[0, 1], allow_explicitly_aromatic=False):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
             'v': atoms + ['*'],
             'chi': chiral_types,
             'charge': charges,
-            'expl_H': [0, 1],
+            'expl_H': expl_H_range,
             'no_impl': [False, True],
             'fill_wildcard': [None] + atoms,  # default is, there is nothing
         }
