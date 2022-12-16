@@ -172,7 +172,6 @@ import shutil
 import numpy as np
 from scipy import special as sp
 from scipy.optimize import brentq
-import sympy as sym
 import torch
 from torch.nn import Linear
 from torch.nn import ModuleList
@@ -193,8 +192,9 @@ from torch_sparse import coalesce
 
 try:
     import sympy as sym
-except ImportError:
-    sym = None
+except ImportError as e:
+    # TODO: precompute values for spherical_bessel_formulas to remove dependency on sympy
+    raise ImportError('sympy is requried to use MXMNet models, but is not listed as a gflownet dependency by default (see #39)\n'+str(e))
 
 
 class EMA:

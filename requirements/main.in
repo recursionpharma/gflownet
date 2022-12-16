@@ -10,10 +10,13 @@ torch-sparse==0.6.13
 torch-cluster==1.6.0
 rdkit
 tables
-sympy
 scipy
 networkx
 tensorboard
-botorch==0.6.6  # pin because of the torch==1.10.2 dependency, botorch>=0.7 requires torch>=1.11
 cvxopt
 pyarrow
+
+botorch==0.6.6  # pin because of the torch==1.10.2 dependency, botorch>=0.7 requires torch>=1.11
+# pins to help depencency resolution, because of the above pin
+pyro-ppl==1.8.0
+gpytorch==1.8.1
