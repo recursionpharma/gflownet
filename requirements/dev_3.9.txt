@@ -209,7 +209,7 @@ urllib3==1.26.12
     # via requests
 virtualenv==20.16.6
     # via pre-commit
-wheel==0.38.0
+wheel==0.38.1
     # via
     #   nvidia-cublas-cu11
     #   nvidia-cuda-runtime-cu11

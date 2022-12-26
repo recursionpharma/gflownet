@@ -102,7 +102,7 @@ typing-extensions==4.4.0
     # via torch
 urllib3==1.26.12
     # via requests
-wheel==0.38.0
+wheel==0.38.1
     # via
     #   nvidia-cublas-cu11
     #   nvidia-cuda-runtime-cu11
