@@ -13,3 +13,6 @@ safety
 typeguard
 types-pkg_resources
 yapf
+
+# Security pin
+gitpython>=3.1.30
