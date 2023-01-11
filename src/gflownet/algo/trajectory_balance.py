@@ -276,18 +276,64 @@ class TrajectoryBalance:
         return loss, info
 
     def _init_subtb(self, dev):
-        # Precompute all possible subtrajectory indices that we will use for computing the loss
+        r"""Precompute all possible subtrajectory indices that we will use for computing the loss:
+            \sum_{m=1}^{T-1} \sum_{n=m+1}^T
+                \log( \frac{F(s_m) \prod_{i=m}^{n-1} P_F(s_{i+1}|s_i)}
+                           {F(s_n) \prod_{i=m}^{n-1} P_B(s_i|s_{i+1})} )^2
+        """
         ar = torch.arange(self._subtb_max_len, device=dev)
+        # This will contain a sequence of repeated ranges, e.g.
+        # tidx[4] == tensor([0, 0, 1, 0, 1, 2, 0, 1, 2, 3])
         tidx = [torch.tril_indices(i, i, device=dev)[1] for i in range(self._subtb_max_len)]
+        # We need two sets of indices, the first are the source indices, the second the destination
+        # indices. We precompute such indices for every possible trajectory length.
+
         self._precomp = [
+            # The source indices indicate where we index P_F and P_B, e.g. for m=3 and n=6 we'd need the
+            # sequence [3,4,5]. We'll simply concatenate all sequences, for every m and n (because we're
+            # computing \sum_{m=1}^{T-1} \sum_{n=m+1}^T), and get [0, 0,1, 0,1,2, ..., 3,4,5, ...].
             (torch.cat([i + tidx[T - i]
                         for i in range(T)]),
+             # The destination indices indicate the index of the subsequence the source indices correspond to.
+             # This is used in the scatter sum to compute \log\prod_{i=m}^{n-1}. For the above example, we'd get
+             # [0, 1,1, 2,2,2, ..., 17,17,17, ...]
              torch.cat([ar[:T - i].repeat_interleave(ar[:T - i] + 1) + ar[T - i + 1:T + 1].sum()
                         for i in range(T)]))
+            # And so with these indices, for example for m=0, n=3, the forward probability
+            # of that subtrajectory gets computed as result[2] = P_F[0] + P_F[1] + P_F[2].
             for T in range(1, self._subtb_max_len)
         ]
 
     def subtb_loss_fast(self, P_F, P_B, F, R, traj_lengths):
+        r"""Computes the full SubTB(1) loss (all arguments on log-scale).
+
+        Computes:
+            \sum_{m=1}^{T-1} \sum_{n=m+1}^T
+                \log( \frac{F(s_m) \prod_{i=m}^{n-1} P_F(s_{i+1}|s_i)}
+                           {F(s_n) \prod_{i=m}^{n-1} P_B(s_i|s_{i+1})} )^2
+            where T is the length of the trajectory, for every trajectory.
+
+        The shape of P_F, P_B, and F should be (total num steps,), i.e. sum(traj_lengths). The shape
+        of R and traj_lengths should be (num trajs,).
+
+        Parameters
+        ----------
+        P_F: Tensor
+            Forward policy log-probabilities
+        P_B: Tensor
+            Backward policy log-probabilities
+        F: Tensor
+            Log-scale flow predictions
+        R: Tensor
+            The reward of each trajectory
+        traj_lengths: Tensor
+            The lenght of each trajectory
+
+        Returns
+        -------
+        losses: Tensor
+            The SubTB(1) loss of each trajectory.
+        """
         num_trajs = int(traj_lengths.shape[0])
         max_len = int(traj_lengths.max() + 1)
         dev = traj_lengths.device
