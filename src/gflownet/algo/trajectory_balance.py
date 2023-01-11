@@ -288,19 +288,22 @@ class TrajectoryBalance:
         # We need two sets of indices, the first are the source indices, the second the destination
         # indices. We precompute such indices for every possible trajectory length.
 
+        # The source indices indicate where we index P_F and P_B, e.g. for m=3 and n=6 we'd need the
+        # sequence [3,4,5]. We'll simply concatenate all sequences, for every m and n (because we're
+        # computing \sum_{m=1}^{T-1} \sum_{n=m+1}^T), and get [0, 0,1, 0,1,2, ..., 3,4,5, ...].
+
+        # The destination indices indicate the index of the subsequence the source indices correspond to.
+        # This is used in the scatter sum to compute \log\prod_{i=m}^{n-1}. For the above example, we'd get
+        # [0, 1,1, 2,2,2, ..., 17,17,17, ...]
+
+        # And so with these indices, for example for m=0, n=3, the forward probability
+        # of that subtrajectory gets computed as result[2] = P_F[0] + P_F[1] + P_F[2].
+
         self._precomp = [
-            # The source indices indicate where we index P_F and P_B, e.g. for m=3 and n=6 we'd need the
-            # sequence [3,4,5]. We'll simply concatenate all sequences, for every m and n (because we're
-            # computing \sum_{m=1}^{T-1} \sum_{n=m+1}^T), and get [0, 0,1, 0,1,2, ..., 3,4,5, ...].
             (torch.cat([i + tidx[T - i]
                         for i in range(T)]),
-             # The destination indices indicate the index of the subsequence the source indices correspond to.
-             # This is used in the scatter sum to compute \log\prod_{i=m}^{n-1}. For the above example, we'd get
-             # [0, 1,1, 2,2,2, ..., 17,17,17, ...]
              torch.cat([ar[:T - i].repeat_interleave(ar[:T - i] + 1) + ar[T - i + 1:T + 1].sum()
                         for i in range(T)]))
-            # And so with these indices, for example for m=0, n=3, the forward probability
-            # of that subtrajectory gets computed as result[2] = P_F[0] + P_F[1] + P_F[2].
             for T in range(1, self._subtb_max_len)
         ]
 
