@@ -65,7 +65,7 @@ class GraphSampler:
         # Let's also keep track of trajectory statistics according to the model
         zero = torch.tensor([0], device=dev).float()
         fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
-        bck_logprob: List[List[Tensor]] = [[zero] for i in range(n)]  # zero in case there is a single invalid action
+        bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
 
         graphs = [self.env.new() for i in range(n)]
         done = [False] * n
@@ -106,13 +106,9 @@ class GraphSampler:
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
                 data[i]['traj'].append((graphs[i], graph_actions[j]))
                 # Check if we're done
-                if graph_actions[j].action is GraphActionType.Stop or t == self.max_len - 1:
+                if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
-                    if self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
-                        # check if the graph is sane (e.g. RDKit can
-                        # construct a molecule from it) otherwise
-                        # treat the done action as illegal
-                        data[i]['is_valid'] = False
+                    bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
                 else:  # If not done, try to step the self.environment
                     gp = graphs[i]
                     try:
@@ -122,12 +118,20 @@ class GraphSampler:
                     except AssertionError:
                         done[i] = True
                         data[i]['is_valid'] = False
+                        bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
                         continue
+                    if t == self.max_len - 1:
+                        done[i] = True
                     # If no error, add to the trajectory
                     # P_B = uniform backward
                     n_back = self.env.count_backward_transitions(gp)
                     bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
                     graphs[i] = gp
+                if done[i] and self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
+                    # check if the graph is sane (e.g. RDKit can
+                    # construct a molecule from it) otherwise
+                    # treat the done action as illegal
+                    data[i]['is_valid'] = False
             if all(done):
                 break
 
@@ -137,4 +141,6 @@ class GraphSampler:
             # just report forward and backward logprobs
             data[i]['fwd_logprob'] = sum(fwd_logprob[i])
             data[i]['bck_logprob'] = sum(bck_logprob[i])
+            data[i]['bck_logprobs'] = torch.stack(bck_logprob[i]).reshape(-1)
+            data[i]['result'] = graphs[i]
         return data

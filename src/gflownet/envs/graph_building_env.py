@@ -203,7 +203,6 @@ class GraphBuildingEnv:
         parents: List[Pair(GraphAction, Graph)]
             The list of parent-action pairs that lead to `g`.
         """
-        raise ValueError('reimplement me with GraphAction!')  # also get rid of relabel...
         parents = []
         # Count node degrees
         degree = defaultdict(int)
@@ -227,9 +226,11 @@ class GraphBuildingEnv:
                 # the edge)
                 new_g = graph_without_edge(g, (a, b))
                 if nx.algorithms.is_connected(new_g):
-                    add_parent((self.add_edge, a, b), new_g)
+                    add_parent(GraphAction(GraphActionType.AddEdge, source=a, target=b), new_g)
             for k in g.edges[(a, b)]:
-                add_parent((self.set_edge_attr, (a, b), k, g.edges[(a, b)][k]), graph_without_edge_attr(g, (a, b), k))
+                add_parent(
+                    GraphAction(GraphActionType.SetEdgeAttr, source=a, target=b, attr=k, value=g.edges[(a, b)][k]),
+                    graph_without_edge_attr(g, (a, b), k))
 
         for i in g.nodes:
             # Can only remove leaf nodes and without attrs (except 'v'),
@@ -239,19 +240,23 @@ class GraphBuildingEnv:
                 if len(g.edges[edge]) == 0:
                     anchor = edge[0] if edge[1] == i else edge[1]
                     new_g = graph_without_node(g, i)
-                    add_parent((self.add_node, anchor, g.nodes[i]['v'], {'relabel': i}), new_g)
+                    add_parent(GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]['v']), new_g)
             if len(g.nodes) == 1:
                 # The final node is degree 0, need this special case to remove it
                 # and end up with S0, the empty graph root
-                add_parent((self.add_node, None, g.nodes[i]['v'], {'relabel': i}), graph_without_node(g, i))
+                add_parent(GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v']),
+                           graph_without_node(g, i))
             for k in g.nodes[i]:
                 if k == 'v':
                     continue
-                add_parent((self.set_node_attr, i, k, g.nodes[i][k]), graph_without_node_attr(g, i, k))
+                add_parent(GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
+                           graph_without_node_attr(g, i, k))
         return parents
 
-    def count_backward_transitions(self, g: Graph):
+    def count_backward_transitions(self, g: Graph, check_idempotent: bool = False):
         """Counts the number of parents of g without checking for isomorphisms"""
+        if check_idempotent:
+            return len(self.parents(g))
         c = 0
         deg = [g.degree[i] for i in range(len(g.nodes))]
         for a, b in g.edges:
