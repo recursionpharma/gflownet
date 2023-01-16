@@ -134,8 +134,8 @@ class GraphTransformerGFN(nn.Module):
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
                                        num_heads=num_heads)
-        num_final = num_emb * 2
-        num_glob_final = num_emb ### * 2
+        num_final = num_emb
+        num_glob_final = num_emb * 2
         num_mlp_layers = 2
         self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
@@ -147,10 +147,6 @@ class GraphTransformerGFN(nn.Module):
         self.emb2reward = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
-
-        ##############
-        self.gid2emb = mlp(17, 0, num_emb, 0)
-        self.nid2emb = mlp(4, 0, num_emb, 0)
 
         self._action_type_to_logit = {
             GraphActionType.Stop: (lambda emb, g: self.emb2stop(emb['graph'])),
@@ -174,31 +170,19 @@ class GraphTransformerGFN(nn.Module):
         return x * m + -1000 * (1 - m)
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
-        graph_embeddings = self.gid2emb(g.gid)
-        F = self.emb2reward(graph_embeddings)
-        node_embeddings = torch.cat([graph_embeddings[g.batch], self.nid2emb(g.nodeidx)], 1)
+        node_embeddings, graph_embeddings = self.transf(g, cond)
+        # "Non-edges" are edges not currently in the graph that we could add
         ne_row, ne_col = g.non_edge_index
         non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
+        e_row, e_col = g.edge_index[:, ::2]
+        edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
         emb = {
             'graph': graph_embeddings,
             'node': node_embeddings,
+            'edge': edge_embeddings,
             'non_edge': non_edge_embeddings,
         }
-
-        if 0:
-            node_embeddings, graph_embeddings = self.transf(g, cond)
-            # "Non-edges" are edges not currently in the graph that we could add
-            ne_row, ne_col = g.non_edge_index
-            non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
-            # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
-            e_row, e_col = g.edge_index[:, ::2]
-            edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
-            emb = {
-                'graph': graph_embeddings,
-                'node': node_embeddings,
-                'edge': edge_embeddings,
-                'non_edge': non_edge_embeddings,
-            }
 
         cat = GraphActionCategorical(
             g,
