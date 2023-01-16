@@ -74,10 +74,12 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
-        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
-        self.graph_sampler.random_action_prob = hps['random_action_prob']
         self.is_doing_subTB = hps.get('tb_do_subtb', False)
         self.correct_idempotent = hps.get('tb_correct_idempotent', False)
+
+        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp,
+                                          correct_idempotent=self.correct_idempotent)
+        self.graph_sampler.random_action_prob = hps['random_action_prob']
         if self.is_doing_subTB:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 1 if max_len is not None else 128)
             self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?

@@ -10,7 +10,7 @@ from gflownet.envs.graph_building_env import GraphActionType
 
 class GraphSampler:
     """A helper class to sample from GraphActionCategorical-producing models"""
-    def __init__(self, ctx, env, max_len, max_nodes, rng, sample_temp=1):
+    def __init__(self, ctx, env, max_len, max_nodes, rng, sample_temp=1, correct_idempotent=False):
         """
         Parameters
         ----------
@@ -26,6 +26,8 @@ class GraphSampler:
             rng used to take random actions
         sample_temp: float
             [Experimental] Softmax temperature used when sampling
+        correct_idempotent: bool
+            [Experimental] Correct for idempotent actions when counting
         """
         self.ctx = ctx
         self.env = env
@@ -36,6 +38,7 @@ class GraphSampler:
         self.sample_temp = sample_temp
         self.random_action_prob = 0
         self.sanitize_samples = True
+        self.correct_idempotent = correct_idempotent
 
     def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device):
         """Samples a model in a minibatch
@@ -124,7 +127,7 @@ class GraphSampler:
                         done[i] = True
                     # If no error, add to the trajectory
                     # P_B = uniform backward
-                    n_back = self.env.count_backward_transitions(gp)
+                    n_back = self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
                     bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
                     graphs[i] = gp
                 if done[i] and self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
