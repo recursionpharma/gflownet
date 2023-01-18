@@ -254,7 +254,9 @@ class GraphBuildingEnv:
         return parents
 
     def count_backward_transitions(self, g: Graph, check_idempotent: bool = False):
-        """Counts the number of parents of g without checking for isomorphisms"""
+        """Counts the number of parents of g (by default, without checking for isomorphisms)"""
+        # We can count actions backwards easily, but only if we don't check that they don't lead to
+        # the same parent. To do so, we need to enumerate (unique) parents and count how many there are:
         if check_idempotent:
             return len(self.parents(g))
         c = 0
@@ -617,6 +619,7 @@ class GraphActionCategorical:
 class GraphBuildingEnvContext:
     """A context class defines what the graphs are, how they map to and from data"""
     device: torch.device
+    action_mask_names: List[str]
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction

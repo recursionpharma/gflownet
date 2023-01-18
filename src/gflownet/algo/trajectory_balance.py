@@ -11,6 +11,8 @@ from torch_scatter import scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory
+from gflownet.envs.graph_building_env import Graph
+from gflownet.envs.graph_building_env import GraphAction
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphBuildingEnv
@@ -130,7 +132,30 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def get_idempotent_actions(self, g, gd, gp, action):
+    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
+        """Returns the list of idempotent actions for a given transition.
+
+        Note, this is slow! Correcting for idempotency is needed to estimate p(x) correctly, but
+        isn't generally necessary if we mostly care about sampling approximately from the modes
+        of p(x).
+
+        Parameters
+        ----------
+        g: Graph
+            The state graph
+        gd: gd.Data
+            The Data instance corresponding to g
+        gp: Graph
+            The next state's graph
+        action: GraphAction
+            Action leading from g to gp
+
+        Returns
+        -------
+        actions: List[Tuple[int,int,int]]
+            The list of idempotent actions that all lead from g to gp.
+
+        """
         iaction = self.ctx.GraphAction_to_aidx(gd, action)
         if action.action == GraphActionType.Stop:
             return [iaction]
@@ -185,16 +210,6 @@ class TrajectoryBalance:
             ]
             batch.ip_actions = torch.tensor(sum(ipa, []))
             batch.ip_lens = torch.tensor([len(i) for i in ipa])
-
-        if 0:
-            num_backward = torch.tensor([
-                # Count the number of backward transitions from s_{t+1},
-                # unless t+1 = T is the last time step
-                self.env.count_backward_transitions(tj['traj'][i + 1][0]) if i + 1 < len(tj['traj']) else 1
-                for tj in trajs
-                for i in range(len(tj['traj']))
-            ])
-            batch.num_backward = num_backward
         return batch
 
     def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
