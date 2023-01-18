@@ -136,7 +136,7 @@ class GraphTransformerGFN(nn.Module):
                                        num_heads=num_heads)
         num_final = num_emb
         num_glob_final = num_emb * 2
-        num_mlp_layers = 2
+        num_mlp_layers = 0
         self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
         if env_ctx.num_node_attr_logits is not None:
