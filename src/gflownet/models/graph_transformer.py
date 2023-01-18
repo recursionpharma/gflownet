@@ -171,8 +171,13 @@ class GraphTransformerGFN(nn.Module):
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         node_embeddings, graph_embeddings = self.transf(g, cond)
         # "Non-edges" are edges not currently in the graph that we could add
-        ne_row, ne_col = g.non_edge_index
-        non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+        if hasattr(g, 'non_edge_index'):
+            ne_row, ne_col = g.non_edge_index
+            non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+        else:
+            # If the environment context isn't setting non_edge_index, we can safely assume that
+            # action is not in ctx.action_type_order.
+            non_edge_embeddings = None
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
         e_row, e_col = g.edge_index[:, ::2]
         edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
@@ -188,58 +193,5 @@ class GraphTransformerGFN(nn.Module):
             logits=[self._action_type_to_logit[t](emb, g) for t in self.action_type_order],
             keys=[self._action_type_to_key[t] for t in self.action_type_order],
             types=self.action_type_order,
-        )
-        return cat, self.emb2reward(graph_embeddings)
-
-
-class GraphTransformerFragGFN(nn.Module):
-    """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical. Meant for
-    fragment-wise generation.
-
-    Outputs logits for the following actions
-    - Stop
-    - AddNode
-    - SetEdgeAttr
-    """
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2):
-        super().__init__()
-        self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
-                                       g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       num_heads=num_heads)
-        num_final = num_emb * 2
-        num_mlp_layers = 0
-        self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
-        # Edge attr logits are "sided", so we will compute both sides independently
-        self.emb2set_edge_attr = mlp(num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2, num_mlp_layers)
-        self.emb2stop = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
-        self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
-        self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
-        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
-        self.action_type_order = env_ctx.action_type_order
-
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
-        """See `GraphTransformer` for argument values"""
-        node_embeddings, graph_embeddings = self.transf(g, cond)
-        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
-        e_row, e_col = g.edge_index[:, ::2]
-        edge_emb = self.edge2emb(node_embeddings[e_row] + node_embeddings[e_col])
-        src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_row]], 1))
-        dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_col]], 1))
-
-        def _mask(x, m):
-            # mask logit vector x with binary mask m, -1000 is a tiny log-value
-            return x * m + -1000 * (1 - m)
-
-        cat = GraphActionCategorical(
-            g,
-            logits=[
-                self.emb2stop(graph_embeddings),
-                _mask(self.emb2add_node(node_embeddings), g.add_node_mask),
-                _mask(torch.cat([src_anchor_logits, dst_anchor_logits], 1), g.set_edge_attr_mask),
-            ],
-            keys=[None, 'x', 'edge_index'],
-            types=self.action_type_order,
-            masks=[torch.ones(1), g.add_node_mask.cpu(),
-                   g.set_edge_attr_mask.cpu()],
         )
         return cat, self.emb2reward(graph_embeddings)
