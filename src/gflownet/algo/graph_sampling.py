@@ -66,7 +66,6 @@ class GraphSampler:
         # This will be returned
         data = [{'traj': [], 'reward_pred': None, 'is_valid': True} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
-        zero = torch.tensor([0], device=dev).float()
         fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
         bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
 

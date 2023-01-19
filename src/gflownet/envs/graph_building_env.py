@@ -203,9 +203,9 @@ class GraphBuildingEnv:
         parents: List[Pair(GraphAction, Graph)]
             The list of parent-action pairs that lead to `g`.
         """
-        parents = []
+        parents: List[Tuple[GraphAction, Graph]] = []
         # Count node degrees
-        degree = defaultdict(int)
+        degree: Dict[int, int] = defaultdict(int)
         for a, b in g.edges:
             degree[a] += 1
             degree[b] += 1
