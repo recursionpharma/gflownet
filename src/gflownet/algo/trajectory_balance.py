@@ -1,5 +1,6 @@
 from typing import Any, Dict, Tuple
 
+import networkx as nx
 import numpy as np
 import torch
 from torch import Tensor
@@ -10,7 +11,10 @@ from torch_scatter import scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory
+from gflownet.envs.graph_building_env import Graph
+from gflownet.envs.graph_building_env import GraphAction
 from gflownet.envs.graph_building_env import GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
@@ -72,9 +76,12 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
-        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
-        self.graph_sampler.random_action_prob = hps['random_action_prob']
         self.is_doing_subTB = hps.get('tb_do_subtb', False)
+        self.correct_idempotent = hps.get('tb_correct_idempotent', False)
+
+        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp,
+                                          correct_idempotent=self.correct_idempotent)
+        self.graph_sampler.random_action_prob = hps['random_action_prob']
         if self.is_doing_subTB:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 1 if max_len is not None else 128)
             self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
@@ -125,6 +132,47 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
+    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
+        """Returns the list of idempotent actions for a given transition.
+
+        Note, this is slow! Correcting for idempotency is needed to estimate p(x) correctly, but
+        isn't generally necessary if we mostly care about sampling approximately from the modes
+        of p(x).
+
+        Parameters
+        ----------
+        g: Graph
+            The state graph
+        gd: gd.Data
+            The Data instance corresponding to g
+        gp: Graph
+            The next state's graph
+        action: GraphAction
+            Action leading from g to gp
+
+        Returns
+        -------
+        actions: List[Tuple[int,int,int]]
+            The list of idempotent actions that all lead from g to gp.
+
+        """
+        iaction = self.ctx.GraphAction_to_aidx(gd, action)
+        if action.action == GraphActionType.Stop:
+            return [iaction]
+        mask_name = self.ctx.action_mask_names[iaction[0]]
+        lmask = getattr(gd, mask_name)
+        nz = lmask.nonzero()
+        actions = [iaction]
+        for i in nz:
+            aidx = (iaction[0], i[0].item(), i[1].item())
+            if aidx == iaction:
+                continue
+            ga = self.ctx.aidx_to_GraphAction(gd, aidx)
+            child = self.env.step(g, ga)
+            if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
+                actions.append(aidx)
+        return actions
+
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
 
@@ -145,20 +193,23 @@ class TrajectoryBalance:
         actions = [
             self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
         ]
-        num_backward = torch.tensor([
-            # Count the number of backward transitions from s_{t+1},
-            # unless t+1 = T is the last time step
-            self.env.count_backward_transitions(tj['traj'][i + 1][0]) if i + 1 < len(tj['traj']) else 1
-            for tj in trajs
-            for i in range(len(tj['traj']))
-        ])
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
-        batch.num_backward = num_backward
+        batch.log_p_B = torch.cat([i['bck_logprobs'] for i in trajs], 0)
         batch.actions = torch.tensor(actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
+        if self.correct_idempotent:
+            agraphs = [i[0] for tj in trajs for i in tj['traj']]
+            bgraphs = sum([[i[0] for i in tj['traj'][1:]] + [tj['result']] for tj in trajs], [])
+            gactions = [i[1] for tj in trajs for i in tj['traj']]
+            ipa = [
+                self.get_idempotent_actions(g, gd, gp, a)
+                for g, gd, gp, a in zip(agraphs, torch_graphs, bgraphs, gactions)
+            ]
+            batch.ip_actions = torch.tensor(sum(ipa, []))
+            batch.ip_lens = torch.tensor([len(i) for i in ipa])
         return batch
 
     def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
@@ -194,10 +245,28 @@ class TrajectoryBalance:
         log_reward_preds = per_mol_out[final_graph_idx, 0]
         # Compute trajectory balance objective
         log_Z = model.logZ(cond_info)[:, 0]
-        # This is the log prob of each action in the trajectory
-        log_prob = fwd_cat.log_prob(batch.actions)
+        # Compute the log prob of each action in the trajectory
+        if self.correct_idempotent:
+            # If we want to correct for idempotent actions, we need to sum probabilities
+            # i.e. to compute P(s' | s) = sum_{a that lead to s'} P(a|s)
+            # here we compute the indices of the graph that each action corresponds to, ip_lens
+            # contains the number of  idempotent actions for each transition, so we
+            # repeat_interleave as with batch_idx
+            ip_idces = torch.arange(batch.ip_lens.shape[0], device=dev).repeat_interleave(batch.ip_lens)
+            # get the full logprobs
+            logprobs = fwd_cat.logsoftmax()
+            # batch.ip_actions lists those actions, so we index the logprobs appropriately
+            log_prob = torch.stack(
+                [logprobs[t][row + fwd_cat.slice[t][i], col] for i, (t, row, col) in zip(ip_idces, batch.ip_actions)])
+            # take the logsumexp (because we want to sum probabilities, not log probabilities)
+            # TODO: numerically stable version:
+            log_prob = scatter(log_prob.exp(), ip_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum').log()
+        else:
+            # Else just naively take the logprob of the actions we took
+            log_prob = fwd_cat.log_prob(batch.actions)
         # The log prob of each backward action
-        log_p_B = (1 / batch.num_backward).log()
+        log_p_B = batch.log_p_B
+        assert log_prob.shape == log_p_B.shape
         # Clip rewards
         assert log_rewards.ndim == 1
         clip_log_R = torch.maximum(log_rewards, torch.tensor(self.illegal_action_logreward, device=dev))

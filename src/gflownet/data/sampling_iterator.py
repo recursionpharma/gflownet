@@ -159,7 +159,7 @@ class SamplingIterator(IterableDataset):
                     valid_idcs = torch.tensor(
                         [i + num_offline for i in range(num_online) if trajs[i + num_offline]['is_valid']]).long()
                     # fetch the valid trajectories endpoints
-                    mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
+                    mols = [self.ctx.graph_to_mol(trajs[i]['result']) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
                     assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
@@ -214,13 +214,11 @@ class SamplingIterator(IterableDataset):
     def log_generated(self, trajs, log_rewards, flat_rewards, cond_info):
         if self.log_molecule_smis:
             mols = [
-                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
+                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['result'])) if trajs[i]['is_valid'] else ''
                 for i in range(len(trajs))
             ]
         else:
-            mols = [
-                nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['traj'][-1][0], None, 'v') for t in trajs
-            ]
+            mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['result'], None, 'v') for t in trajs]
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         log_rewards = log_rewards.data.numpy().tolist()
