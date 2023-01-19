@@ -52,9 +52,9 @@ Or for CPU use:
 pip install -e . --find-links https://data.pyg.org/whl/torch-1.10.0+cpu.html
 ```
 
-To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.8`, use the following scheme:
+To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.10`, use the following scheme:
 ```bash
-pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.8 --find-links ...
+pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.10 --find-links ...
 ```
 
 ## Developing & Contributing
