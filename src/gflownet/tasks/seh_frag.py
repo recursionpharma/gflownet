@@ -16,7 +16,7 @@ from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
-from gflownet.models.graph_transformer import GraphTransformerFragGFN
+from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
 from gflownet.train import GFNTrainer
@@ -119,7 +119,7 @@ class SEHFragTrainer(GFNTrainer):
                             ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
-        self.model = GraphTransformerFragGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+        self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
 
     def setup(self):
         hps = self.hps

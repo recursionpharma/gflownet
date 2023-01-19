@@ -20,7 +20,7 @@ from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.models import bengio2021flow
-from gflownet.models.graph_transformer import GraphTransformerFragGFN
+from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
 from gflownet.train import FlatRewards
 from gflownet.train import GFNTask
@@ -166,7 +166,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
                                                    num_layers=self.hps['num_layers'], num_objectives=4)
         else:
-            model = GraphTransformerFragGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
@@ -223,9 +223,9 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'lr_decay': 10000,
-        'log_dir': '/scratch/logs/seh_frag_moo/run_tmp/',
+        'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp/',
         'num_training_steps': 20_000,
-        'validate_every': 5,
+        'validate_every': 500,
         'sampling_tau': 0.95,
         'num_layers': 6,
         'num_data_loader_workers': 12,
