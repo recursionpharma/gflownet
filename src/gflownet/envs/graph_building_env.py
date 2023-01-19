@@ -173,7 +173,10 @@ class GraphBuildingEnv:
         elif action.action is GraphActionType.SetNodeAttr:
             assert self.allow_node_attr
             assert action.source in gp.nodes
-            assert action.attr not in gp.nodes[action.source]
+            # For some "optional" attributes like wildcard atoms, we indicate that they haven't been
+            # chosen by the 'None' value. Here we make sure that either the attribute doesn't
+            # exist, or that it's an optional attribute that hasn't yet been set.
+            assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
             gp.nodes[action.source][action.attr] = action.value
 
         elif action.action is GraphActionType.SetEdgeAttr:

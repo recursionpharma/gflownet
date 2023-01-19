@@ -13,7 +13,8 @@ from gflownet.utils import metrics
 
 
 class MultiObjectiveStatsHook:
-    def __init__(self, num_to_keep: int, log_dir: str, save_every=50):
+    def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=True, compute_hsri=False,
+                 compute_normed=False):
         # This __init__ is only called in the main process. This object is then (potentially) cloned
         # in pytorch data worker processed and __call__'ed from within those processes. This means
         # each process will compute its own Pareto front, which we will accumulate in the main
@@ -22,8 +23,9 @@ class MultiObjectiveStatsHook:
         self.all_flat_rewards: List[Tensor] = []
         self.all_smi: List[str] = []
         self.hsri_epsilon = 0.3
-        self.compute_hsri = False
-        self.compute_normed = False
+        self.compute_hvi = compute_hvi
+        self.compute_hsri = compute_hsri
+        self.compute_normed = compute_normed
         self.pareto_queue: mp.Queue = mp.Queue()
         self.pareto_front = None
         self.pareto_front_smi = None
@@ -37,15 +39,28 @@ class MultiObjectiveStatsHook:
     def __del__(self):
         self.stop.set()
 
+    def _hsri(self, x):
+        assert x.ndim == 2, "x should have shape (num points, num objectives)"
+        upper = np.zeros(x.shape[-1]) + self.hsri_epsilon
+        lower = np.ones(x.shape[-1]) * -1 - self.hsri_epsilon
+        hsr_indicator = metrics.HSR_Calculator(lower, upper)
+        try:
+            hsri, _ = hsr_indicator.calculate_hsr(-x)
+        except Exception:
+            hsri = 1e-42
+        return hsri
+
     def _run_pareto_accumulation(self):
         num_updates = 0
         while not self.stop.is_set():
             try:
-                r, smi = self.pareto_queue.get(True, 1)  # Block for a second then check if we've stopped
+                r, smi, owid = self.pareto_queue.get(True, 1)  # Block for a second then check if we've stopped
             except queue.Empty:
                 continue
-            except ConnectionError:
+            except ConnectionError as e:
+                print('ConnectionError', e)
                 break
+
             if self.pareto_front is None:
                 p = self.pareto_front = r
                 psmi = smi
@@ -55,9 +70,15 @@ class MultiObjectiveStatsHook:
             idcs = metrics.is_pareto_efficient(-p, False)
             self.pareto_front = p[idcs]
             self.pareto_front_smi = [psmi[i] for i in idcs]
-            self.pareto_metrics[0] = metrics.get_hypervolume(torch.tensor(self.pareto_front), zero_ref=True)
+            if self.compute_hvi:
+                self.pareto_metrics[0] = metrics.get_hypervolume(torch.tensor(self.pareto_front), zero_ref=True)
+            if self.compute_hsri:
+                self.pareto_metrics[1] = self._hsri(self.pareto_front)
+
             num_updates += 1
             if num_updates % self.save_every == 0:
+                if self.pareto_queue.qsize() > 10:
+                    print("Warning: pareto metrics computation lagging")
                 torch.save(
                     {
                         'pareto_front': self.pareto_front,
@@ -83,13 +104,19 @@ class MultiObjectiveStatsHook:
         gfn_pareto = flat_rewards[pareto_idces]
         pareto_smi = [self.all_smi[i] for i in pareto_idces]
 
-        self.pareto_queue.put((gfn_pareto, pareto_smi))
-        unnorm_hypervolume_with_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
-        unnorm_hypervolume_wo_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
-        info = {
-            'UHV with zero ref': unnorm_hypervolume_with_zero_ref,
-            'UHV w/o zero ref': unnorm_hypervolume_wo_zero_ref,
-        }
+        worker_info = torch.utils.data.get_worker_info()
+        wid = (worker_info.id if worker_info is not None else 0)
+        self.pareto_queue.put((gfn_pareto, pareto_smi, wid))
+        info = {}
+        if self.compute_hvi:
+            unnorm_hypervolume_with_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
+            unnorm_hypervolume_wo_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
+            info = {
+                **info,
+                'UHV with zero ref': unnorm_hypervolume_with_zero_ref,
+                'UHV w/o zero ref': unnorm_hypervolume_wo_zero_ref,
+                'lifetime_hv0': self.pareto_metrics[0],
+            }
         if self.compute_normed:
             normed_gfn_pareto = hypercube_transform(gfn_pareto)
             hypervolume_with_zero_ref = metrics.get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=True)
@@ -100,23 +127,12 @@ class MultiObjectiveStatsHook:
                 'HV w/o zero ref': hypervolume_wo_zero_ref,
             }
         if self.compute_hsri:
-            upper = np.zeros(gfn_pareto.shape[-1]) + self.hsri_epsilon
-            lower = np.ones(gfn_pareto.shape[-1]) * -1 - self.hsri_epsilon
-            hsr_indicator = metrics.HSR_Calculator(lower, upper)
-            try:
-                hsri_w_pareto, x = hsr_indicator.calculate_hsr(-1 * gfn_pareto)
-            except Exception:
-                hsri_w_pareto = 0
-            try:
-                hsri_on_flat, _ = hsr_indicator.calculate_hsr(-1 * flat_rewards)
-            except Exception:
-                hsri_on_flat = 0
+            hsri_w_pareto = self._hsri(gfn_pareto)
             info = {
                 **info,
-                'hsri_with_pareto': hsri_w_pareto,
-                'hsri_on_flat_rew': hsri_on_flat,
+                'hsri': hsri_w_pareto,
+                'lifetime_hsri': self.pareto_metrics[1],
             }
-        info['lifetime_hv0'] = self.pareto_metrics[0]
 
         return info
 
@@ -138,7 +154,7 @@ class TopKHook:
             try:
                 data += self.queue.get(True, 1)
             except queue.Empty:
-                print("Warning, TopKHook queue timed out!")
+                # print("Warning, TopKHook queue timed out!")
                 break
         repeats = defaultdict(list)
         for idx, r in data:

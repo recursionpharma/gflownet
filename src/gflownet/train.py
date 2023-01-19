@@ -1,3 +1,4 @@
+import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
@@ -7,6 +8,7 @@ from torch import Tensor
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+import torch.utils.tensorboard
 import torch_geometric.data as gd
 
 from gflownet.data.sampling_iterator import SamplingIterator
@@ -111,7 +113,7 @@ class GFNTrainer:
         self.num_workers: int = self.hps.get('num_data_loader_workers', 0)
         # The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
         # `self.sampling_model`.
-        self.offline_ratio = 0.5
+        self.offline_ratio = self.hps.get('offline_ratio', 0.5)
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
         # If True, print messages during training
@@ -162,14 +164,14 @@ class GFNTrainer:
                                            persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=self.mb_size)
+        loss, info = self.algo.compute_batch_losses(self.model, batch)
         self.step(loss)
         if hasattr(batch, 'extra_info'):
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
 
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch, num_bootstrap=batch.num_offline)
+        loss, info = self.algo.compute_batch_losses(self.model, batch)
         if hasattr(batch, 'extra_info'):
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
@@ -178,13 +180,19 @@ class GFNTrainer:
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
+        os.makedirs(self.hps['log_dir'], exist_ok=True)
+        torch.save({
+            'hps': self.hps,
+        }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
+
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
         callbacks = self.build_callbacks()
-        for it, batch in zip(range(1, 1 + self.hps['num_training_steps']), train_dl):
+        start = self.hps.get('start_at_step', 0) + 1
+        for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
@@ -201,13 +209,24 @@ class GFNTrainer:
                     if hasattr(c, 'on_validation_end'):
                         c.on_validation_end(end_metrics)
                 self.log(end_metrics, it, 'valid_end')
-                torch.save({
-                    'models_state_dict': [self.model.state_dict()],
-                    'hps': self.hps,
-                }, open(pathlib.Path(self.hps['log_dir']) / 'model_state.pt', 'wb'))
+                self._save_state(it)
+        self._save_state(self.hps['num_training_steps'])
+
+    def _save_state(self, it):
+        torch.save({
+            'models_state_dict': [self.model.state_dict()],
+            'hps': self.hps,
+            'step': it,
+        }, open(pathlib.Path(self.hps['log_dir']) / 'model_state.pt', 'wb'))
 
     def log(self, info, index, key):
         if not hasattr(self, '_summary_writer'):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.hps['log_dir'])
         for k, v in info.items():
             self._summary_writer.add_scalar(f'{key}_{k}', v, index)
+
+
+def cycle(it):
+    while True:
+        for i in it:
+            yield i

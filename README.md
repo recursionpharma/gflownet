@@ -41,14 +41,20 @@ A good place to get started is with the [sEH fragment-based MOO task](src/gflown
 
 ### PIP
 
-This package is installable as a PIP package:
+This package is installable as a PIP package, but since it depends on some torch-geometric package wheels, the `--find-links` arguments must be specified as well:
 
 ```bash
-pip install -e .
+pip install -e . --find-links https://data.pyg.org/whl/torch-1.10.0+cu113.html
 ```
+Or for CPU use:
+
+```bash
+pip install -e . --find-links https://data.pyg.org/whl/torch-1.10.0+cpu.html
+```
+
 To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.8`, use the following scheme:
 ```bash
-pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.8
+pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.8 --find-links ...
 ```
 
 ## Developing & Contributing

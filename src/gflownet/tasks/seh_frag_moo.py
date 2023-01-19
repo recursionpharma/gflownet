@@ -71,6 +71,9 @@ class SEHMOOTask(GFNTask):
         elif self.temperature_sample_dist == 'uniform':
             beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = self.temperature_dist_params[1]
+        elif self.temperature_sample_dist == 'loguniform':
+            beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
+            upper_bound = self.temperature_dist_params[1]
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = 1
@@ -171,6 +174,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup(self):
         super().setup()
+        self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
+                               ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4

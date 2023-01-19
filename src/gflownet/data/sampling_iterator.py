@@ -2,6 +2,7 @@ import os
 import sqlite3
 from typing import Callable, List
 
+import networkx as nx
 import numpy as np
 from rdkit import Chem
 from rdkit import RDLogger
@@ -60,6 +61,7 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
+        self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
@@ -130,7 +132,8 @@ class SamplingIterator(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
                 # Sample some dataset data
                 mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
-                flat_rewards = list(self.task.flat_reward_transform(torch.tensor(flat_rewards)))
+                flat_rewards = list(self.task.flat_reward_transform(
+                    torch.stack(flat_rewards))) if len(flat_rewards) else []
                 graphs = [self.ctx.mol_to_graph(m) for m in mols]
                 trajs = self.algo.create_training_data_from_graphs(graphs)
                 num_online = self.online_batch_size
@@ -159,6 +162,7 @@ class SamplingIterator(IterableDataset):
                     mols = [self.ctx.graph_to_mol(trajs[i]['traj'][-1][0]) for i in valid_idcs]
                     # ask the task to compute their reward
                     preds, m_is_valid = self.task.compute_flat_rewards(mols)
+                    assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
                     valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
@@ -174,14 +178,15 @@ class SamplingIterator(IterableDataset):
                     # Override the is_valid key in case the task made some mols invalid
                     for i in range(num_online):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
-                    for i, m in zip(valid_idcs, valid_mols):
-                        trajs[i]['smi'] = Chem.MolToSmiles(m)
+                    if self.log_molecule_smis:
+                        for i, m in zip(valid_idcs, valid_mols):
+                            trajs[i]['smi'] = Chem.MolToSmiles(m)
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
-            rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
-            rewards[torch.logical_not(is_valid)] = np.exp(self.algo.illegal_action_logreward)
+            log_rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
+            log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
             # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info['encoding'], rewards)
+            batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
             batch.num_offline = num_offline
             batch.num_online = num_online
             batch.flat_rewards = flat_rewards
@@ -195,29 +200,34 @@ class SamplingIterator(IterableDataset):
                     i['data_idx'] = j
 
             if num_online > 0 and self.log_dir is not None:
-                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
+                self.log_generated(trajs[num_offline:], log_rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
             if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
-                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
+                        hook(trajs[num_offline:], log_rewards[num_offline:], flat_rewards[num_offline:],
                              {k: v[num_offline:] for k, v in cond_info.items()}))
                 batch.extra_info = extra_info
             yield batch
 
-    def log_generated(self, trajs, rewards, flat_rewards, cond_info):
-        mols = [
-            Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
-            for i in range(len(trajs))
-        ]
+    def log_generated(self, trajs, log_rewards, flat_rewards, cond_info):
+        if self.log_molecule_smis:
+            mols = [
+                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['traj'][-1][0])) if trajs[i]['is_valid'] else ''
+                for i in range(len(trajs))
+            ]
+        else:
+            mols = [
+                nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['traj'][-1][0], None, 'v') for t in trajs
+            ]
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
-        rewards = rewards.data.numpy().tolist()
+        log_rewards = log_rewards.data.numpy().tolist()
         preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
         logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences']]
 
-        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] +
+        data = ([[mols[i], log_rewards[i]] + flat_rewards[i] + preferences[i] +
                  [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
         data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
                        [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
