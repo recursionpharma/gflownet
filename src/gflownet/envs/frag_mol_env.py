@@ -166,11 +166,11 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         """
         return gd.Batch.from_data_list(graphs, follow_batch=['edge_index'])
 
-    def mol_to_graph(self, mol):
+    def obj_to_graph(self, mol):
         """Convert an RDMol to a Graph"""
         raise NotImplementedError()
 
-    def graph_to_mol(self, g: Graph) -> Chem.Mol:
+    def graph_to_obj(self, g: Graph) -> Chem.Mol:
         """Convert a Graph to an RDKit molecule
 
         Parameters
@@ -215,10 +215,13 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     def is_sane(self, g: Graph) -> bool:
         """Verifies whether the given Graph is valid according to RDKit"""
         try:
-            mol = self.graph_to_mol(g)
+            mol = self.graph_to_obj(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
         except Exception:
             return False
         if mol is None:
             return False
         return True
+
+    def get_object_description(self, g: Graph, is_valid: bool) -> str:
+        return Chem.MolToSmiles(self.graph_to_obj(g)) if is_valid else ''

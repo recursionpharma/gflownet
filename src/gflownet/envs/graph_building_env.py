@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Tuple
 import networkx as nx
 from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
-from rdkit.Chem import Mol
 import torch
 import torch_geometric.data as gd
 from torch_scatter import scatter
@@ -700,18 +699,17 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def mol_to_graph(self, mol: Mol) -> Graph:
-        """Verifies whether a graph is sane according to the context. This can
-        catch, e.g. impossible molecules.
+    def obj_to_graph(self, o: object) -> Graph:
+        """Converts this context's object to a Graph representation.
 
         Parameters
         ----------
-        mol: Mol
-            An RDKit molecule
+        o: object
+            How the context represents objects internally
 
         Returns
         -------
         g: Graph
-            The corresponding Graph representation of that molecule.
+            The corresponding Graph representation of that object.
         """
         raise NotImplementedError()
