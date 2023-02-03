@@ -1,6 +1,6 @@
 import os
-import pickle
 import pathlib
+import pickle
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol
