@@ -1,6 +1,5 @@
 import os
 import pathlib
-import pickle
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -176,7 +175,7 @@ class GFNTrainer:
                 raise ValueError('parameters are not finite')
         except ValueError as e:
             os.makedirs(self.hps['log_dir'], exist_ok=True)
-            pickle.dump([self.model.state_dict(), batch, loss, info], open(self.hps['log_dir'] + '/dump.pkl', 'wb'))
+            torch.save([self.model.state_dict(), batch, loss, info], open(self.hps['log_dir'] + '/dump.pkl', 'wb'))
             raise e
 
         if step_info is not None:
