@@ -127,7 +127,7 @@ def main(smi, n_steps):
         if not issub:
             raise ValueError()
         print(g)
-    new_mol = ctx.graph_to_mol(g)
+    new_mol = ctx.graph_to_obj(g)
     print(Chem.MolToSmiles(new_mol))
     # This should be True as well
     print(new_mol.HasSubstructMatch(mol) and mol.HasSubstructMatch(new_mol))

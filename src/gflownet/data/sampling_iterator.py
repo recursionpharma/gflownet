@@ -2,9 +2,7 @@ import os
 import sqlite3
 from typing import Callable, List
 
-import networkx as nx
 import numpy as np
-from rdkit import Chem
 from rdkit import RDLogger
 import torch
 import torch.nn as nn
@@ -42,7 +40,7 @@ class SamplingIterator(IterableDataset):
             If True, data is sampled iid for every batch. Otherwise, this is a normal in-order
             dataset iterator.
         log_dir: str
-            If not None, logs each SamplingIterator worker's generated molecules to that file.
+            If not None, logs each SamplingIterator worker's generated objects to that file.
         sample_cond_info: bool
             If True (default), then the dataset is a dataset of points used in offline training.
             If False, then the dataset is a dataset of preferences (e.g. used to validate the model)
@@ -61,7 +59,6 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
-        self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
@@ -121,7 +118,7 @@ class SamplingIterator(IterableDataset):
         self.ctx.device = self.device
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
-            self.log_path = f'{self.log_dir}/generated_mols_{self._wid}.db'
+            self.log_path = f'{self.log_dir}/generated_objs_{self._wid}.db'
             self.log.connect(self.log_path)
 
         for idcs in self._idx_iterator():
@@ -131,10 +128,10 @@ class SamplingIterator(IterableDataset):
             if self.sample_cond_info:
                 cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
                 # Sample some dataset data
-                mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
+                objs, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
                 flat_rewards = list(self.task.flat_reward_transform(
                     torch.stack(flat_rewards))) if len(flat_rewards) else []
-                graphs = [self.ctx.mol_to_graph(m) for m in mols]
+                graphs = [self.ctx.obj_to_graph(m) for m in objs]
                 trajs = self.algo.create_training_data_from_graphs(graphs)
                 num_online = self.online_batch_size
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
@@ -159,13 +156,12 @@ class SamplingIterator(IterableDataset):
                     valid_idcs = torch.tensor(
                         [i + num_offline for i in range(num_online) if trajs[i + num_offline]['is_valid']]).long()
                     # fetch the valid trajectories endpoints
-                    mols = [self.ctx.graph_to_mol(trajs[i]['result']) for i in valid_idcs]
+                    objs = [self.ctx.graph_to_obj(trajs[i]['result']) for i in valid_idcs]
                     # ask the task to compute their reward
-                    preds, m_is_valid = self.task.compute_flat_rewards(mols)
+                    preds, m_is_valid = self.task.compute_flat_rewards(objs)
                     assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
-                    # The task may decide some of the mols are invalid, we have to again filter those
+                    # The task may decide some of the objs are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
                     pred_reward = torch.zeros((num_online, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
                     # TODO: reintegrate bootstrapped reward predictions
@@ -175,12 +171,10 @@ class SamplingIterator(IterableDataset):
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)
-                    # Override the is_valid key in case the task made some mols invalid
+                    # Override the is_valid key in case the task made some objs invalid
                     for i in range(num_online):
                         trajs[num_offline + i]['is_valid'] = is_valid[num_offline + i].item()
-                    if self.log_molecule_smis:
-                        for i, m in zip(valid_idcs, valid_mols):
-                            trajs[i]['smi'] = Chem.MolToSmiles(m)
+
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
             log_rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
@@ -190,7 +184,7 @@ class SamplingIterator(IterableDataset):
             batch.num_offline = num_offline
             batch.num_online = num_online
             batch.flat_rewards = flat_rewards
-            batch.mols = mols
+            batch.objs = objs
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
             batch.preferences = cond_info.get('preferences', None)
@@ -212,22 +206,15 @@ class SamplingIterator(IterableDataset):
             yield batch
 
     def log_generated(self, trajs, log_rewards, flat_rewards, cond_info):
-        if self.log_molecule_smis:
-            mols = [
-                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]['result'])) if trajs[i]['is_valid'] else ''
-                for i in range(len(trajs))
-            ]
-        else:
-            mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['result'], None, 'v') for t in trajs]
-
+        descs = [self.ctx.get_object_description(t['result'], t['is_valid']) for t in trajs]
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         log_rewards = log_rewards.data.numpy().tolist()
-        preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
+        preferences = cond_info.get('preferences', torch.zeros((len(descs), 0))).data.numpy().tolist()
         logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences']]
 
-        data = ([[mols[i], log_rewards[i]] + flat_rewards[i] + preferences[i] +
+        data = ([[descs[i], log_rewards[i]] + flat_rewards[i] + preferences[i] +
                  [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
-        data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
+        data_labels = (['desc', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
                        [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
         self.log.insert_many(data, data_labels)
 
