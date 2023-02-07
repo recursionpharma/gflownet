@@ -208,6 +208,8 @@ class GFNTrainer:
                 for c in callbacks.values():
                     if hasattr(c, 'on_validation_end'):
                         c.on_validation_end(end_metrics)
+                if self.verbose:
+                    print('[valid]', it, ' '.join(f'{k}:{v:.2f}' for k, v in end_metrics.items()))
                 self.log(end_metrics, it, 'valid_end')
                 self._save_state(it)
         self._save_state(self.hps['num_training_steps'])
