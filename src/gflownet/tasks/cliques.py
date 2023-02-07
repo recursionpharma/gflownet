@@ -212,13 +212,14 @@ class CliquesTrainer(GFNTrainer):
         self._data = load_clique_data()
         self.ctx = CliquesEnvContext(4, 2, num_cond_dim=1, graph_data=self._data)
         self.env = GraphBuildingEnv()
+        self._do_supervised = hps.get('do_supervised', False)
 
         self.training_data = CliqueDataset(self._data, self.ctx, 4, train=True, ratio=hps.get('train_ratio', 0.9),
                                            modal_seed=hps.get('modal_seed', None))
         self.test_data = CliqueDataset(self._data, self.ctx, 4, train=False, ratio=hps.get('train_ratio', 0.9),
                                        modal_seed=hps.get('modal_seed', None))
         num_emb, num_layers, num_heads = hps['num_emb'], hps['num_layers'], hps.get('num_heads', 2)
-        if hps.get('do_supervised', False):
+        if self._do_supervised:
             model = GraphTransformerRegressor(x_dim=self.ctx.num_node_dim, e_dim=self.ctx.num_edge_dim, g_dim=1,
                                               num_emb=num_emb, num_layers=num_layers, num_heads=num_heads)
         else:
@@ -250,10 +251,14 @@ class CliquesTrainer(GFNTrainer):
         self.valid_offline_ratio = 0
 
         self.algo.task = self.task
-        self.exact_prob_cb = ExactProbCompCallback(self, [self.env.new()] + self.training_data.data, self.device)
+        if not self._do_supervised:
+            self.exact_prob_cb = ExactProbCompCallback(self, [self.env.new()] + self.training_data.data, self.device)
+            self._callbacks = {'true_px_error': self.exact_prob_cb}
+        else:
+            self._callbacks = {}
 
     def build_callbacks(self):
-        return {'true_px_error': self.exact_prob_cb}
+        return self._callbacks
 
     def step(self, loss: Tensor):
         loss.backward()
