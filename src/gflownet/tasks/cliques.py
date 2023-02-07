@@ -151,6 +151,9 @@ class CliqueTask(GFNTask):
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = 1
+        elif self.temperature_sample_dist == 'const':
+            beta = np.ones(n) * self.temperature_dist_params
+            upper_bound = 1
         beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)
         return {'beta': torch.tensor(beta), 'encoding': torch.zeros((n, 1))}  #beta_enc}
 
@@ -188,8 +191,8 @@ class CliquesTrainer(GFNTrainer):
             'tb_epsilon': None,
             'tb_do_subtb': True,
             'illegal_action_logreward': -80,
-            'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_sample_dist': 'const',
+            'temperature_dist_params': '1',
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
