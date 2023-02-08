@@ -41,6 +41,22 @@ def colored_n_clique_reward(g, n=4):
     return np.maximum(np.sum(cliques_match) - np.sum(num_cliques) + len(g) - 1, -10)
 
 
+def even_neighbors_reward(g):
+    total_correct = 0
+    for n in g:
+        num_diff_colr = 0
+        c = g.nodes[n]['v']
+        for i in g.neighbors(n):
+            num_diff_colr += int(g.nodes[i]['v'] != c)
+        total_correct += int(num_diff_colr % 2 == 0) - (1 if num_diff_colr == 0 else 0)
+    return np.float32((total_correct - len(g.nodes) if len(g.nodes) > 3 else -5) * 10 / 7)
+
+
+def count_reward(g):
+    ncols = np.bincount([g.nodes[i]['v'] for i in g], minlength=2)
+    return np.float32(abs(ncols[0] + ncols[1] / 2 - 4) / 3.5 * 10 - 10)
+
+
 def load_clique_data():
     data = pickle.load(gzip.open('/scratch/emmanuel.bengio/data/cliques/two_col_7_graphs.pkl.gz', 'rb'))
     return data
@@ -97,12 +113,18 @@ class CliqueDataset(Dataset):
         self.output_graphs = output_graphs
         self._gc = nx.complete_graph(7)
         self._enum_edges = list(self._gc.edges)
+        self.reward_func = 'cliques'
 
     def __len__(self):
         return len(self.idcs)
 
     def reward(self, g):
-        return colored_n_clique_reward(g, self.n_clique)
+        if self.reward_func == 'cliques':
+            return colored_n_clique_reward(g, self.n_clique)
+        elif self.reward_func == 'even_neighbors':
+            return even_neighbors_reward(g)
+        elif self.reward_func == 'count':
+            return count_reward(g)
 
     def collate_fn(self, batch):
         graphs, rewards = zip(*batch)
@@ -221,13 +243,14 @@ class CliquesTrainer(GFNTrainer):
                                            modal_seed=hps.get('modal_seed', None))
         self.test_data = CliqueDataset(self._data, self.ctx, 4, train=False, ratio=hps.get('train_ratio', 0.9),
                                        modal_seed=hps.get('modal_seed', None))
+        self.training_data.reward_func = self.test_data.reward_func = self.hps.get('reward_func', 'cliques')
         num_emb, num_layers, num_heads = hps['num_emb'], hps['num_layers'], hps.get('num_heads', 2)
         if self._do_supervised:
             model = GraphTransformerRegressor(x_dim=self.ctx.num_node_dim, e_dim=self.ctx.num_edge_dim, g_dim=1,
                                               num_emb=num_emb, num_layers=num_layers, num_heads=num_heads)
         else:
             model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'],
-                                        num_mlp_layers=hps['num_mlp_layers'])
+                                        num_mlp_layers=hps['num_mlp_layers'], num_heads=num_heads)
             self.test_data = RepeatedPreferenceDataset(np.ones((32, 1)), 8)
 
         self.model = self.sampling_model = model
@@ -241,7 +264,7 @@ class CliquesTrainer(GFNTrainer):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=self.ctx.recommended_max_nodes,
                                       max_len=22)
         self.task = CliqueTask(self.training_data, hps['temperature_sample_dist'],
-                               ast.literal_eval(hps['temperature_dist_params']), wrap_model=self._wrap_model_mp,
+                               ast.literal_eval(str(hps['temperature_dist_params'])), wrap_model=self._wrap_model_mp,
                                hps=hps)
         self.sampling_tau = hps.get('sampling_tau', 0)
         self.mb_size = hps['global_batch_size']
@@ -417,17 +440,21 @@ class ExactProbCompCallback:
         return prob_of_ending_t
 
 
-class RewardMSE:
+class Regression:
     def compute_batch_losses(self, model, batch, **kw):
         pred = model(batch, torch.ones((batch.y.shape[0], 1), device=batch.x.device))
-        loss = (pred - batch.y).pow(2).mean()
+        if self.loss_type == 'MSE':
+            loss = (pred - batch.y).pow(2).mean()
+        elif self.loss_type == 'MAE':
+            loss = abs(pred - batch.y).mean()
         return loss, {'loss': loss}
 
 
 class CliquesSupervisedTrainer(CliquesTrainer):
     def setup(self):
         super().setup()
-        self.algo = RewardMSE()
+        self.algo = Regression()
+        self.algo.loss_type = self.hps.get('loss_type', 'MSE')
         self.training_data.output_graphs = True
         self.test_data.output_graphs = True
 
