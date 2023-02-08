@@ -117,8 +117,9 @@ class GraphTransformer(nn.Module):
                 o = norm1(o + l_h * scale + shift, aug_batch)
                 o = norm2(o + ff(o), aug_batch)
             else:
-                agg = gen(norm1(o, aug_batch), aug_edge_index, aug_e)
-                l_h = linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e))
+                o_norm = norm1(o, aug_batch)
+                agg = gen(o_norm, aug_edge_index, aug_e)
+                l_h = linear(trans(torch.cat([o_norm, agg], 1), aug_edge_index, aug_e))
                 scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
                 o = o + l_h * scale + shift
                 o = o + ff(norm2(o, aug_batch))
