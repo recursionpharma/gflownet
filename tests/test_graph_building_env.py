@@ -1,6 +1,9 @@
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
-from torch_geometric.data import Data, Batch
 import torch
+from torch_geometric.data import Batch
+from torch_geometric.data import Data
+
+from gflownet.envs.graph_building_env import GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphActionType
 
 
 def make_test_cat():

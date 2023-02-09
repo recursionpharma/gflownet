@@ -602,7 +602,7 @@ class GraphActionCategorical:
         # We want to do the equivalent of this:
         #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
         # but faster.
-        
+
         # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
         actions = torch.tensor(actions, device=self.dev, dtype=torch.long)
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
