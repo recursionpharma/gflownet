@@ -260,7 +260,10 @@ class TrajectoryBalance:
                 [logprobs[t][row + fwd_cat.slice[t][i], col] for i, (t, row, col) in zip(ip_idces, batch.ip_actions)])
             # take the logsumexp (because we want to sum probabilities, not log probabilities)
             # TODO: numerically stable version:
-            log_prob = scatter(log_prob.exp(), ip_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum').log()
+            # As a (reasonable) band-aid, ignore p < 1e-30, this will prevent underflows due to
+            # scatter(small number) = 0 on CUDA
+            p = scatter(log_prob.exp(), ip_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum').clamp(1e-30)
+            log_prob = p.log()
         else:
             # Else just naively take the logprob of the actions we took
             log_prob = fwd_cat.log_prob(batch.actions)
@@ -340,8 +343,6 @@ class TrajectoryBalance:
             'loss': loss.item(),
         }
 
-        if not torch.isfinite(traj_losses).all():
-            raise ValueError('loss is not finite')
         return loss, info
 
     def _init_subtb(self, dev):
