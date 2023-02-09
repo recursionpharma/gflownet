@@ -409,6 +409,7 @@ class GraphActionCategorical:
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
+        self._epsilon = 1e-20
         # TODO: mask is only used by graph_sampler, but maybe we should be more careful with it
         # (e.g. in a softmax and such)
         # Can be set to indicate which logits are masked out (shape must match logits or have
@@ -432,7 +433,7 @@ class GraphActionCategorical:
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
         self.slice = [
-            graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs, device=dev) for k in keys
+            graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs + 1, device=dev) for k in keys
         ]
         self.logprobs = None
 
@@ -468,7 +469,7 @@ class GraphActionCategorical:
             dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
+        exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
             scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
@@ -487,7 +488,7 @@ class GraphActionCategorical:
                          dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_vals = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(x, self.batch)]
+        exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         reduction = sum([
             scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_vals, self.batch)
@@ -573,7 +574,7 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None):
+    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
@@ -582,17 +583,53 @@ class GraphActionCategorical:
         actions: List[Tuple[int, int, int]]
             A list of n action tuples denoting indices
         logprobs: List[Tensor]
-            The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
+            [Optional] The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
             assumes there are n graphs represented by this object).
+        batch: Tensor
+            [Optional] The batch of each action. If None (default) then this is arange(num_graphs), i.e. one
+            action per graph is selected, in order.
 
         Returns
         -------
         log_prob: Tensor
             The log probability of each action.
         """
+        N = self.num_graphs
         if logprobs is None:
             logprobs = self.logsoftmax()
-        return torch.stack([logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in enumerate(actions)])
+        if batch is None:
+            batch = torch.arange(N, device=self.dev)
+        # We want to do the equivalent of this:
+        #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
+        # but faster.
+        
+        # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
+        actions = torch.tensor(actions, device=self.dev, dtype=torch.long)
+        assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
+        # To index the log probabilities efficiently, we will ravel the array, and compute the
+        # indices of the raveled actions.
+        # First, flatten and cat:
+        all_logprobs = torch.cat([i.flatten() for i in logprobs])
+        # The action type offset depends on how many elements each logit group has, and we retrieve by
+        # the type index 0:
+        t_offsets = torch.tensor([0] + [i.numel() for i in logprobs], device=self.dev).cumsum(0)[actions[:, 0]]
+        # The row offset depends on which row the graph's corresponding logits start (since they are
+        # all concatenated together). This is stored in self.slice; each logit group has its own
+        # slice tensor of shape N+1 (since the 0th entry is always 0).
+        # We want slice[t][i] for every graph i in the batch, since each slice has N+1 elements we
+        # multiply t by N+1, batch is by default arange(N) so it just gets each graph's
+        # corresponding row index.
+        graph_row_offsets = torch.cat(self.slice)[actions[:, 0] * (N + 1) + batch]
+        # Now we add the row value. To do that we need to know the number of elements of each row in
+        # the flattened array, this is simply i.shape[1].
+        row_lengths = torch.tensor([i.shape[1] for i in logprobs], device=self.dev)
+        # Now we can multiply the length of the row for each type t by the actual row index,
+        # offsetting by the row at which each graph's logits start.
+        row_offsets = row_lengths[actions[:, 0]] * (actions[:, 1] + graph_row_offsets)
+        # This is the last index in the raveled tensor, therefore the offset is just the column value
+        col_offsets = actions[:, 2]
+        # Index the flattened array
+        return all_logprobs[t_offsets + row_offsets + col_offsets]
 
     def entropy(self, logprobs=None):
         """The entropy for each graph categorical in the batch
