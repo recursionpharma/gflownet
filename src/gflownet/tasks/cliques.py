@@ -199,7 +199,7 @@ class CliqueTask(GFNTask):
 
     def encode_conditional_information(self, info):
         # TODO: redo with temperature once we get there
-        encoding = torch.ones((len(info), 1))
+        encoding = torch.zeros((len(info), 1))
         return {'beta': torch.ones(len(info)), 'encoding': encoding.float(), 'preferences': info.float()}
 
 
@@ -416,7 +416,7 @@ class ExactProbCompCallback:
         prob_of_being_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
-        ones = torch.ones((self.mbs, 1)).to(self.dev)
+        cond_info = torch.zeros((self.mbs, 1)).to(self.dev)
         # Note: visiting the states in order works because the ordering here is a natural topological sort.
         # Wrong results otherwise.
         for bi, batch, pre_indices in zip(tqdm(range(0, len(self.states), self.mbs), disable=None),
@@ -428,7 +428,7 @@ class ExactProbCompCallback:
                 continue
             bs, indices = zip(*non_terminals)
             with torch.no_grad():
-                cat, mo = model(batch, ones[:len(bs)])
+                cat, mo = model(batch, cond_info[:len(bs)])
             logprobs = torch.cat([i.flatten() for i in cat.logsoftmax()])
             for end_indices, being_indices in pre_indices:
                 if end_indices.shape[0] > 0:
