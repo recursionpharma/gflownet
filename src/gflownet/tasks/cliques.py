@@ -125,6 +125,8 @@ class CliqueDataset(Dataset):
             return even_neighbors_reward(g)
         elif self.reward_func == 'count':
             return count_reward(g)
+        elif self.reward_func == 'const':
+            return np.float32(0)
 
     def collate_fn(self, batch):
         graphs, rewards = zip(*batch)
