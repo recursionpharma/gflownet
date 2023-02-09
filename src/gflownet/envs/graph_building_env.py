@@ -433,7 +433,8 @@ class GraphActionCategorical:
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
         self.slice = [
-            graphs._slice_dict[k] if k is not None else torch.arange(graphs.num_graphs + 1, device=dev) for k in keys
+            graphs._slice_dict[k].to(dev) if k is not None else torch.arange(graphs.num_graphs + 1, device=dev)
+            for k in keys
         ]
         self.logprobs = None
 
@@ -604,7 +605,7 @@ class GraphActionCategorical:
         # but faster.
 
         # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
-        actions = torch.tensor(actions, device=self.dev, dtype=torch.long)
+        actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
         # indices of the raveled actions.
