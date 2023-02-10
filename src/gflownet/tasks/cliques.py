@@ -1,5 +1,6 @@
 import ast
 import gzip
+import os
 import pickle
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -54,7 +55,7 @@ def even_neighbors_reward(g):
 
 def count_reward(g):
     ncols = np.bincount([g.nodes[i]['v'] for i in g], minlength=2)
-    return np.float32(abs(ncols[0] + ncols[1] / 2 - 4) / 3.5 * 10 - 10)
+    return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
 def load_clique_data():
@@ -214,7 +215,7 @@ class CliquesTrainer(GFNTrainer):
             'num_mlp_layers': 0,
             'tb_epsilon': None,
             'tb_do_subtb': True,
-            'illegal_action_logreward': -80,
+            'illegal_action_logreward': -30,
             'temperature_sample_dist': 'const',
             'temperature_dist_params': '1',
             'weight_decay': 1e-8,
@@ -229,6 +230,7 @@ class CliquesTrainer(GFNTrainer):
             'use_experimental_dirichlet': True,
             'offline_ratio': 0.0,
             'valid_sample_cond_info': False,
+            'do_save_generated': False,
         }
 
     def setup(self):
@@ -249,10 +251,12 @@ class CliquesTrainer(GFNTrainer):
         num_emb, num_layers, num_heads = hps['num_emb'], hps['num_layers'], hps.get('num_heads', 2)
         if self._do_supervised:
             model = GraphTransformerRegressor(x_dim=self.ctx.num_node_dim, e_dim=self.ctx.num_edge_dim, g_dim=1,
-                                              num_emb=num_emb, num_layers=num_layers, num_heads=num_heads)
+                                              num_emb=num_emb, num_layers=num_layers, num_heads=num_heads,
+                                              ln_type=hps.get('ln_type', 'pre'))
         else:
             model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'],
-                                        num_mlp_layers=hps['num_mlp_layers'], num_heads=num_heads)
+                                        num_mlp_layers=hps['num_mlp_layers'], num_heads=num_heads,
+                                        ln_type=hps.get('ln_type', 'pre'))
             self.test_data = RepeatedPreferenceDataset(np.ones((32, 1)), 8)
 
         self.model = self.sampling_model = model
@@ -319,7 +323,7 @@ def hashg(g):
 
 class ExactProbCompCallback:
     def __init__(self, trial, states, dev, mbs=128,
-                 cache_path='/scratch/emmanuel.bengio/data/cliques/two_col_7_precomp_px.pkl.gz'):
+                 cache_path='/scratch/emmanuel.bengio/data/cliques/two_col_7_precomp_px.pkl.gz', do_save_px=True):
         self.trial = trial
         self.mbs = mbs
         self.dev = dev
@@ -335,6 +339,10 @@ class ExactProbCompCallback:
         self.log_rewards = np.array([self.trial.training_data.reward(i) for i in tqdm(self.states, disable=None)])
         self.logZ = np.log(np.sum(np.exp(self.log_rewards)))
         self.true_log_probs = self.log_rewards - self.logZ
+        self.do_save_px = do_save_px
+        if do_save_px:
+            os.makedirs(self.trial.hps['log_dir'], exist_ok=True)
+        self._save_increment = 0
 
     def on_validation_end(self, metrics):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
@@ -343,6 +351,9 @@ class ExactProbCompCallback:
         lq, q = self.true_log_probs, np.exp(self.true_log_probs)
         metrics['L1_logpx_error'] = np.mean(abs(lp - lq))
         metrics['JS_divergence'] = (p * (lp - lq) + q * (lq - lp)).sum() / 2
+        if self.do_save_px:
+            torch.save(log_probs, open(self.trial.hps['log_dir'] + f'/log_px_{self._save_increment}.pt', 'wb'))
+            self._save_increment += 1
 
     def _compute_things(self):
         states, mbs, dev = self.states, self.mbs, self.dev
