@@ -64,20 +64,26 @@ class SEHMOOTask(GFNTask):
 
     def sample_conditional_information(self, n):
         beta = None
-        if self.temperature_sample_dist == 'gamma':
-            loc, scale = self.temperature_dist_params
-            beta = self.rng.gamma(loc, scale, n).astype(np.float32)
-            upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-        elif self.temperature_sample_dist == 'uniform':
-            beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-            upper_bound = self.temperature_dist_params[1]
-        elif self.temperature_sample_dist == 'loguniform':
-            beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
-            upper_bound = self.temperature_dist_params[1]
-        elif self.temperature_sample_dist == 'beta':
-            beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-            upper_bound = 1
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
+        if self.temperature_sample_dist == 'constant':
+            assert type(self.temperature_dist_params) in [float, int]
+            beta = torch.tensor(self.temperature_dist_params).repeat(n)
+            beta_enc = thermometer(beta, 32, 0, self.temperature_dist_params) * 0.  # TODO: hyperparameters
+        else:
+            if self.temperature_sample_dist == 'gamma':
+                loc, scale = self.temperature_dist_params
+                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
+                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
+            elif self.temperature_sample_dist == 'uniform':
+                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'loguniform':
+                beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'beta':
+                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = 1
+            beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
+        
         if self.seeded_preference is not None:
             preferences = torch.tensor([self.seeded_preference] * n).float()
         elif self.experimental_dirichlet:
@@ -87,6 +93,7 @@ class SEHMOOTask(GFNTask):
         else:
             m = Dirichlet(torch.FloatTensor([1.] * 4))
             preferences = m.sample([n])
+        
         encoding = torch.cat([beta_enc, preferences], 1)
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
 
@@ -228,8 +235,9 @@ def main():
         'validate_every': 500,
         'sampling_tau': 0.95,
         'num_layers': 6,
-        'num_data_loader_workers': 12,
-        'temperature_dist_params': '(1, 192)',
+        'num_data_loader_workers': 1,
+        'temperature_sample_dist': 'constant',
+        'temperature_dist_params': '64',
         'global_batch_size': 256,
         'algo': 'TB',
         'sql_alpha': 0.01,
