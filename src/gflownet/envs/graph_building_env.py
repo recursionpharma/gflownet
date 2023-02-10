@@ -408,7 +408,7 @@ class GraphActionCategorical:
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
-        self._epsilon = 1e-20
+        self._epsilon = 1e-38
         # TODO: mask is only used by graph_sampler, but maybe we should be more careful with it
         # (e.g. in a softmax and such)
         # Can be set to indicate which logits are masked out (shape must match logits or have
