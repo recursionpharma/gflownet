@@ -141,12 +141,12 @@ class GraphTransformerGFN(nn.Module):
     - SetEdgeAttr
 
     """
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0):
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre'):
         """See `GraphTransformer` for argument values"""
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       num_heads=num_heads)
+                                       num_heads=num_heads, ln_type=ln_type)
         num_final = num_emb
         num_glob_final = num_emb * 2
         self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
