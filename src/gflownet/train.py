@@ -149,7 +149,8 @@ class GFNTrainer:
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.offline_ratio, log_dir=self.hps['log_dir'])
+                                    ratio=self.offline_ratio,
+                                    log_dir=self.hps['log_dir'] if self.hps.get('do_save_generated', True) else None)
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
