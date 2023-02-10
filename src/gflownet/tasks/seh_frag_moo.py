@@ -223,7 +223,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'lr_decay': 10000,
-        'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp/',
+        'log_dir': '/mnt/bh1/scratch/julien.roy/logs/seh_frag_moo/run_tmp/',
         'num_training_steps': 20_000,
         'validate_every': 500,
         'sampling_tau': 0.95,
