@@ -1,5 +1,7 @@
 import ast
 from typing import Any, Callable, Dict, List, Tuple, Union
+import os
+import shutil
 
 import numpy as np
 from rdkit.Chem import Descriptors
@@ -230,7 +232,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'lr_decay': 10000,
-        'log_dir': '/mnt/bh1/scratch/julien.roy/logs/seh_frag_moo/run_tmp/',
+        'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
         'validate_every': 500,
         'sampling_tau': 0.95,
@@ -244,6 +246,8 @@ def main():
         'seed': 0,
         'preference_type': 'seeded_many',
     }
+    if os.path.exists(hps['log_dir']):
+        shutil.rmtree(hps['log_dir'])
     trial = SEHMOOFragTrainer(hps, torch.device('cuda'))
     trial.verbose = True
     trial.run()
