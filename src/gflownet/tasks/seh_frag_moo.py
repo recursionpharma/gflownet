@@ -174,6 +174,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
     def setup_task(self):
+        print(f"temperature_dist_params = {self.hps['temperature_dist_params']} - ({type(self.hps['temperature_dist_params']).__name__})")
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
                                ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
 
