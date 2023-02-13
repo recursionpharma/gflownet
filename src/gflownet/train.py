@@ -120,6 +120,8 @@ class GFNTrainer:
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
+        # Will check if parameters are finite at every iteration (can be costly)
+        self._validate_parameters = False
 
         self.setup()
 
@@ -163,8 +165,20 @@ class GFNTrainer:
                                            persistent_workers=self.num_workers > 0)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
-        loss, info = self.algo.compute_batch_losses(self.model, batch)
-        self.step(loss)
+        try:
+            loss, info = self.algo.compute_batch_losses(self.model, batch)
+            if not torch.isfinite(loss):
+                raise ValueError('loss is not finite')
+            step_info = self.step(loss)
+            if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
+                raise ValueError('parameters are not finite')
+        except ValueError as e:
+            os.makedirs(self.hps['log_dir'], exist_ok=True)
+            torch.save([self.model.state_dict(), batch, loss, info], open(self.hps['log_dir'] + '/dump.pkl', 'wb'))
+            raise e
+
+        if step_info is not None:
+            info.update(step_info)
         if hasattr(batch, 'extra_info'):
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}

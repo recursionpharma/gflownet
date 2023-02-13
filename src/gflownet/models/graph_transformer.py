@@ -29,7 +29,7 @@ class GraphTransformer(nn.Module):
     The per graph outputs are the concatenation of a global mean pooling operation, of the final
     virtual node embeddings, and of the conditional information embedding.
     """
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0):
+    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type='pre'):
         """
         Parameters
         ----------
@@ -45,10 +45,15 @@ class GraphTransformer(nn.Module):
             The number of Transformer layers.
         num_heads: int
             The number of Transformer heads per layer.
+        ln_type: str
+            The location of Layer Norm in the transformer, either 'pre' or 'post', default 'pre'.
+            (apparently, before is better than after, see https://arxiv.org/pdf/2002.04745.pdf)
         """
         super().__init__()
         self.num_layers = num_layers
         self.num_noise = num_noise
+        assert ln_type in ['pre', 'post']
+        self.ln_type = ln_type
 
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
@@ -104,12 +109,20 @@ class GraphTransformer(nn.Module):
         for i in range(self.num_layers):
             # Run the graph transformer forward
             gen, trans, linear, norm1, ff, norm2, cscale = self.graph2emb[i * 7:(i + 1) * 7]
-            agg = gen(o, aug_edge_index, aug_e)
-            l_h = linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e))
             cs = cscale(c[aug_batch])
-            scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
-            o = norm1(o + l_h * scale + shift, aug_batch)
-            o = norm2(o + ff(o), aug_batch)
+            if self.ln_type == 'post':
+                agg = gen(o, aug_edge_index, aug_e)
+                l_h = linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e))
+                scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
+                o = norm1(o + l_h * scale + shift, aug_batch)
+                o = norm2(o + ff(o), aug_batch)
+            else:
+                o_norm = norm1(o, aug_batch)
+                agg = gen(o_norm, aug_edge_index, aug_e)
+                l_h = linear(trans(torch.cat([o_norm, agg], 1), aug_edge_index, aug_e))
+                scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
+                o = o + l_h * scale + shift
+                o = o + ff(norm2(o, aug_batch))
 
         glob = torch.cat([gnn.global_mean_pool(o[:-c.shape[0]], g.batch), o[-c.shape[0]:]], 1)
         o_final = torch.cat([o[:-c.shape[0]]], 1)
