@@ -4,6 +4,7 @@ import os
 import shutil
 import pathlib
 import json
+import git
 
 import numpy as np
 from rdkit.Chem import Descriptors
@@ -206,12 +207,13 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         self.algo.task = self.task
 
+        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        self.hps['gflownet_git_hash'] = git_hash
+
         os.makedirs(self.hps['log_dir'], exist_ok=True)
         fmt_hps = '\n'.join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in self.hps.items()])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
         json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
-
-        print()
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
