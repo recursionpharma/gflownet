@@ -3,6 +3,7 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 import math
 import os
 import json
+import git
 
 import numpy as np
 from rdkit.Chem import Descriptors
@@ -243,6 +244,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
+
+        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        self.hps['gflownet_git_hash'] = git_hash
 
         os.makedirs(self.hps['log_dir'], exist_ok=True)
         torch.save({
