@@ -1,6 +1,4 @@
-import os
 import pathlib
-import json
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -181,14 +179,6 @@ class GFNTrainer:
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
-        os.makedirs(self.hps['log_dir'], exist_ok=True)
-        torch.save({
-            'hps': self.hps,
-        }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
-        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
-        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
-
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
