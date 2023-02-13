@@ -1,11 +1,11 @@
 import ast
-from typing import Any, Callable, Dict, List, Tuple, Union
-import os
-import shutil
-import pathlib
 import json
-import git
+import os
+import pathlib
+import shutil
+from typing import Any, Callable, Dict, List, Tuple, Union
 
+import git
 import numpy as np
 from rdkit.Chem import Descriptors
 from rdkit.Chem import QED
@@ -88,7 +88,7 @@ class SEHMOOTask(GFNTask):
                 beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
-        
+
         if self.seeded_preference is not None:
             preferences = torch.tensor([self.seeded_preference] * n).float()
         elif self.experimental_dirichlet:
@@ -98,7 +98,7 @@ class SEHMOOTask(GFNTask):
         else:
             m = Dirichlet(torch.FloatTensor([1.] * 4))
             preferences = m.sample([n])
-        
+
         encoding = torch.cat([beta_enc, preferences], 1)
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
 
@@ -109,11 +109,7 @@ class SEHMOOTask(GFNTask):
             beta = torch.ones(len(info)) * self.temperature_dist_params
         else:
             beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
-        return {
-            'beta': beta,
-            'encoding': encoding.float(),
-            'preferences': info.float()
-        }
+        return {'beta': beta, 'encoding': encoding.float(), 'preferences': info.float()}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -174,7 +170,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
     def setup_task(self):
-        print(f"temperature_dist_params = {self.hps['temperature_dist_params']} - ({type(self.hps['temperature_dist_params']).__name__})")
+        print(
+            f"temperature_dist_params = {self.hps['temperature_dist_params']} - ({type(self.hps['temperature_dist_params']).__name__})"
+        )
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
                                ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
 
