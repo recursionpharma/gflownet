@@ -19,6 +19,7 @@ from gflownet.algo.envelope_q_learning import GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
@@ -41,15 +42,19 @@ class SEHMOOTask(GFNTask):
 
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
-    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
+    def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str, 
+                 temperature_parameters: Tuple[float], num_thermometer_dim: int,
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
+        self.objectives = objectives
         self.dataset = dataset
-        self.temperature_sample_dist = temperature_distribution
+        self.temperature_sample_dist = temperature_sample_dist
         self.temperature_dist_params = temperature_parameters
+        self.num_thermometer_dim = num_thermometer_dim
         self.seeded_preference = None
         self.experimental_dirichlet = False
+        assert set(objectives) <= {'seh', 'qed', 'sa', 'mw'} and len(objectives) == len(set(objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))
@@ -67,7 +72,7 @@ class SEHMOOTask(GFNTask):
         if self.temperature_sample_dist == 'constant':
             assert type(self.temperature_dist_params) in [float, int]
             beta = torch.tensor(self.temperature_dist_params).repeat(n)
-            beta_enc = thermometer(beta, 32, 0, self.temperature_dist_params) * 0.  # TODO: hyperparameters
+            beta_enc = thermometer(beta, self.num_thermometer_dim, 0, self.temperature_dist_params) * 0.
         else:
             if self.temperature_sample_dist == 'gamma':
                 loc, scale = self.temperature_dist_params
@@ -82,16 +87,15 @@ class SEHMOOTask(GFNTask):
             elif self.temperature_sample_dist == 'beta':
                 beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
                 upper_bound = 1
-            beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
-        
+            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
         if self.seeded_preference is not None:
             preferences = torch.tensor([self.seeded_preference] * n).float()
         elif self.experimental_dirichlet:
-            a = np.random.dirichlet([1] * 4, n)
+            a = np.random.dirichlet([1] * len(self.objectives), n)
             b = np.random.exponential(1, n)[:, None]
             preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
         else:
-            m = Dirichlet(torch.FloatTensor([1.] * 4))
+            m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
             preferences = m.sample([n])
         
         encoding = torch.cat([beta_enc, preferences], 1)
@@ -123,25 +127,39 @@ class SEHMOOTask(GFNTask):
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return FlatRewards(torch.zeros((0, 4))), is_valid
-        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
-        seh_preds = self.models['seh'](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
-        seh_preds[seh_preds.isnan()] = 0
+            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
+        
+        else:
+            flat_rewards = []
+            if 'seh' in self.objectives:
+                batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
+                batch.to(self.device)
+                seh_preds = self.models['seh'](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
+                seh_preds[seh_preds.isnan()] = 0
+                flat_rewards.append(seh_preds)
 
-        def safe(f, x, default):
-            try:
-                return f(x)
-            except Exception:
-                return default
+            def safe(f, x, default):
+                try:
+                    return f(x)
+                except Exception:
+                    return default
 
-        qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
-        sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
-        sas = (10 - sas) / 9  # Turn into a [0-1] reward
-        molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
-        molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-        flat_rewards = torch.stack([seh_preds, qeds, sas, molwts], 1)
-        return FlatRewards(flat_rewards), is_valid
+            if "qed" in self.objectives:
+                qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
+                flat_rewards.append(qeds)
+            
+            if "sa" in self.objectives:
+                sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
+                sas = (10 - sas) / 9  # Turn into a [0-1] reward
+                flat_rewards.append(sas)
+            
+            if "mw" in self.objectives:
+                molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
+                molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
+                flat_rewards.append(molwts)
+            
+            flat_rewards = torch.stack(flat_rewards, dim=1)
+            return FlatRewards(flat_rewards), is_valid
 
 
 class SEHMOOFragTrainer(SEHFragTrainer):
@@ -149,7 +167,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         return {
             **super().default_hps(),
             'use_fixed_weight': False,
-            'num_cond_dim': 32 + 4,  # thermometer encoding of beta + 4 preferences
+            'objectives': ['seh', 'qed', 'sa', 'mw'],
             'sampling_tau': 0.95,
             'valid_sample_cond_info': False,
             'preference_type': 'dirichlet',
@@ -169,24 +187,51 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
     def setup_task(self):
+<<<<<<< HEAD
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
                                ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+=======
+        self.task = SEHMOOTask(
+            objectives=self.hps['objectives'], 
+            dataset=self.training_data, 
+            temperature_sample_dist=self.hps['temperature_sample_dist'],
+            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']), 
+            num_thermometer_dim=self.hps['num_thermometer_dim'],
+            wrap_model=self._wrap_model_mp
+            )
+>>>>>>> 78ca3a3 (feat: added hyperparams 'objectives' and 'num_thermometer_dim')
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
-            model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
-                                                   num_layers=self.hps['num_layers'], num_objectives=4)
+            model = GraphTransformerFragEnvelopeQL(self.ctx, 
+                                                   num_emb=self.hps['num_emb'],
+                                                   num_layers=self.hps['num_layers'], 
+                                                   num_objectives=len(self.hps['objectives']))
         else:
-            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, 
+                                        num_emb=self.hps['num_emb'], 
+                                        num_layers=self.hps['num_layers'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
         self.model = model
 
+    def setup_env_context(self):
+        self.ctx = FragMolBuildingEnvContext(
+            max_frags=9,
+            num_cond_dim=self.hps['num_thermometer_dim'] + len(self.hps['objectives'])
+            )
+
     def setup(self):
         super().setup()
-        self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
-                               ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+        self.task = SEHMOOTask(
+            objectives=self.hps['objectives'], 
+            dataset=self.training_data, 
+            temperature_sample_dist=self.hps['temperature_sample_dist'],
+            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+            num_thermometer_dim=self.hps['num_thermometer_dim'], 
+            wrap_model=self._wrap_model_mp
+            )
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4
@@ -233,6 +278,7 @@ class RepeatedPreferenceDataset:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
+        'objectives': ['seh', 'qed', 'sa'],
         'lr_decay': 10000,
         'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp/',
         'num_training_steps': 20_000,

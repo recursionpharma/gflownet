@@ -34,12 +34,13 @@ class SEHTask(GFNTask):
     objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
     def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 num_thermometer_dim: int, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
+        self.num_thermometer_dim = num_thermometer_dim
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -64,7 +65,7 @@ class SEHTask(GFNTask):
         elif self.temperature_sample_dist == 'beta':
             beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
             upper_bound = 1
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
+        beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
         return {'beta': torch.tensor(beta), 'encoding': beta_enc}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
@@ -108,29 +109,36 @@ class SEHFragTrainer(GFNTrainer):
             'clip_grad_param': 10,
             'random_action_prob': 0.,
             'sampling_tau': 0.,
-            'num_cond_dim': 32,
+            'num_thermometer_dim': 32,
         }
 
     def setup_algo(self):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
 
     def setup_task(self):
-        self.task = SEHTask(self.training_data, self.hps['temperature_sample_dist'],
-                            ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+        self.task = SEHTask(
+            dataset=self.training_data, 
+            temperature_distribution=self.hps['temperature_sample_dist'],
+            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']), 
+            num_thermometer_dim=self.hps['num_thermometer_dim'],
+            wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+
+    def setup_env_context(self):
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=self.hps['num_thermometer_dim'])
 
     def setup(self):
         hps = self.hps
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=hps['num_cond_dim'])
         self.training_data = []
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
+        self.setup_env_context()
         self.setup_algo()
         self.setup_task()
         self.setup_model()
