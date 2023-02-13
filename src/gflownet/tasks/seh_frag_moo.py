@@ -100,8 +100,12 @@ class SEHMOOTask(GFNTask):
     def encode_conditional_information(self, info):
         # This assumes we're using a constant (max) beta and that info is the preferences
         encoding = torch.cat([torch.ones((len(info), 32)), info], 1)
+        if self.temperature_sample_dist == 'constant':
+            beta = torch.ones(len(info)) * self.temperature_dist_params
+        else:
+            beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
         return {
-            'beta': torch.ones(len(info)) * self.temperature_dist_params[-1],
+            'beta': beta,
             'encoding': encoding.float(),
             'preferences': info.float()
         }
