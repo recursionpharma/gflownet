@@ -1,5 +1,5 @@
-import pathlib
 import os
+import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol

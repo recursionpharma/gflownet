@@ -47,7 +47,7 @@ class SEHMOOTask(GFNTask):
 
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
-    def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str, 
+    def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float], num_thermometer_dim: int,
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
@@ -130,7 +130,7 @@ class SEHMOOTask(GFNTask):
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
-        
+
         else:
             flat_rewards = []
             if 'seh' in self.objectives:
@@ -149,17 +149,17 @@ class SEHMOOTask(GFNTask):
             if "qed" in self.objectives:
                 qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
                 flat_rewards.append(qeds)
-            
+
             if "sa" in self.objectives:
                 sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
                 sas = (10 - sas) / 9  # Turn into a [0-1] reward
                 flat_rewards.append(sas)
-            
+
             if "mw" in self.objectives:
                 molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
                 molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 flat_rewards.append(molwts)
-            
+
             flat_rewards = torch.stack(flat_rewards, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
@@ -189,46 +189,33 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
     def setup_task(self):
-        self.task = SEHMOOTask(
-            objectives=self.hps['objectives'], 
-            dataset=self.training_data, 
-            temperature_sample_dist=self.hps['temperature_sample_dist'],
-            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']), 
-            num_thermometer_dim=self.hps['num_thermometer_dim'],
-            wrap_model=self._wrap_model_mp
-            )
+        self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
+                               temperature_sample_dist=self.hps['temperature_sample_dist'],
+                               temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                               num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
-            model = GraphTransformerFragEnvelopeQL(self.ctx, 
-                                                   num_emb=self.hps['num_emb'],
-                                                   num_layers=self.hps['num_layers'], 
+            model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
+                                                   num_layers=self.hps['num_layers'],
                                                    num_objectives=len(self.hps['objectives']))
         else:
-            model = GraphTransformerGFN(self.ctx, 
-                                        num_emb=self.hps['num_emb'], 
-                                        num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
         self.model = model
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(
-            max_frags=9,
-            num_cond_dim=self.hps['num_thermometer_dim'] + len(self.hps['objectives'])
-            )
+        self.ctx = FragMolBuildingEnvContext(max_frags=9,
+                                             num_cond_dim=self.hps['num_thermometer_dim'] + len(self.hps['objectives']))
 
     def setup(self):
         super().setup()
-        self.task = SEHMOOTask(
-            objectives=self.hps['objectives'], 
-            dataset=self.training_data, 
-            temperature_sample_dist=self.hps['temperature_sample_dist'],
-            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
-            num_thermometer_dim=self.hps['num_thermometer_dim'], 
-            wrap_model=self._wrap_model_mp
-            )
+        self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
+                               temperature_sample_dist=self.hps['temperature_sample_dist'],
+                               temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                               num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4
