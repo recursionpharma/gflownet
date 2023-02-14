@@ -1,5 +1,6 @@
 import ast
 import copy
+import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -89,6 +90,7 @@ class SEHTask(GFNTask):
 class SEHFragTrainer(GFNTrainer):
     def default_hps(self) -> Dict[str, Any]:
         return {
+            'hostname': socket.gethostname(),
             'bootstrap_own_reward': False,
             'learning_rate': 1e-4,
             'Z_learning_rate': 1e-4,

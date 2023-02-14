@@ -4,6 +4,7 @@ import math
 import os
 import json
 import git
+import pathlib
 
 import numpy as np
 from rdkit.Chem import Descriptors
@@ -296,11 +297,7 @@ def main():
         'num_layers': 6,
         'num_data_loader_workers': 8,
         'temperature_sample_dist': 'constant',
-<<<<<<< HEAD
-        'temperature_dist_params': '64',
-=======
         'temperature_dist_params': '2.',
->>>>>>> 7b2f517 ((fix): fixed encode_conditional_information() for constant beta (was passing full thermometer instead of empty one))
         'num_thermometer_dim': 18,
         'global_batch_size': 64,
         'algo': 'TB',
