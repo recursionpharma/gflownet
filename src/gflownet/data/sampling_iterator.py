@@ -220,6 +220,9 @@ class SamplingIterator(IterableDataset):
         else:
             mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t['result'], None, 'v') for t in trajs]
 
+        mols = ["" for i in range(len(trajs))
+               ]  # TODO: remove this, quick fix while filesystem issues are being taken care of
+
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         log_rewards = log_rewards.data.numpy().tolist()
         preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
