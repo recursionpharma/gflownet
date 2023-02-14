@@ -284,6 +284,7 @@ def main():
         'num_data_loader_workers': 1,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': '64',
+        'num_thermometer_dim': 18,
         'global_batch_size': 256,
         'algo': 'TB',
         'sql_alpha': 0.01,
