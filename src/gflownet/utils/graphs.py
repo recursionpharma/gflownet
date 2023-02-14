@@ -1,7 +1,7 @@
 import torch
-from torch_scatter import scatter_add
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj
+from torch_scatter import scatter_add
 
 
 def random_walk_probs(g: Data, k: int, skip_odd=False):
