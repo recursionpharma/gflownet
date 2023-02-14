@@ -109,7 +109,7 @@ class SEHMOOTask(GFNTask):
 
     def encode_conditional_information(self, info):
         # This assumes we're using a constant (max) beta and that info is the preferences
-        encoding = torch.cat([torch.ones((len(info), 32)), info], 1)
+        encoding = torch.cat([torch.ones((len(info), self.num_thermometer_dim)), info], 1)
         if self.temperature_sample_dist == 'constant':
             beta = torch.ones(len(info)) * self.temperature_dist_params
         else:
@@ -216,15 +216,19 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
+
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
+
+        n_obj = len(self.hps['objectives'])
         if self.hps['preference_type'] == 'dirichlet':
-            valid_preferences = metrics.generate_simplex(4, 5)  # This yields 35 points of dimension 4
+            valid_preferences = metrics.generate_simplex(n_obj, 5)
         elif self.hps['preference_type'] == 'seeded_single':
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * 4, 10)
-            valid_preferences = seeded_prefs[int(self.hps['single_pref_target_idx'])].reshape((1, 4))
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, 10)
+            valid_preferences = seeded_prefs[int(self.hps['single_pref_target_idx'])].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps['preference_type'] == 'seeded_many':
-            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * 4, 10)
+            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, 10)
+
         self._top_k_hook = TopKHook(10, 128, len(valid_preferences))
         self.test_data = RepeatedPreferenceDataset(valid_preferences, 128)
         self.valid_sampling_hooks.append(self._top_k_hook)
