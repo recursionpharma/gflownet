@@ -77,7 +77,7 @@ class SEHMOOTask(GFNTask):
         if self.temperature_sample_dist == 'constant':
             assert type(self.temperature_dist_params) in [float, int]
             beta = torch.tensor(self.temperature_dist_params).repeat(n)
-            beta_enc = thermometer(beta, self.num_thermometer_dim, 0, self.temperature_dist_params) * 0.
+            beta_enc = thermometer(beta, self.num_thermometer_dim, 0, max(self.temperature_dist_params, 1e-5)) * 0.
         else:
             if self.temperature_sample_dist == 'gamma':
                 loc, scale = self.temperature_dist_params
@@ -278,18 +278,18 @@ def main():
         'lr_decay': 10000,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
-        'validate_every': 500,
+        'validate_every': 2,
         'sampling_tau': 0.95,
         'num_layers': 6,
         'num_data_loader_workers': 1,
         'temperature_sample_dist': 'constant',
-        'temperature_dist_params': '256',
+        'temperature_dist_params': '10',
         'num_thermometer_dim': 18,
         'global_batch_size': 256,
         'algo': 'TB',
         'sql_alpha': 0.01,
         'seed': 0,
-        'preference_type': 'seeded_many',
+        'preference_type': 'dirichlet',
     }
     if os.path.exists(hps['log_dir']):
         shutil.rmtree(hps['log_dir'])

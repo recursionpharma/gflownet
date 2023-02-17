@@ -22,4 +22,5 @@ def thermometer(v: Tensor, n_bins: int = 50, vmin: float = 0, vmax: float = 1) -
     """
     bins = torch.linspace(vmin, vmax, n_bins)
     gap = bins[1] - bins[0]
+    assert gap > 0, "vmin and vmax must be different"
     return (v[..., None] - bins.reshape((1,) * v.ndim + (-1,))).clamp(0, gap.item()) / gap
