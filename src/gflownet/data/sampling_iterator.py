@@ -229,7 +229,7 @@ class SamplingIterator(IterableDataset):
 
         data = ([[mols[i], log_rewards[i]] + flat_rewards[i] + preferences[i] +
                  [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
-        data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
+        data_labels = (['smi', 'logR'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
                        [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
         self.log.insert_many(data, data_labels)
 
