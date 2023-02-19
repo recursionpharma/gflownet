@@ -404,6 +404,11 @@ class GraphActionCategorical:
            mask out logits of invalid actions
         """
         self.num_graphs = graphs.num_graphs
+        assert all([i.ndim == 2 for i in logits])
+        assert len(logits) == len(types) == len(keys)
+        if masks is not None:
+            assert len(logits) == len(masks)
+            assert all([i.ndim == 2 for i in masks])
         # The logits
         self.logits = logits
         self.types = types

@@ -160,14 +160,12 @@ class GraphTransformerGFN(nn.Module):
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
 
-        self._action_type_to_logit = {
-            GraphActionType.Stop: (lambda emb, g: self.emb2stop(emb['graph'])),
-            GraphActionType.AddNode: (lambda emb, g: self._mask(self.emb2add_node(emb['node']), g.add_node_mask)),
-            GraphActionType.SetNodeAttr:
-                (lambda emb, g: self._mask(self.emb2set_node_attr(emb['node']), g.set_node_attr_mask)),
-            GraphActionType.AddEdge: (lambda emb, g: self._mask(self.emb2add_edge(emb['non_edge']), g.add_edge_mask)),
-            GraphActionType.SetEdgeAttr:
-                (lambda emb, g: self._mask(self.emb2set_edge_attr(emb['edge']), g.set_edge_attr_mask)),
+        self._emb_to_logits = {
+            GraphActionType.Stop: lambda emb: self.emb2stop(emb['graph']),
+            GraphActionType.AddNode: lambda emb: self.emb2add_node(emb['node']),
+            GraphActionType.SetNodeAttr: lambda emb: self.emb2set_node_attr(emb['node']),
+            GraphActionType.AddEdge: lambda emb: self.emb2add_edge(emb['non_edge']),
+            GraphActionType.SetEdgeAttr: lambda emb: self.emb2set_edge_attr(emb['edge']),
         }
         self._action_type_to_key = {
             GraphActionType.Stop: None,
@@ -176,6 +174,20 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.AddEdge: 'non_edge_index',
             GraphActionType.SetEdgeAttr: 'edge_index'
         }
+        self._action_type_to_mask_name = {
+            GraphActionType.Stop: 'stop',
+            GraphActionType.AddNode: 'add_node',
+            GraphActionType.SetNodeAttr: 'set_node_attr',
+            GraphActionType.AddEdge: 'add_edge',
+            GraphActionType.SetEdgeAttr: 'set_edge_attr'
+        }
+
+    def _action_type_to_mask(self, t, g):
+        mask_name = self._action_type_to_mask_name[t] + '_mask'
+        return getattr(g, mask_name) if hasattr(g, mask_name) else 1
+
+    def _action_type_to_logit(self, t, emb, g):
+        return self._mask(self._emb_to_logits[t](emb), self._action_type_to_mask(t, g))
 
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
@@ -203,8 +215,9 @@ class GraphTransformerGFN(nn.Module):
 
         cat = GraphActionCategorical(
             g,
-            logits=[self._action_type_to_logit[t](emb, g) for t in self.action_type_order],
+            logits=[self._action_type_to_logit(t, emb, g) for t in self.action_type_order],
             keys=[self._action_type_to_key[t] for t in self.action_type_order],
+            masks=[self._action_type_to_mask(t, g) for t in self.action_type_order],
             types=self.action_type_order,
         )
         return cat, self.emb2reward(graph_embeddings)
