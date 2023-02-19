@@ -136,8 +136,11 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
         attached = defaultdict(list)
-        degrees = torch.tensor(list(g.degree))[:, 1] if len(g) else torch.tensor([])
-        max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]['v']]) for n in g.nodes])
+        if len(g):
+            degrees = torch.tensor(list(g.degree))[:, 1]
+            max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]['v']]) for n in g.nodes])
+        else:
+            degrees = max_degrees = torch.zeros((0,))
         has_unfilled_attach = False
         for e in g.edges:
             ed = g.edges[e]

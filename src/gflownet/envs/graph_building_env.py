@@ -460,6 +460,8 @@ class GraphActionCategorical:
         self.slice = [i.to(device) for i in self.slice]
         if self.logprobs is not None:
             self.logprobs = [i.to(device) for i in self.logprobs]
+        if self.masks is not None:
+            self.masks = [i.to(device) for i in self.masks]
         return self
 
     def logsoftmax(self):
