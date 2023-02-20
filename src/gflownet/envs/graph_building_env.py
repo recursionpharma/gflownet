@@ -475,7 +475,7 @@ class GraphActionCategorical:
             dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).clamp(self._epsilon) + 1e-40 for i, b in zip(self.logits, self.batch)]
+        exp_logits = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
             scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
@@ -494,7 +494,7 @@ class GraphActionCategorical:
                          dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_vals = [(i - maxl[b, None]).clamp(self._epsilon) + 1e-40 for i, b in zip(x, self.batch)]
+        exp_vals = [(i - maxl[b, None]).exp() + 1e-40 for i, b in zip(x, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         reduction = sum([
             scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_vals, self.batch)
@@ -617,7 +617,7 @@ class GraphActionCategorical:
         if logprobs is None:
             logprobs = self.logsoftmax()
         entropy = -sum([
-            scatter(i * i.exp().clamp(self._epsilon), b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
+            scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
             for i, b in zip(logprobs, self.batch)
         ])
         return entropy
