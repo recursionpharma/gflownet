@@ -205,7 +205,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=torch.tensor(self.hps['objective_region_dir']),
+                               objective_region_dir=torch.tensor(ast.literal_eval(self.hps['objective_region_dir'])),
                                objective_region_cosim=self.hps['objective_region_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
@@ -232,7 +232,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=torch.tensor(self.hps['objective_region_dir']),
+                               objective_region_dir=torch.tensor(ast.literal_eval(self.hps['objective_region_dir'])),
                                objective_region_cosim=self.hps['objective_region_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
@@ -295,7 +295,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'objectives': ['seh', 'qed', 'sa'],
-        'objective_region_dir': [1., 1., 1.],
+        'objective_region_dir': '(1., 1., 1.)',
         'objective_region_cosim': 0.98,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
