@@ -250,20 +250,17 @@ class TrajectoryBalance:
             # If we want to correct for idempotent actions, we need to sum probabilities
             # i.e. to compute P(s' | s) = sum_{a that lead to s'} P(a|s)
             # here we compute the indices of the graph that each action corresponds to, ip_lens
-            # contains the number of  idempotent actions for each transition, so we
+            # contains the number of idempotent actions for each transition, so we
             # repeat_interleave as with batch_idx
-            ip_idces = torch.arange(batch.ip_lens.shape[0], device=dev).repeat_interleave(batch.ip_lens)
-            # get the full logprobs
-            logprobs = fwd_cat.logsoftmax()
-            # batch.ip_actions lists those actions, so we index the logprobs appropriately
-            log_prob = torch.stack(
-                [logprobs[t][row + fwd_cat.slice[t][i], col] for i, (t, row, col) in zip(ip_idces, batch.ip_actions)])
+            ip_batch_idces = torch.arange(batch.ip_lens.shape[0], device=dev).repeat_interleave(batch.ip_lens)
+            # Indicate that the `batch` corresponding to each action is the above
+            ip_log_prob = fwd_cat.log_prob(batch.ip_actions, batch=ip_batch_idces)
             # take the logsumexp (because we want to sum probabilities, not log probabilities)
             # TODO: numerically stable version:
+            p = scatter(ip_log_prob.exp(), ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum')
             # As a (reasonable) band-aid, ignore p < 1e-30, this will prevent underflows due to
             # scatter(small number) = 0 on CUDA
-            p = scatter(log_prob.exp(), ip_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum').clamp(1e-30)
-            log_prob = p.log()
+            log_prob = p.clamp(1e-30).log()
         else:
             # Else just naively take the logprob of the actions we took
             log_prob = fwd_cat.log_prob(batch.actions)
