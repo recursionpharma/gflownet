@@ -149,12 +149,16 @@ class GraphTransformerGFN(nn.Module):
                                        num_heads=num_heads)
         num_final = num_emb
         num_glob_final = num_emb * 2
-        self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
+        num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
+        self.edges_are_duplicated = env_ctx.edges_are_duplicated
+        self.edges_are_unordered = env_ctx.edges_are_unordered
+
+        self.emb2add_edge = mlp(num_edge_feat, num_emb, 1, num_mlp_layers)
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
         if env_ctx.num_node_attr_logits is not None:
             self.emb2set_node_attr = mlp(num_final, num_emb, env_ctx.num_node_attr_logits, num_mlp_layers)
         if env_ctx.num_edge_attr_logits is not None:
-            self.emb2set_edge_attr = mlp(num_final, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
+            self.emb2set_edge_attr = mlp(num_edge_feat, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
         self.emb2stop = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
         self.emb2reward = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
@@ -198,14 +202,24 @@ class GraphTransformerGFN(nn.Module):
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, 'non_edge_index'):
             ne_row, ne_col = g.non_edge_index
-            non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+            if self.edges_are_unordered:
+                non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+            else:
+                non_edge_embeddings = torch.cat([node_embeddings[ne_row], node_embeddings[ne_col]], 1)
         else:
             # If the environment context isn't setting non_edge_index, we can safely assume that
             # action is not in ctx.action_type_order.
             non_edge_embeddings = None
-        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
-        e_row, e_col = g.edge_index[:, ::2]
-        edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+        if self.edges_are_duplicated:
+            # On `::2`, edges are typically duplicated to make graphs undirected, only take the even ones
+            e_row, e_col = g.edge_index[:, ::2]
+        else:
+            e_row, e_col = g.edge_index
+        if self.edges_are_unordered:
+            edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+        else:
+            edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
+
         emb = {
             'graph': graph_embeddings,
             'node': node_embeddings,

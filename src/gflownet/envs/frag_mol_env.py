@@ -19,6 +19,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
     This context specifies how to create molecules fragment by fragment as encoded by a junction tree.
     Fragments are obtained from the original GFlowNet paper, Bengio et al., 2021.
+
+    This context works by having the agent generate a (tree) graph of fragments, and by then having
+    the agent specify which atom each edge uses as an attachment point (single bond) between
+    fragments. Masks ensure that the agent can only perform chemically valid attachments.
     """
     def __init__(self, max_frags: int = 9, num_cond_dim: int = 0):
         """Construct a fragment environment
@@ -40,13 +44,16 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                            for fragidx in range(len(self.frags_stems))
                            for stemidx in range(len(self.frags_stems[fragidx]))]
         self.num_actions = len(self.action_map)
+
         # These values are used by Models to know how many inputs/logits to produce
         self.num_new_node_values = len(self.frags_smi)
         self.num_node_attr_logits = 0
         self.num_node_dim = len(self.frags_smi) + 1
-        self.num_edge_attr_logits = most_stems * 2
+        self.num_edge_attr_logits = (most_stems + 1) * 2
         self.num_edge_dim = most_stems * 2
         self.num_cond_dim = num_cond_dim
+        self.edges_are_duplicated = True
+        self.edges_are_unordered = False
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
@@ -135,12 +142,18 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             x[i, g.nodes[n]['v']] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
-        attached = defaultdict(list)
         if len(g):
             degrees = torch.tensor(list(g.degree))[:, 1]
             max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]['v']]) for n in g.nodes])
         else:
             degrees = max_degrees = torch.zeros((0,))
+
+        # We compute the attachment points of fragments that have been already used so that we can
+        # mask them out for the agent (so that only one neighbor can be attached to one attachment
+        # point at a time).
+        attached = defaultdict(list)
+        # If there are unspecified attachment points, we will disallow the agent from using the stop
+        # action.
         has_unfilled_attach = False
         for e in g.edges:
             ed = g.edges[e]
@@ -154,11 +167,13 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 attached[e[1]].append(b)
             else:
                 has_unfilled_attach = True
+        # Here we encode the attached atoms in the edge features, as well as mask out attached
+        # atoms.
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             a, b = e
             for n, offset in zip(e, [0, self.num_stem_acts]):
-                idx = ad.get(f'{int(n)}_attach', 0) + offset
+                idx = ad.get(f'{int(n)}_attach', -1) + 1
                 edge_attr[i * 2, idx] = 1
                 edge_attr[i * 2 + 1, idx] = 1
                 if f'{int(n)}_attach' not in ad:
