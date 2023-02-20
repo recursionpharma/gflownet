@@ -149,25 +149,27 @@ class GraphTransformerGFN(nn.Module):
                                        num_heads=num_heads, ln_type=ln_type)
         num_final = num_emb
         num_glob_final = num_emb * 2
-        self.emb2add_edge = mlp(num_final, num_emb, 1, num_mlp_layers)
+        num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
+        self.edges_are_duplicated = env_ctx.edges_are_duplicated
+        self.edges_are_unordered = env_ctx.edges_are_unordered
+
+        self.emb2add_edge = mlp(num_edge_feat, num_emb, 1, num_mlp_layers)
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
         if env_ctx.num_node_attr_logits is not None:
             self.emb2set_node_attr = mlp(num_final, num_emb, env_ctx.num_node_attr_logits, num_mlp_layers)
         if env_ctx.num_edge_attr_logits is not None:
-            self.emb2set_edge_attr = mlp(num_final, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
+            self.emb2set_edge_attr = mlp(num_edge_feat, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
         self.emb2stop = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
         self.emb2reward = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
 
-        self._action_type_to_logit = {
-            GraphActionType.Stop: (lambda emb, g: self.emb2stop(emb['graph'])),
-            GraphActionType.AddNode: (lambda emb, g: self._mask(self.emb2add_node(emb['node']), g.add_node_mask)),
-            GraphActionType.SetNodeAttr:
-                (lambda emb, g: self._mask(self.emb2set_node_attr(emb['node']), g.set_node_attr_mask)),
-            GraphActionType.AddEdge: (lambda emb, g: self._mask(self.emb2add_edge(emb['non_edge']), g.add_edge_mask)),
-            GraphActionType.SetEdgeAttr:
-                (lambda emb, g: self._mask(self.emb2set_edge_attr(emb['edge']), g.set_edge_attr_mask)),
+        self._emb_to_logits = {
+            GraphActionType.Stop: lambda emb: self.emb2stop(emb['graph']),
+            GraphActionType.AddNode: lambda emb: self.emb2add_node(emb['node']),
+            GraphActionType.SetNodeAttr: lambda emb: self.emb2set_node_attr(emb['node']),
+            GraphActionType.AddEdge: lambda emb: self.emb2add_edge(emb['non_edge']),
+            GraphActionType.SetEdgeAttr: lambda emb: self.emb2set_edge_attr(emb['edge']),
         }
         self._action_type_to_key = {
             GraphActionType.Stop: None,
@@ -176,6 +178,20 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.AddEdge: 'non_edge_index',
             GraphActionType.SetEdgeAttr: 'edge_index'
         }
+        self._action_type_to_mask_name = {
+            GraphActionType.Stop: 'stop',
+            GraphActionType.AddNode: 'add_node',
+            GraphActionType.SetNodeAttr: 'set_node_attr',
+            GraphActionType.AddEdge: 'add_edge',
+            GraphActionType.SetEdgeAttr: 'set_edge_attr'
+        }
+
+    def _action_type_to_mask(self, t, g):
+        mask_name = self._action_type_to_mask_name[t] + '_mask'
+        return getattr(g, mask_name) if hasattr(g, mask_name) else 1
+
+    def _action_type_to_logit(self, t, emb, g):
+        return self._mask(self._emb_to_logits[t](emb), self._action_type_to_mask(t, g))
 
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
@@ -186,14 +202,24 @@ class GraphTransformerGFN(nn.Module):
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, 'non_edge_index'):
             ne_row, ne_col = g.non_edge_index
-            non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+            if self.edges_are_unordered:
+                non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+            else:
+                non_edge_embeddings = torch.cat([node_embeddings[ne_row], node_embeddings[ne_col]], 1)
         else:
             # If the environment context isn't setting non_edge_index, we can safely assume that
             # action is not in ctx.action_type_order.
             non_edge_embeddings = None
-        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
-        e_row, e_col = g.edge_index[:, ::2]
-        edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+        if self.edges_are_duplicated:
+            # On `::2`, edges are typically duplicated to make graphs undirected, only take the even ones
+            e_row, e_col = g.edge_index[:, ::2]
+        else:
+            e_row, e_col = g.edge_index
+        if self.edges_are_unordered:
+            edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+        else:
+            edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
+
         emb = {
             'graph': graph_embeddings,
             'node': node_embeddings,
@@ -203,8 +229,9 @@ class GraphTransformerGFN(nn.Module):
 
         cat = GraphActionCategorical(
             g,
-            logits=[self._action_type_to_logit[t](emb, g) for t in self.action_type_order],
+            logits=[self._action_type_to_logit(t, emb, g) for t in self.action_type_order],
             keys=[self._action_type_to_key[t] for t in self.action_type_order],
+            masks=[self._action_type_to_mask(t, g) for t in self.action_type_order],
             types=self.action_type_order,
         )
         return cat, self.emb2reward(graph_embeddings)
