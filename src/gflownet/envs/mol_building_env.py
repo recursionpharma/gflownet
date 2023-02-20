@@ -93,6 +93,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_edge_attr_logits = len(self.bond_attr_logit_map)
         self.num_edge_dim = self.bond_attr_size
         self.num_cond_dim = num_cond_dim
+        self.edges_are_duplicated = True
+        self.edges_are_unordered = True
 
         # Order in which models have to output logits
         self.action_type_order = [
