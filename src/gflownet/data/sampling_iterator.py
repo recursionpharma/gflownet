@@ -185,7 +185,7 @@ class SamplingIterator(IterableDataset):
                             trajs[i]['smi'] = Chem.MolToSmiles(m)
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
-            log_rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
+            log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
             log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
