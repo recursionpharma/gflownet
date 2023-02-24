@@ -1,3 +1,5 @@
+from itertools import chain
+
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -133,15 +135,10 @@ class GraphTransformerGFN(nn.Module):
     """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical. Meant for atom-wise
     generation.
 
-    Outputs logits for the following actions
-    - Stop
-    - AddNode
-    - SetNodeAttr
-    - AddEdge
-    - SetEdgeAttr
-
+    Outputs logits corresponding to the action types used by the env_ctx argument.
     """
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0):
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1,
+                 do_bck=False):
         """See `GraphTransformer` for argument values"""
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
@@ -153,49 +150,79 @@ class GraphTransformerGFN(nn.Module):
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
 
-        self.emb2add_edge = mlp(num_edge_feat, num_emb, 1, num_mlp_layers)
-        self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values, num_mlp_layers)
-        if env_ctx.num_node_attr_logits is not None:
-            self.emb2set_node_attr = mlp(num_final, num_emb, env_ctx.num_node_attr_logits, num_mlp_layers)
-        if env_ctx.num_edge_attr_logits is not None:
-            self.emb2set_edge_attr = mlp(num_edge_feat, num_emb, env_ctx.num_edge_attr_logits, num_mlp_layers)
-        self.emb2stop = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
-        self.emb2reward = mlp(num_glob_final, num_emb, 1, num_mlp_layers)
-        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
 
-        self._emb_to_logits = {
-            GraphActionType.Stop: lambda emb: self.emb2stop(emb['graph']),
-            GraphActionType.AddNode: lambda emb: self.emb2add_node(emb['node']),
-            GraphActionType.SetNodeAttr: lambda emb: self.emb2set_node_attr(emb['node']),
-            GraphActionType.AddEdge: lambda emb: self.emb2add_edge(emb['non_edge']),
-            GraphActionType.SetEdgeAttr: lambda emb: self.emb2set_edge_attr(emb['edge']),
+        # Every action type gets its own MLP that is fed the output of the GraphTransformer
+        self._action_type_to_num_inputs_outputs = {
+            GraphActionType.Stop: (num_glob_final, 1),
+            GraphActionType.AddNode: (num_final, env_ctx.num_new_node_values),
+            GraphActionType.SetNodeAttr: (num_final, env_ctx.num_node_attr_logits),
+            GraphActionType.AddEdge: (num_edge_feat, 1),
+            GraphActionType.SetEdgeAttr: (num_edge_feat, env_ctx.num_edge_attr_logits),
+            GraphActionType.RemoveNode: (num_final, 1),
+            GraphActionType.RemoveNodeAttr: (num_final, env_ctx.num_node_attrs - 1),
+            GraphActionType.RemoveEdge: (num_final, 1),
+            GraphActionType.RemoveEdgeAttr: (num_final, env_ctx.num_edge_attrs),
         }
-        self._action_type_to_key = {
-            GraphActionType.Stop: None,
-            GraphActionType.AddNode: 'x',
-            GraphActionType.SetNodeAttr: 'x',
-            GraphActionType.AddEdge: 'non_edge_index',
-            GraphActionType.SetEdgeAttr: 'edge_index'
+        # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
+        # embeddings to the right MLP
+        self._action_type_to_graph_part = {
+            GraphActionType.Stop: 'graph',
+            GraphActionType.AddNode: 'node',
+            GraphActionType.SetNodeAttr: 'node',
+            GraphActionType.AddEdge: 'non_edge',
+            GraphActionType.SetEdgeAttr: 'edge',
+            GraphActionType.RemoveNode: 'node',
+            GraphActionType.RemoveNodeAttr: 'node',
+            GraphActionType.RemoveEdge: 'edge',
+            GraphActionType.RemoveEdgeAttr: 'edge',
         }
-        self._action_type_to_mask_name = {
-            GraphActionType.Stop: 'stop',
-            GraphActionType.AddNode: 'add_node',
-            GraphActionType.SetNodeAttr: 'set_node_attr',
-            GraphActionType.AddEdge: 'add_edge',
-            GraphActionType.SetEdgeAttr: 'set_edge_attr'
+        # The torch_geometric batch key each graph part corresponds to
+        self._graph_part_to_key = {
+            'graph': None,
+            'node': 'x',
+            'non_edge': 'non_edge_index',
+            'edge': 'edge_index',
         }
+
+        mlps = {}
+        for atype in chain(env_ctx.action_type_order, env_ctx.bck_action_type_order if do_bck else []):
+            num_in, num_out = self._action_type_to_num_inputs_outputs[atype]
+            mlps[atype.cname] = mlp(num_in, num_emb, num_out, num_mlp_layers)
+
+        self.do_bck = do_bck
+        if do_bck:
+            self.bck_action_type_order = env_ctx.bck_action_type_order
+
+        self.mlps = nn.ModuleDict(mlps)
+
+        self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, num_mlp_layers)
+        # TODO: flag for this
+        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
+
+        self.do_bck = do_bck
+        if do_bck:
+            self.bck_action_type_order = env_ctx.bck_action_type_order
 
     def _action_type_to_mask(self, t, g):
-        mask_name = self._action_type_to_mask_name[t] + '_mask'
-        return getattr(g, mask_name) if hasattr(g, mask_name) else 1
+        return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)
 
     def _action_type_to_logit(self, t, emb, g):
-        return self._mask(self._emb_to_logits[t](emb), self._action_type_to_mask(t, g))
+        logits = self.mlps[t.cname](emb[self._action_type_to_graph_part[t]])
+        return self._mask(logits, self._action_type_to_mask(t, g))
 
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
         return x * m + -1000 * (1 - m)
+
+    def _make_cat(self, g, emb, action_types):
+        return GraphActionCategorical(
+            g,
+            logits=[self._action_type_to_logit(t, emb, g) for t in action_types],
+            keys=[self._graph_part_to_key[self._action_type_to_graph_part[t]] for t in action_types],
+            masks=[self._action_type_to_mask(t, g) for t in action_types],
+            types=action_types,
+        )
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         node_embeddings, graph_embeddings = self.transf(g, cond)
@@ -227,11 +254,9 @@ class GraphTransformerGFN(nn.Module):
             'non_edge': non_edge_embeddings,
         }
 
-        cat = GraphActionCategorical(
-            g,
-            logits=[self._action_type_to_logit(t, emb, g) for t in self.action_type_order],
-            keys=[self._action_type_to_key[t] for t in self.action_type_order],
-            masks=[self._action_type_to_mask(t, g) for t in self.action_type_order],
-            types=self.action_type_order,
-        )
-        return cat, self.emb2reward(graph_embeddings)
+        graph_out = self.emb2graph_out(graph_embeddings)
+        fwd_cat = self._make_cat(g, emb, self.action_type_order)
+        if self.do_bck:
+            bck_cat = self._make_cat(g, emb, self.bck_action_type_order)
+            return fwd_cat, bck_cat, graph_out
+        return fwd_cat, graph_out
