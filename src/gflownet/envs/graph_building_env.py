@@ -1,6 +1,8 @@
 from collections import defaultdict
 import copy
 import enum
+from functools import cached_property
+import re
 from typing import Any, Dict, List, Tuple
 
 import networkx as nx
@@ -57,6 +59,18 @@ class GraphActionType(enum.Enum):
     RemoveEdge = enum.auto()
     RemoveNodeAttr = enum.auto()
     RemoveEdgeAttr = enum.auto()
+
+    @cached_property
+    def cname(self):
+        return re.sub(r'(?<!^)(?=[A-Z])', '_', self.name).lower()
+
+    @cached_property
+    def mask_name(self):
+        return self.cname + '_mask'
+    
+    @cached_property
+    def is_backward(self):
+        return self.name.startswith('Remove')
 
 
 class GraphAction:
@@ -183,8 +197,20 @@ class GraphBuildingEnv:
             assert g.has_edge(action.source, action.target)
             assert action.attr not in gp.edges[(action.source, action.target)]
             gp.edges[(action.source, action.target)][action.attr] = action.value
+
+        elif action.action is GraphActionType.RemoveNode:
+            assert g.has_node(action.source)
+            gp = graph_without_node(gp, action.source)
+        elif action.action is GraphActionType.RemoveNodeAttr:
+            assert g.has_node(action.source)
+            gp = graph_without_node_attr(gp, action.source, action.attr)
+        elif action.action is GraphActionType.RemoveEdge:
+            assert g.has_edge(action.source, action.target)
+            gp = graph_without_edge(gp, (action.source, action.target))
+        elif action.action is GraphActionType.RemoveEdgeAttr:
+            assert g.has_edge(action.source, action.target)
+            gp = graph_without_edge_attr(gp, (action.source, action.target), action.attr)
         else:
-            # TODO: backward actions if we want to support MCMC-GFN style algorithms
             raise ValueError(f'Unknown action type {action.action}', action.action)
 
         return gp
@@ -277,6 +303,18 @@ class GraphBuildingEnv:
                 # special case if last node in graph
                 c += 1
         return c
+
+    def reverse(self, g: Graph, ga: GraphAction):
+        if ga.action == GraphActionType.Stop:
+            return ga
+        if ga.action == GraphActionType.AddNode:
+            return GraphAction(GraphActionType.RemoveNode, source=len(g.nodes))
+        if ga.action == GraphActionType.AddEdge:
+            return GraphAction(GraphActionType.RemoveEdge, source=ga.source, target=ga.target)
+        if ga.action == GraphActionType.SetNodeAttr:
+            return GraphAction(GraphActionType.RemoveNodeAttr, source=ga.source, attr=ga.attr)
+        if ga.action == GraphActionType.SetEdgeAttr:
+            return GraphAction(GraphActionType.RemoveEdgeAttr, source=ga.source, target=ga.target, attr=ga.attr)
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
@@ -663,9 +701,8 @@ class GraphActionCategorical:
 class GraphBuildingEnvContext:
     """A context class defines what the graphs are, how they map to and from data"""
     device: torch.device
-    action_mask_names: List[str]
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]) -> GraphAction:
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
         Parameters
         ----------
@@ -673,6 +710,8 @@ class GraphBuildingEnvContext:
             The graph to which the action is being applied
         action_idx: Tuple[int, int, int]
             The tensor indices for the corresponding action
+        fwd: bool
+            If True (default) then this is a forward action
 
         Returns
         -------
