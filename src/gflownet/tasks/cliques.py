@@ -825,6 +825,22 @@ def main():
         'global_batch_size': 32,
         'num_training_steps': 5000 * 2,
         'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+    }, {
+        **hps[-1],
+        'log_dir': './tmp/run_pb_20/',
+        'learning_rate': 3e-4,
+        'global_batch_size': 32,
+        'num_training_steps': 10000 * 2,
+        'tb_p_b_is_parameterized': False,
+        #'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+    }, {
+        **hps[-1],
+        'log_dir': './tmp/run_pb_21/',
+        'learning_rate': 3e-4,
+        'global_batch_size': 32,
+        'num_training_steps': 10000 * 2,
+        'tb_p_b_is_parameterized': True,
+        'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
     }
     ]
 
