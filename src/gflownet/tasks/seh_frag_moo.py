@@ -105,8 +105,8 @@ class SEHMOOTask(GFNTask):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
-        scalar_reward = (flat_reward * cond_info['preferences']).sum(1)
-        return scalar_reward**cond_info['beta']
+        scalar_reward = (flat_reward * cond_info['preferences']).sum(1).log()
+        return RewardScalar(scalar_reward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
