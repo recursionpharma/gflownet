@@ -295,7 +295,7 @@ def main():
     }
     if os.path.exists(hps['log_dir']):
         shutil.rmtree(hps['log_dir'])
-    trial = SEHMOOFragTrainer(hps, torch.device('cuda'))
+    trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()
 
