@@ -49,7 +49,7 @@ class SEHMOOTask(GFNTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float], num_thermometer_dim: int,
-                 objective_region_dir: torch.TensorType = None, objective_region_cosim: float = None,
+                 objective_region_dir: Tuple[float] = None, objective_region_cosim: float = None,
                  illegal_action_logreward: float = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
@@ -131,7 +131,7 @@ class SEHMOOTask(GFNTask):
                 flat_reward = torch.tensor(flat_reward)
         scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
         if self.objective_region_dir is not None:
-            cosim = nn.functional.cosine_similarity(flat_reward, self.objective_region_dir, dim=1)
+            cosim = nn.functional.cosine_similarity(flat_reward, torch.tensor(self.objective_region_dir), dim=1)
             scalar_logreward[cosim < self.objective_region_cosim] = self.illegal_action_logreward
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
@@ -205,7 +205,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=torch.tensor(ast.literal_eval(self.hps['objective_region_dir'])),
+                               objective_region_dir=ast.literal_eval(self.hps['objective_region_dir']),
                                objective_region_cosim=self.hps['objective_region_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
@@ -232,7 +232,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=torch.tensor(ast.literal_eval(self.hps['objective_region_dir'])),
+                               objective_region_dir=ast.literal_eval(self.hps['objective_region_dir']),
                                objective_region_cosim=self.hps['objective_region_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
