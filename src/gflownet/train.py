@@ -16,6 +16,7 @@ from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.utils.misc import create_logger
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 
 # This type represents an unprocessed list of reward signals/conditioning information
@@ -191,7 +192,7 @@ class GFNTrainer:
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
 
-    def run(self):
+    def run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
@@ -199,7 +200,8 @@ class GFNTrainer:
         torch.save({
             'hps': self.hps,
         }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
-
+        if logger is None:
+            logger = create_logger(logfile=self.hps['log_dir'] + '/train.log')
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
@@ -207,13 +209,14 @@ class GFNTrainer:
         valid_dl = self.build_validation_data_loader()
         callbacks = self.build_callbacks()
         start = self.hps.get('start_at_step', 0) + 1
+        logger.info("Starting training")
         for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
-            if self.verbose:
-                print(it, ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
             self.log(info, it, 'train')
+            if self.verbose:
+                logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
 
             if it % self.hps['validate_every'] == 0:
                 for batch in valid_dl:
