@@ -94,6 +94,7 @@ class SEHFragTrainer(GFNTrainer):
             'num_emb': 128,
             'num_layers': 4,
             'tb_epsilon': None,
+            'tb_p_b_is_parameterized': False,
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',

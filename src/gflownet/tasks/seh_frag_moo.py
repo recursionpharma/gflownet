@@ -166,7 +166,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
                                                    num_layers=self.hps['num_layers'], num_objectives=4)
         else:
-            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'],
+                                        do_bck=self.hps['tb_p_b_is_parameterized'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
@@ -223,7 +224,8 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'lr_decay': 10000,
-        'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp/',
+        #'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp_pb/',
+        'log_dir': './run_tmp_pb3/',
         'num_training_steps': 20_000,
         'validate_every': 500,
         'sampling_tau': 0.95,
@@ -235,6 +237,9 @@ def main():
         'sql_alpha': 0.01,
         'seed': 0,
         'preference_type': 'seeded_many',
+        'tb_p_b_is_parameterized': True,
+        'tb_correct_idempotent': True,
+        'tb_do_subtb': True,
     }
     trial = SEHMOOFragTrainer(hps, torch.device('cuda'))
     trial.verbose = True

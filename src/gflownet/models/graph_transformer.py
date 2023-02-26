@@ -161,8 +161,8 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.SetEdgeAttr: (num_edge_feat, env_ctx.num_edge_attr_logits),
             GraphActionType.RemoveNode: (num_final, 1),
             GraphActionType.RemoveNodeAttr: (num_final, env_ctx.num_node_attrs - 1),
-            GraphActionType.RemoveEdge: (num_final, 1),
-            GraphActionType.RemoveEdgeAttr: (num_final, env_ctx.num_edge_attrs),
+            GraphActionType.RemoveEdge: (num_edge_feat, 1),
+            GraphActionType.RemoveEdgeAttr: (num_edge_feat, env_ctx.num_edge_attrs),
         }
         # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
         # embeddings to the right MLP
