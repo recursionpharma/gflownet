@@ -109,6 +109,7 @@ class SEHFragTrainer(GFNTrainer):
             'clip_grad_type': 'norm',
             'clip_grad_param': 10,
             'random_action_prob': 0.,
+            'valid_random_action_prob': 0.,
             'sampling_tau': 0.,
             'num_thermometer_dim': 32,
         }

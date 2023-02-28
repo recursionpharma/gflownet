@@ -151,7 +151,8 @@ class GFNTrainer:
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.offline_ratio, log_dir=self.hps['log_dir'])
+                                    ratio=self.offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'train'),
+                                    random_action_prob=self.hps.get('random_action_prob', 0.0))
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
@@ -160,8 +161,9 @@ class GFNTrainer:
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
         iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.valid_offline_ratio, stream=False,
-                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True))
+                                    ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
+                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
+                                    random_action_prob=self.hps.get('valid_random_action_prob', 0.0))
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,

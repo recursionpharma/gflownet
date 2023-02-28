@@ -22,7 +22,7 @@ class SamplingIterator(IterableDataset):
 
     """
     def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None, sample_cond_info=True):
+                 stream=True, log_dir: str = None, sample_cond_info=True, random_action_prob=0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -61,13 +61,14 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
+        self.random_action_prob = random_action_prob
         self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
             # up with 2*batch_size accidentally
             self.offline_batch_size = self.online_batch_size = batch_size
-        self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        self.log_dir = log_dir
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
@@ -148,7 +149,8 @@ class SamplingIterator(IterableDataset):
             if num_online > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, num_online,
-                                                                             cond_info['encoding'][num_offline:])
+                                                                             cond_info['encoding'][num_offline:],
+                                                                             random_action_prob=self.random_action_prob)
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_reward

@@ -23,7 +23,6 @@ class A2C:
           Proceedings of The 33rd International Conference on Machine Learning, 2016
 
         Hyperparameters used:
-        random_action_prob: float, probability of taking a uniform random action when sampling
         illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
         sql_alpha: float, the entropy coefficient
 
@@ -58,9 +57,8 @@ class A2C:
         self.sample_temp = 1
         self.do_q_prime_correction = False
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
-        self.graph_sampler.random_action_prob = hps['random_action_prob']
 
-    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor):
+    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -71,6 +69,8 @@ class A2C:
             List of N Graph endpoints
         cond_info: torch.tensor
             Conditional information, shape (N, n_info)
+        random_action_prob: float
+            Probability of taking a random action
         Returns
         -------
         data: List[Dict]
@@ -82,7 +82,7 @@ class A2C:
         """
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         return data
 
     def create_training_data_from_graphs(self, graphs):
