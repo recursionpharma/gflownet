@@ -72,7 +72,7 @@ class SEHMOOTask(GFNTask):
         if self.temperature_sample_dist == 'constant':
             assert type(self.temperature_dist_params) in [float, int]
             beta = torch.tensor(self.temperature_dist_params).repeat(n)
-            beta_enc = thermometer(beta, self.num_thermometer_dim, 0, max(self.temperature_dist_params, 1e-5)) * 0.
+            beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
             if self.temperature_sample_dist == 'gamma':
                 loc, scale = self.temperature_dist_params
@@ -102,17 +102,15 @@ class SEHMOOTask(GFNTask):
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
 
     def encode_conditional_information(self, info):
-        # This assumes we're using a constant (max) beta and that info is the preferences
-        encoding = torch.cat([torch.ones((len(info), self.num_thermometer_dim)), info], 1)
         if self.temperature_sample_dist == 'constant':
             beta = torch.ones(len(info)) * self.temperature_dist_params
+            beta_enc = torch.zeros((len(info), self.num_thermometer_dim))
         else:
             beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
-        return {
-            'beta': beta,
-            'encoding': encoding.float(),
-            'preferences': info.float()
-        }
+            beta_enc = torch.ones((len(info), self.num_thermometer_dim))
+        
+        encoding = torch.cat([beta_enc, info], 1)
+        return {'beta': beta, 'encoding': encoding.float(), 'preferences': info.float()}
 
     def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -281,7 +279,11 @@ def main():
         'num_layers': 6,
         'num_data_loader_workers': 1,
         'temperature_sample_dist': 'constant',
+<<<<<<< HEAD
         'temperature_dist_params': '64',
+=======
+        'temperature_dist_params': '2.',
+>>>>>>> 7b2f517 ((fix): fixed encode_conditional_information() for constant beta (was passing full thermometer instead of empty one))
         'num_thermometer_dim': 18,
         'global_batch_size': 256,
         'algo': 'TB',
