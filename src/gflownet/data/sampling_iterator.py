@@ -22,7 +22,7 @@ class SamplingIterator(IterableDataset):
 
     """
     def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None, sample_cond_info=True):
+                 stream=True, log_dir: str = None, sample_cond_info=True, random_action_prob=0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -61,6 +61,7 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
+        self.random_action_prob = random_action_prob
         self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
@@ -148,7 +149,8 @@ class SamplingIterator(IterableDataset):
             if num_online > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, num_online,
-                                                                             cond_info['encoding'][num_offline:])
+                                                                             cond_info['encoding'][num_offline:],
+                                                                             random_action_prob=self.random_action_prob)
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_reward

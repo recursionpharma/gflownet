@@ -36,11 +36,10 @@ class GraphSampler:
         self.rng = rng
         # Experimental flags
         self.sample_temp = sample_temp
-        self.random_action_prob = 0
         self.sanitize_samples = True
         self.correct_idempotent = correct_idempotent
 
-    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device):
+    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.):
         """Samples a model in a minibatch
 
         Parameters
@@ -81,7 +80,7 @@ class GraphSampler:
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             # Forward pass to get GraphActionCategorical
             fwd_cat, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
-            if self.random_action_prob > 0:
+            if random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(
