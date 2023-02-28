@@ -287,7 +287,7 @@ def main():
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': '2.',
         'num_thermometer_dim': 18,
-        'global_batch_size': 256,
+        'global_batch_size': 512,
         'algo': 'TB',
         'sql_alpha': 0.01,
         'seed': 0,
