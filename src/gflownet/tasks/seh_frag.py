@@ -91,6 +91,7 @@ class SEHFragTrainer(GFNTrainer):
         return {
             'bootstrap_own_reward': False,
             'learning_rate': 1e-4,
+            'Z_learning_rate': 1e-4,
             'global_batch_size': 64,
             'num_emb': 128,
             'num_layers': 4,
@@ -148,7 +149,7 @@ class SEHFragTrainer(GFNTrainer):
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = torch.optim.Adam(non_Z_params, hps['learning_rate'], (hps['momentum'], 0.999),
                                     weight_decay=hps['weight_decay'], eps=hps['adam_eps'])
-        self.opt_Z = torch.optim.Adam(Z_params, hps['learning_rate'], (0.9, 0.999))
+        self.opt_Z = torch.optim.Adam(Z_params, hps['Z_learning_rate'], (0.9, 0.999))
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2**(-steps / hps['lr_decay']))
         self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(self.opt_Z, lambda steps: 2**(-steps / hps['Z_lr_decay']))
 
