@@ -285,7 +285,7 @@ def main():
         'temperature_dist_params': '2.',
 >>>>>>> 7b2f517 ((fix): fixed encode_conditional_information() for constant beta (was passing full thermometer instead of empty one))
         'num_thermometer_dim': 18,
-        'global_batch_size': 256,
+        'global_batch_size': 512,
         'algo': 'TB',
         'sql_alpha': 0.01,
         'seed': 0,

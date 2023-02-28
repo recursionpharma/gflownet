@@ -150,7 +150,7 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.sampling_model)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size * 2, self.ctx, self.algo, self.task, dev,
+        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
                                     ratio=self.offline_ratio, log_dir=self.hps['log_dir'])
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
