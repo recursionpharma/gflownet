@@ -4,6 +4,7 @@ import os
 import pathlib
 import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
+import math
 
 import git
 import numpy as np
@@ -182,6 +183,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'objectives': ['seh', 'qed', 'sa', 'mw'],
             'sampling_tau': 0.95,
             'valid_sample_cond_info': False,
+            'n_valid_prefs': 15,
+            'n_valid_repeats_per_pref': 128,
             'preference_type': 'dirichlet',
             'objective_region_dir': None,
             'objective_region_cosim': None,
@@ -241,16 +244,16 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         n_obj = len(self.hps['objectives'])
         if self.hps['preference_type'] == 'dirichlet':
-            valid_preferences = metrics.generate_simplex(n_obj, 5)
+            valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
         elif self.hps['preference_type'] == 'seeded_single':
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, 10)
-            valid_preferences = seeded_prefs[int(self.hps['single_pref_target_idx'])].reshape((1, n_obj))
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
+            valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps['preference_type'] == 'seeded_many':
-            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, 10)
+            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
 
-        self._top_k_hook = TopKHook(10, 128, len(valid_preferences))
-        self.test_data = RepeatedPreferenceDataset(valid_preferences, 128)
+        self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats_per_pref'], len(valid_preferences))
+        self.test_data = RepeatedPreferenceDataset(valid_preferences, self.hps['n_valid_repeats_per_pref'])
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
@@ -299,7 +302,7 @@ def main():
         'objective_region_cosim': 0.98,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
-        'validate_every': 2,
+        'validate_every': 1,
         'sampling_tau': 0.95,
         'num_layers': 4,
         'num_data_loader_workers': 8,
@@ -311,6 +314,8 @@ def main():
         'sql_alpha': 0.01,
         'seed': 0,
         'preference_type': 'dirichlet',
+        'n_valid_prefs': 15,
+        'n_valid_repeats_per_pref': 8,
     }
     if os.path.exists(hps['log_dir']):
         shutil.rmtree(hps['log_dir'])
