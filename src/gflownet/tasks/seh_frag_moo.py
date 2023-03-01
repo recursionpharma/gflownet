@@ -1,6 +1,8 @@
 import ast
 from typing import Any, Callable, Dict, List, Tuple, Union
 import math
+import os
+import json
 
 import numpy as np
 from rdkit.Chem import Descriptors
@@ -241,6 +243,14 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
+
+        os.makedirs(self.hps['log_dir'], exist_ok=True)
+        torch.save({
+            'hps': self.hps,
+        }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
+        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
+        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
+        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
