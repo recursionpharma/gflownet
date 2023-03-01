@@ -68,7 +68,7 @@ class SamplingIterator(IterableDataset):
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
             # up with 2*batch_size accidentally
             self.offline_batch_size = self.online_batch_size = batch_size
-        self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        self.log_dir = log_dir
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
