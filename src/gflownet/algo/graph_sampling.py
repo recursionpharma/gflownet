@@ -84,7 +84,7 @@ class GraphSampler:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(
-                    self.rng.uniform(size=len(torch_graphs)) < self.random_action_prob, device=dev).float()
+                    self.rng.uniform(size=len(torch_graphs)) < random_action_prob, device=dev).float()
                 # Set the logits to some large value if they're not masked, this way the masked
                 # actions have no probability of getting sampled, and there is a uniform
                 # distribution over the rest
