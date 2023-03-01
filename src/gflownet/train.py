@@ -1,6 +1,7 @@
 import os
 import pathlib
 import os
+import json
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -202,6 +203,9 @@ class GFNTrainer:
         torch.save({
             'hps': self.hps,
         }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
+        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
+        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
+        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
         if logger is None:
             logger = create_logger(logfile=self.hps['log_dir'] + '/train.log')
         self.model.to(self.device)
