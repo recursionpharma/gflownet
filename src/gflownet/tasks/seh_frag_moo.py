@@ -10,7 +10,6 @@ import numpy as np
 from rdkit.Chem import Descriptors
 from rdkit.Chem import QED
 from rdkit.Chem.rdchem import Mol as RDMol
-import scipy.stats as stats
 import torch
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
@@ -28,17 +27,16 @@ from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
+from gflownet.tasks.seh_frag import SEHTask
 from gflownet.train import FlatRewards
-from gflownet.train import GFNTask
 from gflownet.train import RewardScalar
 from gflownet.utils import metrics
 from gflownet.utils import sascore
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook
 from gflownet.utils.multiobjective_hooks import TopKHook
-from gflownet.utils.transforms import thermometer
 
 
-class SEHMOOTask(GFNTask):
+class SEHMOOTask(SEHTask):
     """Sets up a multiobjective task where the rewards are (functions of):
     - the the binding energy of a molecule to Soluble Epoxide Hydrolases.
     - its QED
@@ -73,26 +71,7 @@ class SEHMOOTask(GFNTask):
         return {'seh': model}
 
     def sample_conditional_information(self, n):
-        beta = None
-        if self.temperature_sample_dist == 'constant':
-            assert type(self.temperature_dist_params) in [float, int]
-            beta = torch.tensor(self.temperature_dist_params).repeat(n)
-            beta_enc = torch.zeros((n, self.num_thermometer_dim))
-        else:
-            if self.temperature_sample_dist == 'gamma':
-                loc, scale = self.temperature_dist_params
-                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
-                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-            elif self.temperature_sample_dist == 'uniform':
-                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == 'loguniform':
-                beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == 'beta':
-                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-                upper_bound = 1
-            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
+        cond_info = super().sample_conditional_information(n)
         if self.seeded_preference is not None:
             preferences = torch.tensor([self.seeded_preference] * n).float()
         elif self.experimental_dirichlet:
@@ -103,8 +82,9 @@ class SEHMOOTask(GFNTask):
             m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
             preferences = m.sample([n])
 
-        encoding = torch.cat([beta_enc, preferences], 1)
-        return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
+        cond_info['encoding'] = torch.cat([cond_info['encoding'], preferences], 1)
+        cond_info['preferences'] = preferences
+        return cond_info
 
     def encode_conditional_information(self, info):
         if self.temperature_sample_dist == 'constant':
