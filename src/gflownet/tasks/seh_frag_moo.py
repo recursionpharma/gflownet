@@ -1,11 +1,11 @@
 import ast
-from typing import Any, Callable, Dict, List, Tuple, Union
+import json
 import math
 import os
-import json
-import git
 import pathlib
+from typing import Any, Callable, Dict, List, Tuple, Union
 
+import git
 import numpy as np
 from rdkit.Chem import Descriptors
 from rdkit.Chem import QED
@@ -47,7 +47,7 @@ class SEHMOOTask(GFNTask):
 
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
-    def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str, 
+    def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float], num_thermometer_dim: int,
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
@@ -102,7 +102,7 @@ class SEHMOOTask(GFNTask):
         else:
             m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
             preferences = m.sample([n])
-        
+
         encoding = torch.cat([beta_enc, preferences], 1)
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
 
@@ -113,7 +113,7 @@ class SEHMOOTask(GFNTask):
         else:
             beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
             beta_enc = torch.ones((len(info), self.num_thermometer_dim))
-        
+
         encoding = torch.cat([beta_enc, info], 1)
         return {'beta': beta, 'encoding': encoding.float(), 'preferences': info.float()}
 
@@ -131,7 +131,7 @@ class SEHMOOTask(GFNTask):
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
-        
+
         else:
             flat_rewards = []
             if 'seh' in self.objectives:
@@ -150,17 +150,17 @@ class SEHMOOTask(GFNTask):
             if "qed" in self.objectives:
                 qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
                 flat_rewards.append(qeds)
-            
+
             if "sa" in self.objectives:
                 sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
                 sas = (10 - sas) / 9  # Turn into a [0-1] reward
                 flat_rewards.append(sas)
-            
+
             if "mw" in self.objectives:
                 molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
                 molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 flat_rewards.append(molwts)
-            
+
             flat_rewards = torch.stack(flat_rewards, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
@@ -192,35 +192,26 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
     def setup_task(self):
-        self.task = SEHMOOTask(
-            objectives=self.hps['objectives'], 
-            dataset=self.training_data, 
-            temperature_sample_dist=self.hps['temperature_sample_dist'],
-            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']), 
-            num_thermometer_dim=self.hps['num_thermometer_dim'],
-            wrap_model=self._wrap_model_mp
-            )
+        self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
+                               temperature_sample_dist=self.hps['temperature_sample_dist'],
+                               temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                               num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
-            model = GraphTransformerFragEnvelopeQL(self.ctx, 
-                                                   num_emb=self.hps['num_emb'],
-                                                   num_layers=self.hps['num_layers'], 
+            model = GraphTransformerFragEnvelopeQL(self.ctx, num_emb=self.hps['num_emb'],
+                                                   num_layers=self.hps['num_layers'],
                                                    num_objectives=len(self.hps['objectives']))
         else:
-            model = GraphTransformerGFN(self.ctx, 
-                                        num_emb=self.hps['num_emb'], 
-                                        num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
         self.model = model
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(
-            max_frags=9,
-            num_cond_dim=self.hps['num_thermometer_dim'] + len(self.hps['objectives'])
-            )
+        self.ctx = FragMolBuildingEnvContext(max_frags=9,
+                                             num_cond_dim=self.hps['num_thermometer_dim'] + len(self.hps['objectives']))
 
     def setup(self):
         super().setup()
@@ -234,11 +225,13 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
         elif self.hps['preference_type'] == 'seeded_single':
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
+                                                                                           self.hps['n_valid_prefs'])
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps['preference_type'] == 'seeded_many':
-            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
+            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet(
+                [1] * n_obj, self.hps['n_valid_prefs'])
 
         self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats_per_pref'], len(valid_preferences))
         self.test_data = RepeatedPreferenceDataset(valid_preferences, self.hps['n_valid_repeats_per_pref'])

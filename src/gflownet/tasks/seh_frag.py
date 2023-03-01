@@ -120,12 +120,9 @@ class SEHFragTrainer(GFNTrainer):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
 
     def setup_task(self):
-        self.task = SEHTask(
-            dataset=self.training_data, 
-            temperature_distribution=self.hps['temperature_sample_dist'],
-            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']), 
-            num_thermometer_dim=self.hps['num_thermometer_dim'],
-            wrap_model=self._wrap_model_mp)
+        self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
+                            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                            num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])

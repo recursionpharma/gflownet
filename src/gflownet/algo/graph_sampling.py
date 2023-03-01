@@ -39,7 +39,8 @@ class GraphSampler:
         self.sanitize_samples = True
         self.correct_idempotent = correct_idempotent
 
-    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.):
+    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device,
+                          random_action_prob: float = 0.):
         """Samples a model in a minibatch
 
         Parameters
