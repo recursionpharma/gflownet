@@ -1,3 +1,5 @@
+from collections import defaultdict
+import json
 import os
 from typing import List, Tuple
 
@@ -17,6 +19,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
     This context specifies how to create molecules fragment by fragment as encoded by a junction tree.
     Fragments are obtained from the original GFlowNet paper, Bengio et al., 2021.
+
+    This context works by having the agent generate a (tree) graph of fragments, and by then having
+    the agent specify which atom each edge uses as an attachment point (single bond) between
+    fragments. Masks ensure that the agent can only perform chemically valid attachments.
     """
     def __init__(self, max_frags: int = 9, num_cond_dim: int = 0):
         """Construct a fragment environment
@@ -28,24 +34,26 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             The dimensionality of the observations' conditional information vector (if >0)
         """
         self.max_frags = max_frags
-        self.frags_smi = open(os.path.split(__file__)[0] + '/frags_72.txt', 'r').read().splitlines()
+        smi, stems = zip(*json.load(open(os.path.split(__file__)[0] + '/frags_72.json', 'r')))
+        self.frags_smi = smi
         self.frags_mol = [Chem.MolFromSmiles(i) for i in self.frags_smi]
-        self.frags_stems = [[
-            atomidx for atomidx in range(m.GetNumAtoms()) if m.GetAtomWithIdx(atomidx).GetTotalNumHs() > 0
-        ] for m in self.frags_mol]
+        self.frags_stems = stems
         self.frags_numatm = [m.GetNumAtoms() for m in self.frags_mol]
         self.num_stem_acts = most_stems = max(map(len, self.frags_stems))
         self.action_map = [(fragidx, stemidx)
                            for fragidx in range(len(self.frags_stems))
                            for stemidx in range(len(self.frags_stems[fragidx]))]
         self.num_actions = len(self.action_map)
+
         # These values are used by Models to know how many inputs/logits to produce
         self.num_new_node_values = len(self.frags_smi)
         self.num_node_attr_logits = 0
         self.num_node_dim = len(self.frags_smi) + 1
-        self.num_edge_attr_logits = most_stems * 2
+        self.num_edge_attr_logits = (most_stems + 1) * 2
         self.num_edge_dim = most_stems * 2
         self.num_cond_dim = num_cond_dim
+        self.edges_are_duplicated = True
+        self.edges_are_unordered = False
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
@@ -134,23 +142,54 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             x[i, g.nodes[n]['v']] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
+        if len(g):
+            degrees = torch.tensor(list(g.degree))[:, 1]
+            max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]['v']]) for n in g.nodes])
+        else:
+            degrees = max_degrees = torch.zeros((0,))
+
+        # We compute the attachment points of fragments that have been already used so that we can
+        # mask them out for the agent (so that only one neighbor can be attached to one attachment
+        # point at a time).
+        attached = defaultdict(list)
+        # If there are unspecified attachment points, we will disallow the agent from using the stop
+        # action.
+        has_unfilled_attach = False
+        for e in g.edges:
+            ed = g.edges[e]
+            a = ed.get(f'{int(e[0])}_attach', -1)
+            b = ed.get(f'{int(e[1])}_attach', -1)
+            if a >= 0:
+                attached[e[0]].append(a)
+            else:
+                has_unfilled_attach = True
+            if b >= 0:
+                attached[e[1]].append(b)
+            else:
+                has_unfilled_attach = True
+        # Here we encode the attached atoms in the edge features, as well as mask out attached
+        # atoms.
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             a, b = e
             for n, offset in zip(e, [0, self.num_stem_acts]):
-                idx = ad.get(f'{int(n)}_attach', 0) + offset
+                idx = ad.get(f'{int(n)}_attach', -1) + 1
                 edge_attr[i * 2, idx] = 1
                 edge_attr[i * 2 + 1, idx] = 1
                 if f'{int(n)}_attach' not in ad:
-                    set_edge_attr_mask[i, offset:offset + len(self.frags_stems[g.nodes[n]['v']])] = 1
+                    for attach_point in range(max_degrees[n]):
+                        if attach_point not in attached[n]:
+                            set_edge_attr_mask[i, offset + attach_point] = 1
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
             (-1, 2)).T
         if x.shape[0] == self.max_frags:
             add_node_mask = torch.zeros((x.shape[0], 1))
         else:
-            add_node_mask = torch.ones((x.shape[0], 1))
+            add_node_mask = (degrees < max_degrees).float()[:, None] if len(g.nodes) else torch.ones((1, 1))
+        stop_mask = torch.zeros((1, 1)) if has_unfilled_attach or not len(g) else torch.ones((1, 1))
 
-        return gd.Data(x, edge_index, edge_attr, add_node_mask=add_node_mask, set_edge_attr_mask=set_edge_attr_mask)
+        return gd.Data(x, edge_index, edge_attr, stop_mask=stop_mask, add_node_mask=add_node_mask,
+                       set_edge_attr_mask=set_edge_attr_mask)
 
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
