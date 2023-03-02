@@ -226,9 +226,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
             (-1, 2)).T
         if x.shape[0] == self.max_frags:
-            add_node_mask = torch.zeros((x.shape[0], 1))
+            add_node_mask = torch.zeros((x.shape[0], self.num_new_node_values))
         else:
             add_node_mask = (degrees < max_degrees).float()[:, None] if len(g.nodes) else torch.ones((1, 1))
+            add_node_mask = add_node_mask * torch.ones((x.shape[0], self.num_new_node_values))
         stop_mask = torch.zeros((1, 1)) if has_unfilled_attach or not len(g) else torch.ones((1, 1))
 
         return gd.Data(x, edge_index, edge_attr, stop_mask=stop_mask, add_node_mask=add_node_mask,

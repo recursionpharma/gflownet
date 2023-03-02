@@ -312,6 +312,7 @@ class TrajectoryBalance:
             # zero-out the logP_F of those states
             log_p_F[final_graph_idx] = 0
             if self.is_doing_subTB:
+                # Force the pad states' F(s) prediction to be R
                 per_graph_out[final_graph_idx, 0] = clip_log_R
 
             # To get the correct P_B we need to shift all predictions by 1 state, and ignore the
@@ -475,8 +476,8 @@ class TrajectoryBalance:
         for ep in range(traj_lengths.shape[0]):
             offset = cumul_lens[ep]
             T = int(traj_lengths[ep])
-            #if self.p_b_is_parameterized:
-            #    T -= 1
+            if self.p_b_is_parameterized:
+                T -= 1
             idces, dests = self._precomp[T - 1]
             fidces = torch.cat(
                 [torch.cat([ar[i + 1:T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)])

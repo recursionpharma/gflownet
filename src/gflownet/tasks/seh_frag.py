@@ -110,10 +110,11 @@ class SEHFragTrainer(GFNTrainer):
             'random_action_prob': 0.,
             'sampling_tau': 0.,
             'num_cond_dim': 32,
+            'max_nodes': 9,
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps['max_nodes'])
 
     def setup_task(self):
         self.task = SEHTask(self.training_data, self.hps['temperature_sample_dist'],
@@ -127,7 +128,7 @@ class SEHFragTrainer(GFNTrainer):
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=hps['num_cond_dim'])
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps['max_nodes'], num_cond_dim=hps['num_cond_dim'])
         self.training_data = []
         self.test_data = []
         self.offline_ratio = 0

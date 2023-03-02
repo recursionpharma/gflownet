@@ -147,15 +147,15 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_algo(self):
         hps = self.hps
         if hps['algo'] == 'TB':
-            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'SQL':
-            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'A2C':
-            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'MOREINFORCE':
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'MOQL':
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
 
     def setup_task(self):
         self.task = SEHMOOTask(self.training_data, self.hps['temperature_sample_dist'],
@@ -225,7 +225,7 @@ def main():
     hps = {
         'lr_decay': 10000,
         #'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp_pb/',
-        'log_dir': './run_tmp_pb3/',
+        'log_dir': './run_tmp_pb12/',
         'num_training_steps': 20_000,
         'validate_every': 500,
         'sampling_tau': 0.95,
@@ -238,7 +238,7 @@ def main():
         'seed': 0,
         'preference_type': 'seeded_many',
         'tb_p_b_is_parameterized': True,
-        'tb_correct_idempotent': True,
+        'tb_correct_idempotent': False,
         'tb_do_subtb': True,
     }
     trial = SEHMOOFragTrainer(hps, torch.device('cuda'))
