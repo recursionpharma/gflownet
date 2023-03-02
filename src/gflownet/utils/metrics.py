@@ -149,8 +149,8 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
-    from cvxopt import solvers
     from cvxopt import matrix
+    from cvxopt import solvers
 
     solvers.options['abstol'] = 1e-15
     solvers.options['reltol'] = 1e-15

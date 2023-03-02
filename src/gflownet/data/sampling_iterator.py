@@ -196,7 +196,7 @@ class SamplingIterator(IterableDataset):
             batch.preferences = cond_info.get('preferences', None)
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
-            
+
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
@@ -205,7 +205,7 @@ class SamplingIterator(IterableDataset):
             # Converts back into natural rewards for logging purposes
             # (allows to take averages and plot in objective space)
             rewards = torch.exp(log_rewards / cond_info['beta'])  # TODO: make that a task-dependent operation
-            
+
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})

@@ -1,10 +1,10 @@
 import ast
 import json
+import math
 import os
 import pathlib
 import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
-import math
 
 import git
 import numpy as np
@@ -120,7 +120,7 @@ class SEHMOOTask(GFNTask):
         else:
             beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
             beta_enc = torch.ones((len(info), self.num_thermometer_dim))
-        
+
         encoding = torch.cat([beta_enc, info], 1)
         return {'beta': beta, 'encoding': encoding.float(), 'preferences': info.float()}
 
@@ -246,11 +246,13 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
         elif self.hps['preference_type'] == 'seeded_single':
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
+                                                                                           self.hps['n_valid_prefs'])
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps['preference_type'] == 'seeded_many':
-            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, self.hps['n_valid_prefs'])
+            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet(
+                [1] * n_obj, self.hps['n_valid_prefs'])
 
         self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats_per_pref'], len(valid_preferences))
         self.test_data = RepeatedPreferenceDataset(valid_preferences, self.hps['n_valid_repeats_per_pref'])
