@@ -122,7 +122,7 @@ class QM9GapTrainer(GFNTrainer):
             'num_emb': 128,
             'num_layers': 4,
             'tb_epsilon': None,
-            'illegal_action_logreward': -50,
+            'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
             'temperature_dist_params': '(.5, 32)',

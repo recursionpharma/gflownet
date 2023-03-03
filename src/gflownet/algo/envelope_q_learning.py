@@ -230,7 +230,7 @@ class EnvelopeQLearning:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards):
+    def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
@@ -239,8 +239,8 @@ class EnvelopeQLearning:
             A list of N trajectories.
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
-        rewards: Tensor
-            The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
+        log_rewards: Tensor
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch
@@ -253,7 +253,7 @@ class EnvelopeQLearning:
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
         batch.actions = torch.tensor(actions)
-        batch.rewards = rewards
+        batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
 
