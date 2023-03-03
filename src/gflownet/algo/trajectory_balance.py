@@ -183,7 +183,7 @@ class TrajectoryBalance:
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         log_rewards: Tensor
-            The transformed reward (e.g. log(R(x) ** beta)) for each trajectory. Shape (N,)
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch
