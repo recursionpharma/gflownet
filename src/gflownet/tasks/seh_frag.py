@@ -58,7 +58,7 @@ class SEHTask(GFNTask):
         beta = None
         if self.temperature_sample_dist == 'constant':
             assert type(self.temperature_dist_params) in [float, int]
-            beta = torch.tensor(self.temperature_dist_params).repeat(n)
+            beta = np.array(self.temperature_dist_params).repeat(n)
             beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
             if self.temperature_sample_dist == 'gamma':
