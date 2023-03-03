@@ -185,8 +185,8 @@ def mol_to_graph_backend(atmfeat, coord, bond, bondfeat, props={}, data_cls=Data
     return data
 
 
-def onehot(arr, num_classes, dtype=np.int):
-    arr = np.asarray(arr, dtype=np.int)
+def onehot(arr, num_classes, dtype=np.int32):
+    arr = np.asarray(arr, dtype=np.int32)
     assert len(arr.shape) == 1, "dims other than 1 not implemented"
     onehot_arr = np.zeros(arr.shape + (num_classes,), dtype=dtype)
     onehot_arr[np.arange(arr.shape[0]), arr] = 1
