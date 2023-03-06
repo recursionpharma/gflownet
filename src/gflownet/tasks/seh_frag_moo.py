@@ -50,7 +50,7 @@ class SEHMOOTask(GFNTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float], num_thermometer_dim: int,
-                 focus_dir: Tuple[float] = None, focus_cosim: float = None,
+                 preference_type: str = None, focus_dir: Tuple[float] = None, focus_cosim: float = None,
                  illegal_action_logreward: float = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
@@ -59,6 +59,7 @@ class SEHMOOTask(GFNTask):
         self.temperature_sample_dist = temperature_sample_dist
         self.temperature_dist_params = temperature_parameters
         self.num_thermometer_dim = num_thermometer_dim
+        self.preference_type = preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
         self.focus_dir = focus_dir
@@ -100,15 +101,18 @@ class SEHMOOTask(GFNTask):
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
-        if self.seeded_preference is not None:
-            preferences = torch.tensor([self.seeded_preference] * n).float()
-        elif self.experimental_dirichlet:
-            a = np.random.dirichlet([1] * len(self.objectives), n)
-            b = np.random.exponential(1, n)[:, None]
-            preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
+        if self.preference_type is None:
+            preferences = torch.ones((n, len(self.objectives)))
         else:
-            m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
-            preferences = m.sample([n])
+            if self.seeded_preference is not None:
+                preferences = torch.tensor([self.seeded_preference] * n).float()
+            elif self.experimental_dirichlet:
+                a = np.random.dirichlet([1] * len(self.objectives), n)
+                b = np.random.exponential(1, n)[:, None]
+                preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
+            else:
+                m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
+                preferences = m.sample([n])
 
         encoding = torch.cat([beta_enc, preferences], 1)
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences}
@@ -208,6 +212,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
+                               preference_type=self.hps['preference_type'],
                                focus_dir=ast.literal_eval(self.hps['focus_dir']),
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
@@ -235,6 +240,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
+                               preference_type=self.hps['preference_type'],
                                focus_dir=ast.literal_eval(self.hps['focus_dir']),
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
@@ -243,7 +249,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
 
         n_obj = len(self.hps['objectives'])
-        if self.hps['preference_type'] == 'dirichlet':
+        if self.hps['preference_type'] is None:
+            valid_preferences = np.ones((self.hps['n_valid_prefs'], n_obj))
+        elif self.hps['preference_type'] == 'dirichlet':
             valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
         elif self.hps['preference_type'] == 'seeded_single':
             seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
@@ -253,6 +261,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif self.hps['preference_type'] == 'seeded_many':
             valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet(
                 [1] * n_obj, self.hps['n_valid_prefs'])
+        else:
+            raise NotImplementedError(f"Unknown preference type {self.hps['preference_type']}")
 
         self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats_per_pref'], len(valid_preferences))
         self.test_data = RepeatedPreferenceDataset(valid_preferences, self.hps['n_valid_repeats_per_pref'])
@@ -327,4 +337,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Warning as e:
+        print(e)
+        exit(1)
