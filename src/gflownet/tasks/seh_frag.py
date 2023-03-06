@@ -101,7 +101,7 @@ class SEHFragTrainer(GFNTrainer):
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -121,7 +121,7 @@ class SEHFragTrainer(GFNTrainer):
 
     def setup_task(self):
         self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
-                            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                            temperature_parameters=self.hps['temperature_dist_params'],
                             num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
@@ -193,7 +193,7 @@ def main():
         'num_training_steps': 10_000,
         'validate_every': 100,
         'sampling_tau': 0.99,
-        'temperature_dist_params': '(0, 64)',
+        'temperature_dist_params': (0., 64.),
     }
     trial = SEHFragTrainer(hps, torch.device('cuda'))
     trial.verbose = True
