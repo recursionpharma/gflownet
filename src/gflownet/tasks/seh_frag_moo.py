@@ -50,7 +50,7 @@ class SEHMOOTask(GFNTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float], num_thermometer_dim: int,
-                 objective_region_dir: Tuple[float] = None, objective_region_cosim: float = None,
+                 focus_dir: Tuple[float] = None, focus_cosim: float = None,
                  illegal_action_logreward: float = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
@@ -61,10 +61,10 @@ class SEHMOOTask(GFNTask):
         self.num_thermometer_dim = num_thermometer_dim
         self.seeded_preference = None
         self.experimental_dirichlet = False
-        self.objective_region_dir = objective_region_dir
-        self.objective_region_cosim = objective_region_cosim
+        self.focus_dir = focus_dir
+        self.focus_cosim = focus_cosim
         self.illegal_action_logreward = illegal_action_logreward
-        assert not ((self.objective_region_dir is None) ^ (self.objective_region_cosim is None))
+        assert not ((self.focus_dir is None) ^ (self.focus_cosim is None))
         assert set(objectives) <= {'seh', 'qed', 'sa', 'mw'} and len(objectives) == len(set(objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -131,9 +131,9 @@ class SEHMOOTask(GFNTask):
             else:
                 flat_reward = torch.tensor(flat_reward)
         scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
-        if self.objective_region_dir is not None:
-            cosim = nn.functional.cosine_similarity(flat_reward, torch.tensor(self.objective_region_dir), dim=1)
-            scalar_logreward[cosim < self.objective_region_cosim] = self.illegal_action_logreward
+        if self.focus_dir is not None:
+            cosim = nn.functional.cosine_similarity(flat_reward, torch.tensor(self.focus_dir), dim=1)
+            scalar_logreward[cosim < self.focus_cosim] = self.illegal_action_logreward
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
@@ -186,8 +186,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'n_valid_prefs': 15,
             'n_valid_repeats_per_pref': 128,
             'preference_type': 'dirichlet',
-            'objective_region_dir': None,
-            'objective_region_cosim': None,
+            'focus_dir': None,
+            'focus_cosim': None,
         }
 
     def setup_algo(self):
@@ -208,8 +208,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=ast.literal_eval(self.hps['objective_region_dir']),
-                               objective_region_cosim=self.hps['objective_region_cosim'],
+                               focus_dir=ast.literal_eval(self.hps['focus_dir']),
+                               focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
 
@@ -235,8 +235,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               objective_region_dir=ast.literal_eval(self.hps['objective_region_dir']),
-                               objective_region_cosim=self.hps['objective_region_cosim'],
+                               focus_dir=ast.literal_eval(self.hps['focus_dir']),
+                               focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
 
@@ -300,8 +300,8 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'objectives': ['seh', 'qed', 'sa'],
-        'objective_region_dir': '(1., 1., 1.)',
-        'objective_region_cosim': 0.98,
+        'focus_dir': '(1., 1., 1.)',
+        'focus_cosim': 0.92,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
         'validate_every': 1,
