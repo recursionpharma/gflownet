@@ -70,8 +70,9 @@ class SEHMOOTask(SEHTask):
         model, self.device = self._wrap_model(model)
         return {'seh': model}
 
-    def sample_conditional_information(self, n):
+    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n)
+
         if self.seeded_preference is not None:
             preferences = torch.tensor([self.seeded_preference] * n).float()
         elif self.experimental_dirichlet:
@@ -86,16 +87,16 @@ class SEHMOOTask(SEHTask):
         cond_info['preferences'] = preferences
         return cond_info
 
-    def encode_conditional_information(self, info):
+    def encode_conditional_information(self, preferences: torch.TensorType) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == 'constant':
-            beta = torch.ones(len(info)) * self.temperature_dist_params
-            beta_enc = torch.zeros((len(info), self.num_thermometer_dim))
+            beta = torch.ones(len(preferences)) * self.temperature_dist_params
+            beta_enc = torch.zeros((len(preferences), self.num_thermometer_dim))
         else:
-            beta = torch.ones(len(info)) * self.temperature_dist_params[-1]
-            beta_enc = torch.ones((len(info), self.num_thermometer_dim))
+            beta = torch.ones(len(preferences)) * self.temperature_dist_params[-1]
+            beta_enc = torch.ones((len(preferences), self.num_thermometer_dim))
 
-        encoding = torch.cat([beta_enc, info], 1)
-        return {'beta': beta, 'encoding': encoding.float(), 'preferences': info.float()}
+        encoding = torch.cat([beta_enc, preferences], 1)
+        return {'beta': beta, 'encoding': encoding.float(), 'preferences': preferences.float()}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
