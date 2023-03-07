@@ -311,7 +311,7 @@ def main():
     hps = {
         'objectives': ['seh', 'qed', 'sa'],
         'focus_dir': '(1., 1., 1.)',
-        'focus_cosim': 0.92,
+        'focus_cosim': 0.99,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
         'validate_every': 1,
