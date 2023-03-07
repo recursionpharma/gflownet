@@ -153,8 +153,8 @@ class QM9GapTrainer(GFNTrainer):
         hps['tb_epsilon'] = ast.literal_eval(eps) if isinstance(eps, str) else eps
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
-        self.task = QM9GapTask(self.training_data, hps['temperature_sample_dist'],
-                               hps['temperature_dist_params'], wrap_model=self._wrap_model_mp)
+        self.task = QM9GapTask(self.training_data, hps['temperature_sample_dist'], hps['temperature_dist_params'],
+                               wrap_model=self._wrap_model_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']
         self.clip_grad_callback = {

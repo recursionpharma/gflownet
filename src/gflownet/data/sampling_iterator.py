@@ -141,7 +141,8 @@ class SamplingIterator(IterableDataset):
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
                 num_offline = 0
-                cond_info = self.task.encode_conditional_information(cond_info=torch.stack([self.data[i] for i in idcs]))
+                cond_info = self.task.encode_conditional_information(
+                    cond_info=torch.stack([self.data[i] for i in idcs]))
                 trajs, flat_rewards = [], []
 
             is_valid = torch.ones(num_offline + num_online).bool()
@@ -236,24 +237,12 @@ class SamplingIterator(IterableDataset):
         focus_dir = cond_info.get('focus_dir', torch.zeros((len(mols), 0))).data.numpy().tolist()
         logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences', 'focus_dir']]
 
-        data = (
-            [
-                [mols[i], rewards[i]] +
-                flat_rewards[i] + 
-                preferences[i] +
-                focus_dir[i] +
-                [cond_info[k][i].item() for k in logged_keys] 
-                for i in range(len(trajs))
-            ]
-        )
-        
-        data_labels = (
-            ['smi', 'r'] +
-            [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
-            [f'pref_{i}' for i in range(len(preferences[0]))] +
-            [f'ci_{k}' for k in logged_keys] +
-            [f'focus_{i}' for i in range(len(focus_dir[0]))]
-        )
+        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] + focus_dir[i] +
+                 [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
+
+        data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
+                       [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys] +
+                       [f'focus_{i}' for i in range(len(focus_dir[0]))])
         self.log.insert_many(data, data_labels)
 
 

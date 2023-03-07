@@ -1,11 +1,9 @@
-import ast
 import json
 import math
 import os
 import pathlib
 import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
-import math
 
 import git
 import numpy as np
@@ -50,8 +48,8 @@ class SEHMOOTask(GFNTask):
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
-                 temperature_parameters: Tuple[float], num_thermometer_dim: int,
-                 preference_type: str = None, focus_dir: Union[Tuple[float], str] = (1., 1.), focus_cosim: float = 0.,
+                 temperature_parameters: Tuple[float], num_thermometer_dim: int, preference_type: str = None,
+                 focus_dir: Union[Tuple[float], str] = (1., 1.), focus_cosim: float = 0.,
                  illegal_action_logreward: float = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
@@ -137,7 +135,12 @@ class SEHMOOTask(GFNTask):
             beta_enc = torch.ones((len(cond_info), self.num_thermometer_dim))
 
         encoding = torch.cat([beta_enc, cond_info], 1)
-        return {'beta': beta, 'encoding': encoding.float(), 'preferences': cond_info[:, :len(self.objectives)].float(), 'focus_dir': cond_info[:, len(self.objectives):].float()}
+        return {
+            'beta': beta,
+            'encoding': encoding.float(),
+            'preferences': cond_info[:, :len(self.objectives)].float(),
+            'focus_dir': cond_info[:, len(self.objectives):].float()
+        }
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -223,8 +226,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               preference_type=self.hps['preference_type'],
-                               focus_dir=self.hps['focus_dir'],
+                               preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
@@ -243,8 +245,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup_env_context(self):
         n_cond = self.hps['num_thermometer_dim'] + 2 * len(self.hps['objectives'])  # 1 for prefs and 1 for focus region
-        self.ctx = FragMolBuildingEnvContext(max_frags=9,
-                                             num_cond_dim=n_cond)
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=n_cond)
 
     def setup(self):
         super().setup()
@@ -253,8 +254,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               preference_type=self.hps['preference_type'],
-                               focus_dir=self.hps['focus_dir'],
+                               preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'],
                                wrap_model=self._wrap_model_mp)
@@ -262,7 +262,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
 
         n_obj = len(self.hps['objectives'])
-        
+
         # create fixed preference vectors for validation
         if self.hps['preference_type'] is None:
             valid_preferences = np.ones((self.hps['n_valid_prefs'], n_obj))
@@ -278,17 +278,18 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 [1] * n_obj, self.hps['n_valid_prefs'])
         else:
             raise NotImplementedError(f"Unknown preference type {self.hps['preference_type']}")
-        
-        # create fixed focus regions for validation 
+
+        # create fixed focus regions for validation
         if type(self.hps['focus_dir']) is str:
             if self.hps['focus_dir'] == 'dirichlet':
-                valid_focus_dirs = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
+                valid_focus_dirs = metrics.generate_simplex(n_obj,
+                                                            n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
             else:
                 raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dir']}")
         else:
             assert type(self.hps['focus_dir']) is tuple
             valid_focus_dirs = np.array([self.hps['focus_dir']] * self.hps['n_valid_prefs'])
-        
+
         # combine preferences and focus directions (fixed focus cosim)
         valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
 
@@ -347,7 +348,7 @@ def main():
         'num_layers': 4,
         'num_data_loader_workers': 8,
         'temperature_sample_dist': 'constant',
-        'temperature_dist_params': '60.',
+        'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
         'global_batch_size': 64,
         'algo': 'TB',
