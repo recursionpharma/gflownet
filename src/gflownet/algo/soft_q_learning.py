@@ -11,7 +11,7 @@ from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 
-from .graph_sampling import GraphSampler
+from gflownet.algo.graph_sampling import GraphSampler
 
 
 class SoftQLearning:
