@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import pathlib
 import shutil
@@ -207,8 +206,12 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
 
         n_obj = len(self.hps['objectives'])
-        if self.hps['preference_type'] == 'dirichlet':
-            valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
+
+        # create fixed preference vectors for validation
+        if self.hps['preference_type'] is None:
+            valid_preferences = np.ones((self.hps['n_valid_prefs'], n_obj))
+        elif self.hps['preference_type'] == 'dirichlet':
+            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'], normalisation='l1')
         elif self.hps['preference_type'] == 'seeded_single':
             seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
                                                                                            self.hps['n_valid_prefs'])
