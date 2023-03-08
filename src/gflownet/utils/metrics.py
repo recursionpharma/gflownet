@@ -8,8 +8,8 @@ from botorch.utils.multi_objective.hypervolume import Hypervolume
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
-import torch
 from sklearn.cluster import KMeans
+import torch
 
 
 def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
@@ -41,7 +41,7 @@ def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation:
         else:
             raise ValueError(f"Unknown normalisation {normalisation}")
         return points
-    
+
     points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
     v = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(points).cluster_centers_
     if normalisation == 'l2':
@@ -50,7 +50,7 @@ def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation:
         v /= np.sum(v, 1, keepdims=True)
     else:
         raise ValueError(f"Unknown normalisation {normalisation}")
-    
+
     return v
 
 

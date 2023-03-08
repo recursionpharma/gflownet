@@ -47,10 +47,12 @@ class SEHMOOTask(GFNTask):
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
-                 temperature_parameters: Tuple[float], num_thermometer_dim: int, preference_type: str = None,
-                 focus_dir: Union[Tuple[float], str] = (1., 1.), focus_cosim: float = 0.,
-                 illegal_action_logreward: float = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
+                 focus_dir: Union[Tuple[float, float],
+                                  str] = (1., 1.), focus_cosim: float = 0., illegal_action_logreward: float = None,
+                 rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self._load_task_models()
         self.objectives = objectives
         self.dataset = dataset
@@ -227,7 +229,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
                                preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
                                focus_cosim=self.hps['focus_cosim'],
-                               illegal_action_logreward=self.hps['illegal_action_logreward'],
+                               illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
                                wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
@@ -255,7 +257,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
                                preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
                                focus_cosim=self.hps['focus_cosim'],
-                               illegal_action_logreward=self.hps['illegal_action_logreward'],
+                               illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
                                wrap_model=self._wrap_model_mp)
 
         git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
@@ -289,7 +291,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # create fixed focus regions for validation
         if type(self.hps['focus_dir']) is str:
             if self.hps['focus_dir'] == 'dirichlet':
-                valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'], normalisation='l2')
+                valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'],
+                                                                 normalisation='l2')
             else:
                 raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dir']}")
         else:
