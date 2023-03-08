@@ -77,10 +77,10 @@ class SEHTask(GFNTask):
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
         return {'beta': torch.tensor(beta), 'encoding': beta_enc}
 
-    def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward.flatten()**cond_info['beta']
+        return RewardScalar(torch.log(flat_reward + 1e-8) * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
