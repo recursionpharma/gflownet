@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import pathlib
 import shutil
@@ -275,7 +274,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if self.hps['preference_type'] is None:
             valid_preferences = np.ones((self.hps['n_valid_prefs'], n_obj))
         elif self.hps['preference_type'] == 'dirichlet':
-            valid_preferences = metrics.generate_simplex(n_obj, n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
+            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'], normalisation='l1')
         elif self.hps['preference_type'] == 'seeded_single':
             seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
                                                                                            self.hps['n_valid_prefs'])
@@ -290,8 +289,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # create fixed focus regions for validation
         if type(self.hps['focus_dir']) is str:
             if self.hps['focus_dir'] == 'dirichlet':
-                valid_focus_dirs = metrics.generate_simplex(n_obj,
-                                                            n_per_dim=math.ceil(self.hps['n_valid_prefs'] / n_obj))
+                valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'], normalisation='l2')
             else:
                 raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dir']}")
         else:
@@ -338,7 +336,7 @@ class RepeatedCondInfoDataset:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'objectives': ['seh', 'qed', 'sa'],
+        'objectives': ['seh', 'qed'],
         'focus_dir': 'dirichlet',
         'focus_cosim': 0.99,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
