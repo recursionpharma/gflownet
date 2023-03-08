@@ -38,7 +38,7 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
         # Edge attr logits are "sided", so we will compute both sides independently
         self.emb2set_edge_attr = mlp(num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2 * num_objectives,
                                      num_mlp_layers)
-        self.emb2stop = mlp(num_emb * 3, num_emb, env_ctx.num_stop_logits * num_objectives, num_mlp_layers)
+        self.emb2stop = mlp(num_emb * 3, num_emb, num_objectives, num_mlp_layers)
         self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
         self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
@@ -175,7 +175,7 @@ class EnvelopeQLearning:
         self.max_nodes = max_nodes
         self.illegal_action_logreward = hps['illegal_action_logreward']
         self.gamma = hps.get('moql_gamma', 1)
-        self.num_objectives = hps['moql_num_objectives']
+        self.num_objectives = len(hps['objectives'])
         self.num_omega_samples = hps.get('moql_num_omega_samples', 32)
         self.Lambda_decay = hps.get('moql_lambda_decay', 10_000)
         self.invalid_penalty = hps.get('moql_penalty', -10)
