@@ -3,6 +3,7 @@ import json
 import math
 import os
 import pathlib
+import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import git
@@ -266,6 +267,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'log_dir': "./logs/debug_run",
+        'overwrite_existing_exp': True,
         'seed': 0,
         'global_batch_size': 64,
         'num_training_steps': 20_000,
@@ -287,6 +289,13 @@ def main():
         'n_valid_prefs': 15,
         'n_valid_repeats_per_pref': 128,
     }
+    if os.path.exists(hps['log_dir']):
+        if hps['overwrite_existing_exp']:
+            shutil.rmtree(hps['log_dir'])
+        else:
+            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
+    else:
+        os.makedirs(hps['log_dir'])
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()

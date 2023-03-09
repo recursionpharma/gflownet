@@ -2,6 +2,8 @@ import ast
 import copy
 import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
+import os
+import shutil
 
 import numpy as np
 from rdkit import RDLogger
@@ -200,14 +202,24 @@ class SEHFragTrainer(GFNTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
+        'log_dir': "./logs/debug_run",
+        'overwrite_existing_exp': True,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
         'log_dir': './logs/debug_run',
         'num_training_steps': 10_000,
         'validate_every': 1,
         'lr_decay': 20000,
         'sampling_tau': 0.99,
+        'num_data_loader_workers': 8,
         'temperature_dist_params': '(0, 64)',
     }
+    if os.path.exists(hps['log_dir']):
+        if hps['overwrite_existing_exp']:
+            shutil.rmtree(hps['log_dir'])
+        else:
+            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
+    else:
+        os.makedirs(hps['log_dir'])
     trial = SEHFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()
