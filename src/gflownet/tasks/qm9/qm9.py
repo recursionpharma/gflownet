@@ -29,7 +29,8 @@ from gflownet.utils.transforms import thermometer
 
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
-    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
+    def __init__(self, dataset: Dataset, temperature_distribution: str, 
+                 temperature_parameters: Tuple[float, float],
                  num_thermometer_dim: int, rng: np.random.Generator = None, 
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
@@ -132,7 +133,7 @@ class QM9GapTrainer(GFNTrainer):
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32.),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -176,7 +177,7 @@ class QM9GapTrainer(GFNTrainer):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
         self.task = QM9GapTask(dataset=self.training_data, temperature_distribution=hps['temperature_sample_dist'],
-                               temperature_parameters=ast.literal_eval(hps['temperature_dist_params']),
+                               temperature_parameters=hps['temperature_dist_params'],
                                num_thermometer_dim=hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']

@@ -36,7 +36,8 @@ class SEHTask(GFNTask):
     This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
     objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
-    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
+    def __init__(self, dataset: Dataset, temperature_distribution: str, 
+                 temperature_parameters: Tuple[float, float],
                  num_thermometer_dim: int, rng: np.random.Generator = None, 
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
@@ -61,7 +62,7 @@ class SEHTask(GFNTask):
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
         beta = None
         if self.temperature_sample_dist == 'constant':
-            assert type(self.temperature_dist_params) in [float, int]
+            assert type(self.temperature_dist_params) is float
             beta = np.array(self.temperature_dist_params).repeat(n).astype(np.float32)
             beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
@@ -118,7 +119,7 @@ class SEHFragTrainer(GFNTrainer):
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32.),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -138,7 +139,7 @@ class SEHFragTrainer(GFNTrainer):
 
     def setup_task(self):
         self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
-                            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                            temperature_parameters=self.hps['temperature_dist_params'],
                             num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
@@ -213,7 +214,7 @@ def main():
         'lr_decay': 20000,
         'sampling_tau': 0.99,
         'num_data_loader_workers': 8,
-        'temperature_dist_params': '(0, 64)',
+        'temperature_dist_params': (0., 64.),
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:

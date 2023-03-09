@@ -1,4 +1,3 @@
-import ast
 import json
 import math
 import os
@@ -47,7 +46,7 @@ class SEHMOOTask(SEHTask):
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
-                 temperature_parameters: Tuple[float], num_thermometer_dim: int, rng: np.random.Generator = None,
+                 temperature_parameters: Tuple[float, float], num_thermometer_dim: int, rng: np.random.Generator = None,
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
@@ -180,7 +179,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_task(self):
         self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
-                               temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                               temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
@@ -203,7 +202,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         super().setup()
         self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
-                               temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                               temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
 
@@ -284,7 +283,7 @@ def main():
         'random_action_prob': 0.1,
         'num_data_loader_workers': 8,
         'temperature_sample_dist': 'constant',
-        'temperature_dist_params': '60.',
+        'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
         'preference_type': 'dirichlet',
         'n_valid_prefs': 15,
