@@ -48,8 +48,8 @@ class SEHMOOTask(GFNTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
-                 focus_dir: Union[Tuple[float, float],
-                                  str] = (1., 1.), focus_cosim: float = 0., illegal_action_logreward: float = None,
+                 focus_dir: Tuple[float,
+                                  float] = (1., 1.), focus_cosim: float = 0., illegal_action_logreward: float = None,
                  rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
