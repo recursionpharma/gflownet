@@ -29,10 +29,9 @@ from gflownet.utils.transforms import thermometer
 
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
-    def __init__(self, dataset: Dataset, temperature_distribution: str, 
-                 temperature_parameters: Tuple[float, float],
-                 num_thermometer_dim: int, rng: np.random.Generator = None, 
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float, float],
+                 num_thermometer_dim: int, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
         self.models = self.load_task_models()
@@ -96,7 +95,7 @@ class QM9GapTask(GFNTask):
                 beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
-        
+
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
         return {'beta': beta, 'encoding': beta_enc}
 

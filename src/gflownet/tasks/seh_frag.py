@@ -1,9 +1,9 @@
 import ast
 import copy
-import socket
-from typing import Any, Callable, Dict, List, Tuple, Union
 import os
 import shutil
+import socket
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 from rdkit import RDLogger
@@ -36,10 +36,9 @@ class SEHTask(GFNTask):
     This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
     objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
-    def __init__(self, dataset: Dataset, temperature_distribution: str, 
-                 temperature_parameters: Tuple[float, float],
-                 num_thermometer_dim: int, rng: np.random.Generator = None, 
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float, float],
+                 num_thermometer_dim: int, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
         self.models = self._load_task_models()
@@ -80,7 +79,7 @@ class SEHTask(GFNTask):
                 beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
-        
+
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
         return {'beta': beta, 'encoding': beta_enc}
 

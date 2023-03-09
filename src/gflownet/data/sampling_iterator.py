@@ -1,7 +1,7 @@
+from collections.abc import Iterable
 import os
 import sqlite3
 from typing import Callable, List
-from collections.abc import Iterable
 
 import networkx as nx
 import numpy as np
