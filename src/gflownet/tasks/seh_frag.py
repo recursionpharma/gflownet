@@ -75,11 +75,16 @@ class SEHTask(GFNTask):
                 beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
-        return {'beta': torch.tensor(beta), 'encoding': beta_enc}
+        
+        assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
+        return {'beta': beta, 'encoding': beta_enc}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
+        flat_reward = flat_reward.squeeze()
+        assert len(flat_reward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {flat_reward.shape} vs {cond_info['beta'].shape}"
         return RewardScalar(torch.log(flat_reward + 1e-8) * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:

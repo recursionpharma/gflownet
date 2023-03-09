@@ -94,7 +94,8 @@ class SEHMOOTask(SEHTask):
         else:
             beta = torch.ones(len(preferences)) * self.temperature_dist_params[-1]
             beta_enc = torch.ones((len(preferences), self.num_thermometer_dim))
-
+        
+        assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
         encoding = torch.cat([beta_enc, preferences], 1)
         return {'beta': beta, 'encoding': encoding.float(), 'preferences': preferences.float()}
 
@@ -105,6 +106,8 @@ class SEHMOOTask(SEHTask):
             else:
                 flat_reward = torch.tensor(flat_reward)
         scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
+        assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
