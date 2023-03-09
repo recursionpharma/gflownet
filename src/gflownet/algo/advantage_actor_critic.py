@@ -24,7 +24,6 @@ class A2C:
 
         Hyperparameters used:
         illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
-        sql_alpha: float, the entropy coefficient
 
         Parameters
         ----------

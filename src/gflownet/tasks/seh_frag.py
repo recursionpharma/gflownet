@@ -195,15 +195,15 @@ class SEHFragTrainer(GFNTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'lr_decay': 10000,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/scratch/logs/seh_frag/run_0/',
+        'log_dir': './logs/debug_run',
         'num_training_steps': 10_000,
-        'validate_every': 100,
+        'validate_every': 1,
+        'lr_decay': 20000,
         'sampling_tau': 0.99,
         'temperature_dist_params': '(0, 64)',
     }
-    trial = SEHFragTrainer(hps, torch.device('cuda'))
+    trial = SEHFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()
 

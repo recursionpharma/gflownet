@@ -262,24 +262,27 @@ class RepeatedPreferenceDataset:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'objectives': ['seh', 'qed', 'sa'],
-        'lr_decay': 10000,
-        'log_dir': '/scratch/emmanuel.bengio/logs/seh_frag_moo/run_tmp/',
+        'log_dir': "./logs/debug_run",
+        'seed': 0,
+        'global_batch_size': 64,
         'num_training_steps': 20_000,
         'validate_every': 1,
+        'num_layers': 4,
+        'algo': 'TB',
+        'objectives': ['seh', 'qed'],
+        'learning_rate': 1e-4,
+        'Z_learning_rate': 1e-3,
+        'lr_decay': 20000,
+        'Z_lr_decay': 50000,
         'sampling_tau': 0.95,
-        'num_layers': 6,
+        'random_action_prob': 0.1,
         'num_data_loader_workers': 8,
         'temperature_sample_dist': 'constant',
-        'temperature_dist_params': '2.',
-        'num_thermometer_dim': 18,
-        'global_batch_size': 64,
-        'algo': 'TB',
-        'sql_alpha': 0.01,
-        'seed': 0,
+        'temperature_dist_params': '60.',
+        'num_thermometer_dim': 32,
         'preference_type': 'dirichlet',
         'n_valid_prefs': 15,
-        'n_valid_repeats_per_pref': 8,
+        'n_valid_repeats_per_pref': 128,
     }
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
