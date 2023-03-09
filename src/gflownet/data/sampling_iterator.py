@@ -237,12 +237,22 @@ class SamplingIterator(IterableDataset):
         focus_dir = cond_info.get('focus_dir', torch.zeros((len(mols), 0))).data.numpy().tolist()
         logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences', 'focus_dir']]
 
-        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] + focus_dir[i] +
-                 [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
+        data = ([
+            [mols[i], rewards[i]] +
+            flat_rewards[i] +
+            preferences[i] +
+            focus_dir[i] +
+            [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))
+        ])
 
-        data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
-                       [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys] +
-                       [f'focus_{i}' for i in range(len(focus_dir[0]))])
+        data_labels = (
+            ['smi', 'r'] +
+            [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
+            [f'pref_{i}' for i in range(len(preferences[0]))] +
+            [f'focus_{i}' for i in range(len(focus_dir[0]))] +
+            [f'ci_{k}' for k in logged_keys]
+        )
+        
         self.log.insert_many(data, data_labels)
 
 
