@@ -344,7 +344,9 @@ class ExactProbCompCallback:
                  cache_path='two_col_7_precomp_px_v2.pkl.gz',
                  #cache_path='/mnt/bh1/scratch/emmanuel.bengio/data/cliques/two_col_7_precomp_px_v2.pkl.gz',
                  #cache_path='/Users/emmanuel.bengio/rs/two_col_7_precomp_px_v2.pkl.gz',
-                 do_save_px=True):
+                 do_save_px=True,
+                 log_rewards=None,
+                 tqdm_disable=None):
         self.trial = trial
         self.mbs = mbs
         self.dev = dev
@@ -356,8 +358,11 @@ class ExactProbCompCallback:
                 i.to(dev) for i in bs
             ], [[(j[0].to(dev), j[1].to(dev)) for j in i] for i in ids])
         else:
-            self._compute_things()
-        self.log_rewards = np.array([self.trial.training_data.reward(i) for i in tqdm(self.states, disable=None)])
+            self._compute_things(tqdm_disable)
+        if log_rewards is None:
+            self.log_rewards = np.array([self.trial.training_data.reward(i) for i in tqdm(self.states, disable=tqdm_disable)])
+        else:
+            self.log_rewards = log_rewards
         self.logZ = np.log(np.sum(np.exp(self.log_rewards)))
         self.true_log_probs = self.log_rewards - self.logZ
         self.do_save_px = do_save_px
@@ -382,7 +387,7 @@ class ExactProbCompCallback:
         self.precomputed_indices = []
         states_hash = [hashg(i) for i in tqdm(states, disable=tqdm_disable)]
         states_Data = [self.trial.ctx.graph_to_Data(i) for i in tqdm(states, disable=tqdm_disable)]
-        ones = torch.ones((mbs, 1)).to(dev)
+        ones = torch.ones((mbs, self.trial.ctx.num_cond_dim)).to(dev)
         hash_to_graphs = {}
         for i, h, g in zip(range(len(states)), states_hash, states):
             hash_to_graphs[h] = hash_to_graphs.get(h, list()) + [(g, i)]
@@ -421,9 +426,14 @@ class ExactProbCompCallback:
             actions = [list() for i in range(len(bs))]
             offset = 0
             for u, i in enumerate(cat.logits):
-                for k, j in enumerate(map(list, ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy())):
+                #for k, j in enumerate(map(list, ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy())):
+                for j in ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy():
+                    # We're using nonzero above to enumerate all positions, but we still need to check
+                    # if the mask is nonzero since we only want the legal actions.
+                    # We *don't* wan't mask.nonzero() because then `k` would be wrong
+                    k = j[0] * i.shape[1] + j[1] + offset
                     jb = cat.batch[u][j[0]].item()
-                    actions[jb].append((u, j[0] - cat.slice[u][jb].item(), j[1], k + offset))
+                    actions[jb].append((u, j[0] - cat.slice[u][jb].item(), j[1], k))
                 offset += i.numel()
             all_indices = []
             for jb, j_acts in enumerate(actions):
@@ -444,14 +454,19 @@ class ExactProbCompCallback:
     def is_terminal(self, g):
         return len(g.nodes) > 7 or len(g.edges) >= 21
 
-    def compute_prob(self, model):
+    def compute_prob(self, model, cond_info=None, tqdm_disable=None):
         prob_of_being_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
-        cond_info = torch.zeros((self.mbs, 1)).to(self.dev)
+        if cond_info is None:
+            cond_info = torch.zeros((self.mbs, self.trial.ctx.num_cond_dim)).to(self.dev)
+        if cond_info.ndim == 1:
+            cond_info = cond_info[None, :] * torch.ones((self.mbs, 1)).to(self.dev)
+        if cond_info.ndim == 2 and cond_info.shape[0] == 1:
+            cond_info = cond_info * torch.ones((self.mbs, 1)).to(self.dev)
         # Note: visiting the states in order works because the ordering here is a natural topological sort.
         # Wrong results otherwise.
-        for bi, batch, pre_indices in zip(tqdm(range(0, len(self.states), self.mbs), disable=None),
+        for bi, batch, pre_indices in zip(tqdm(range(0, len(self.states), self.mbs), disable=tqdm_disable),
                                           self.precomputed_batches, self.precomputed_indices):
             bs = self.states[bi:bi + self.mbs]
             indices = list(range(bi, bi + len(bs)))
@@ -463,14 +478,14 @@ class ExactProbCompCallback:
                 cat, *_, mo = model(batch, cond_info[:len(bs)])
             logprobs = torch.cat([i.flatten() for i in cat.logsoftmax()])
             for end_indices, being_indices in pre_indices:
-                if end_indices.shape[0] > 0:
-                    s_idces, sp_idces, a_idces = end_indices
-                    prob_of_ending_t = scatter_add((prob_of_being_t[s_idces] + logprobs[a_idces]).exp(), sp_idces,
-                                                   out=prob_of_ending_t.exp()).log()
                 if being_indices.shape[0] > 0:
                     s_idces, sp_idces, a_idces = being_indices
                     prob_of_being_t = scatter_add((prob_of_being_t[s_idces] + logprobs[a_idces]).exp(), sp_idces,
                                                   out=prob_of_being_t.exp()).log()
+                if end_indices.shape[0] > 0:
+                    s_idces, sp_idces, a_idces = end_indices
+                    prob_of_ending_t = scatter_add((prob_of_being_t[s_idces] + logprobs[a_idces]).exp(), sp_idces,
+                                                   out=prob_of_ending_t.exp()).log()
         return prob_of_ending_t
 
 
