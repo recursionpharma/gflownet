@@ -30,8 +30,10 @@ from gflownet.utils.transforms import thermometer
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
     def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
-                 num_thermometer_dim: int, wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 num_thermometer_dim: int, rng: np.random.Generator = None, 
+                 wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self.load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution

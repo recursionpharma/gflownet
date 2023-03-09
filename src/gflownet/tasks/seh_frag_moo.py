@@ -47,9 +47,10 @@ class SEHMOOTask(SEHTask):
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
-                 temperature_parameters: Tuple[float], num_thermometer_dim: int,
+                 temperature_parameters: Tuple[float], num_thermometer_dim: int, rng: np.random.Generator = None,
                  wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self._load_task_models()
         self.objectives = objectives
         self.dataset = dataset
