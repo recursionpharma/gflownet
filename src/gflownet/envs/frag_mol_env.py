@@ -47,8 +47,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
         # These values are used by Models to know how many inputs/logits to produce
         self.edges_are_duplicated = True
-        self.edges_are_unordered = False  # The ordering in which the model sees & produces logits
-                                          # for edges matters, i.e. action(u, v) != action(v, u)
+        # The ordering in which the model sees & produces logits for edges matters,
+        # i.e. action(u, v) != action(v, u).
+        # This is because of the way we encode attachment points (see below on semantics of SetEdgeAttr)
+        self.edges_are_unordered = False
         self.num_new_node_values = len(self.frags_smi)
         self.num_node_attrs = 1
         self.num_node_attr_logits = 0
@@ -187,7 +189,11 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             degrees = max_degrees = torch.zeros((0,))
         for i, n in enumerate(g.nodes):
             x[i, g.nodes[n]['v']] = 1
-            remove_node_mask[i, 0] = degrees[i] <= 1
+            # The node must be connected to at most 1 other node and in the case where it is
+            # connected to exactly one other node, the edge connecting them must not have any
+            # attributes.
+            edge_has_no_attr = bool(len(g.edges[list(g.edges(i))[0]]) == 0 if degrees[i] == 1 else degrees[i] == 0)
+            remove_node_mask[i, 0] = degrees[i] <= 1 and edge_has_no_attr
 
         # We compute the attachment points of fragments that have been already used so that we can
         # mask them out for the agent (so that only one neighbor can be attached to one attachment
