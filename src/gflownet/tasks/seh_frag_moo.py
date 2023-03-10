@@ -48,8 +48,8 @@ class SEHMOOTask(GFNTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
-                 focus_dir: Tuple[float,
-                                  float] = (1., 1.), focus_cosim: float = 0., illegal_action_logreward: float = None,
+                 focus_dist: Union[list,
+                                   str] = [(1., 1.)], focus_cosim: float = 0., illegal_action_logreward: float = None,
                  rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
@@ -62,7 +62,7 @@ class SEHMOOTask(GFNTask):
         self.preference_type = preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
-        self.focus_dir = focus_dir
+        self.focus_dist = focus_dist
         self.focus_cosim = focus_cosim
         self.illegal_action_logreward = illegal_action_logreward
         assert set(objectives) <= {'seh', 'qed', 'sa', 'mw'} and len(objectives) == len(set(objectives))
@@ -113,16 +113,17 @@ class SEHMOOTask(GFNTask):
                 m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
                 preferences = m.sample([n])
 
-        if type(self.focus_dir) is tuple:  # fixed focus region
-            focus_dir = torch.tensor(self.focus_dir).float().repeat((n, 1))
-        elif type(self.focus_dir) is str:
-            if self.focus_dir == "dirichlet":
+        if type(self.focus_dist) is list:  # set of fixed focus regions
+            focus_dir = torch.tensor(
+                np.array(self.focus_dist)[self.rng.choice(len(self.focus_dist), n)].astype(np.float32))
+        elif type(self.focus_dist) is str:
+            if self.focus_dist == "dirichlet":
                 m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
                 focus_dir = m.sample([n])
             else:
-                raise NotImplementedError(f"Unknown focus direction sampling distribution: {self.focus_dir}")
+                raise NotImplementedError(f"Unknown focus direction sampling distribution: {self.focus_dist}")
         else:
-            raise NotImplementedError(f"Unsupported focus direction type: {type(self.focus_dir)}")
+            raise NotImplementedError(f"Unsupported focus direction type: {type(self.focus_dist)}")
 
         encoding = torch.cat([beta_enc, preferences, focus_dir], 1)
         return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences, 'focus_dir': focus_dir}
@@ -150,9 +151,10 @@ class SEHMOOTask(GFNTask):
             else:
                 flat_reward = torch.tensor(flat_reward)
         scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
-        if self.focus_dir is not None:
-            cosim = nn.functional.cosine_similarity(flat_reward, cond_info['focus_dir'], dim=1)
-            scalar_logreward[cosim < self.focus_cosim] = self.illegal_action_logreward
+
+        # objective region focusing (no focus should use focus_cosim=0.)
+        cosim = nn.functional.cosine_similarity(flat_reward, cond_info['focus_dir'], dim=1)
+        scalar_logreward[cosim < self.focus_cosim] = self.illegal_action_logreward
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
@@ -202,10 +204,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'objectives': ['seh', 'qed', 'sa', 'mw'],
             'sampling_tau': 0.95,
             'valid_sample_cond_info': False,
-            'n_valid_prefs': 15,
-            'n_valid_repeats_per_pref': 128,
+            'n_valid': 15,
+            'n_valid_repeats': 128,
             'preference_type': 'dirichlet',
-            'focus_dir': None,
+            'focus_dist': None,
             'focus_cosim': None,
         }
 
@@ -227,7 +229,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
+                               preference_type=self.hps['preference_type'], focus_dist=self.hps['focus_dist'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
                                wrap_model=self._wrap_model_mp)
@@ -255,7 +257,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
-                               preference_type=self.hps['preference_type'], focus_dir=self.hps['focus_dir'],
+                               preference_type=self.hps['preference_type'], focus_dist=self.hps['focus_dist'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
                                wrap_model=self._wrap_model_mp)
@@ -271,39 +273,54 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
 
         n_obj = len(self.hps['objectives'])
+        n_valid = self.hps['n_valid']
+
+        # making sure hyperparameters for preferences and focus regions are consistent
+        if not (type(self.hps['focus_dist']) is list and len(self.hps['focus_dist']) == 1):
+            assert self.hps['preference_type'] is None, \
+                    f"Cannot use preferences with multiple focus regions, here focus_dist={self.hps['focus_dist']} " \
+                    f"and preference_type={self.hps['preference_type']}"
+
+        if type(self.hps['focus_dist']) is list and len(self.hps['focus_dist']) > 1:
+            n_valid = len(self.hps['focus_dist'])
 
         # create fixed preference vectors for validation
         if self.hps['preference_type'] is None:
-            valid_preferences = np.ones((self.hps['n_valid_prefs'], n_obj))
+            valid_preferences = np.ones((n_valid, n_obj))
         elif self.hps['preference_type'] == 'dirichlet':
-            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'], normalisation='l1')
+            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l1')
         elif self.hps['preference_type'] == 'seeded_single':
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj,
-                                                                                           self.hps['n_valid_prefs'])
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps['preference_type'] == 'seeded_many':
-            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet(
-                [1] * n_obj, self.hps['n_valid_prefs'])
+            valid_preferences = np.random.default_rng(142857 + int(self.hps['seed'])).dirichlet([1] * n_obj, n_valid)
         else:
             raise NotImplementedError(f"Unknown preference type {self.hps['preference_type']}")
 
         # create fixed focus regions for validation
-        if type(self.hps['focus_dir']) is str:
-            if self.hps['focus_dir'] == 'dirichlet':
-                valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=self.hps['n_valid_prefs'],
-                                                                 normalisation='l2')
+        if type(self.hps['focus_dist']) is str:
+            if self.hps['focus_dist'] == 'dirichlet':
+                valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l2')
             else:
-                raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dir']}")
+                raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dist']}")
+
+        elif type(self.hps['focus_dist']) is list:
+            if len(self.hps['focus_dist']) == 1:
+                valid_focus_dirs = np.array([self.hps['focus_dist'][0]] * n_valid)
+            else:
+                assert self.hps['preference_type'] is None, \
+                    f"Cannot use preferences with multiple focus regions, now focus_dist={self.hps['focus_dist']}"
+                valid_focus_dirs = np.array(self.hps['focus_dist'])
+
         else:
-            assert type(self.hps['focus_dir']) is tuple
-            valid_focus_dirs = np.array([self.hps['focus_dir']] * self.hps['n_valid_prefs'])
+            raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dist']}")
 
         # combine preferences and focus directions (fixed focus cosim)
         valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
 
-        self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats_per_pref'], len(valid_cond_vector))
-        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.hps['n_valid_repeats_per_pref'])
+        self._top_k_hook = TopKHook(10, self.hps['n_valid_repeats'], len(valid_cond_vector))
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.hps['n_valid_repeats'])
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
@@ -340,7 +357,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'objectives': ['seh', 'qed'],
-        'focus_dir': 'dirichlet',
+        'focus_dist': [(1., 1.), (0.9, 0.2), (0.2, 0.9)],
         'focus_cosim': 0.99,
         'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
         'num_training_steps': 20_000,
@@ -355,9 +372,9 @@ def main():
         'algo': 'TB',
         'sql_alpha': 0.01,
         'seed': 0,
-        'preference_type': None,
-        'n_valid_prefs': 15,
-        'n_valid_repeats_per_pref': 8,
+        'preference_type': "dirichlet",
+        'n_valid': 15,
+        'n_valid_repeats': 8,
     }
     if os.path.exists(hps['log_dir']):
         shutil.rmtree(hps['log_dir'])
