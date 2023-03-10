@@ -329,7 +329,7 @@ class TrajectoryBalance:
         else:
             log_p_B = batch.log_p_B
         assert log_p_F.shape == log_p_B.shape
-        
+
         # This is the log probability of each trajectory
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')

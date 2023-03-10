@@ -68,7 +68,7 @@ class GraphActionType(enum.Enum):
     @cached_property
     def mask_name(self):
         return self.cname + '_mask'
-    
+
     @cached_property
     def is_backward(self):
         return self.name.startswith('Remove')

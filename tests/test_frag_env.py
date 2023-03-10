@@ -1,13 +1,18 @@
-from gflownet.envs.graph_building_env import GraphActionCategorical, Graph, GraphBuildingEnv, GraphActionType
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.algo.trajectory_balance import TrajectoryBalance
-from torch_geometric.data import Batch
+import base64
 from collections import defaultdict
-import torch
+import pickle
+
 import networkx as nx
 import pytest
-import pickle
-import base64
+import torch
+from torch_geometric.data import Batch
+
+from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
+from gflownet.envs.graph_building_env import Graph
+from gflownet.envs.graph_building_env import GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphActionType
+from gflownet.envs.graph_building_env import GraphBuildingEnv
 
 
 def build_two_node_states():
@@ -16,7 +21,6 @@ def build_two_node_states():
     graph_cache = {}
     graph_by_idx = {}
     _graph_cache_buckets = {}
-
 
     # We're enumerating all states of length two, but we could've just as well randomly sampled
     # some states.
