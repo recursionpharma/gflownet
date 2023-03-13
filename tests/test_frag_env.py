@@ -4,14 +4,9 @@ import pickle
 
 import networkx as nx
 import pytest
-import torch
-from torch_geometric.data import Batch
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphActionCategorical
-from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 
 
