@@ -1,6 +1,4 @@
 from collections import defaultdict
-import json
-import os
 from typing import List, Tuple
 
 import numpy as np
@@ -12,6 +10,7 @@ from gflownet.envs.graph_building_env import Graph
 from gflownet.envs.graph_building_env import GraphAction
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.models import bengio2021flow
 
 
 class FragMolBuildingEnvContext(GraphBuildingEnvContext):
@@ -24,7 +23,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     the agent specify which atom each edge uses as an attachment point (single bond) between
     fragments. Masks ensure that the agent can only perform chemically valid attachments.
     """
-    def __init__(self, max_frags: int = 9, num_cond_dim: int = 0):
+    def __init__(self, max_frags: int = 9, num_cond_dim: int = 0, fragments: List[Tuple[str, List[int]]] = None):
         """Construct a fragment environment
         Parameters
         ----------
@@ -32,9 +31,15 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             The maximum number of fragments the agent is allowed to insert.
         num_cond_dim: int
             The dimensionality of the observations' conditional information vector (if >0)
+        fragments: List[Tuple[str, List[int]]]
+            A list of (SMILES, List[attachment atom idx]) fragments. If None the default is to use
+            the fragments of Bengio et al., 2021.
         """
         self.max_frags = max_frags
-        smi, stems = zip(*json.load(open(os.path.split(__file__)[0] + '/frags_72.json', 'r')))
+        if fragments is None:
+            smi, stems = zip(*bengio2021flow.FRAGMENTS)
+        else:
+            smi, stems = zip(*fragments)
         self.frags_smi = smi
         self.frags_mol = [Chem.MolFromSmiles(i) for i in self.frags_smi]
         self.frags_stems = stems
