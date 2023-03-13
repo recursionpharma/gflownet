@@ -316,6 +316,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             raise NotImplementedError(f"Unknown focus region sampling distribution: {self.hps['focus_dist']}")
 
+        assert valid_focus_dirs.shape == (n_valid, n_obj), f"Invalid shape for valid_preferences, {valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+
         # combine preferences and focus directions (fixed focus cosim)
         valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
 
