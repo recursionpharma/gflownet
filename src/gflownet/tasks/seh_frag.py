@@ -221,8 +221,8 @@ def main():
             shutil.rmtree(hps['log_dir'])
         else:
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    else:
-        os.makedirs(hps['log_dir'])
+    os.makedirs(hps['log_dir'])
+
     trial = SEHFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()
