@@ -44,7 +44,7 @@ class SoftQLearning:
         self.max_len = max_len
         self.max_nodes = max_nodes
         self.illegal_action_logreward = hps['illegal_action_logreward']
-        self.alpha = hps.get(hps['sql_alpha'], 0.01)
+        self.alpha = hps.get('sql_alpha', 0.01)
         self.gamma = hps.get('sql_gamma', 1)
         self.invalid_penalty = hps.get('sql_penalty', -10)
         self.bootstrap_own_reward = False
