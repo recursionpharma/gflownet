@@ -103,10 +103,10 @@ class QM9GapTask(GFNTask):
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        flat_reward = flat_reward.squeeze()
-        assert len(flat_reward.shape) == len(cond_info['beta'].shape), \
-            f"dangerous shape mismatch: {flat_reward.shape} vs {cond_info['beta'].shape}"
-        return RewardScalar(torch.log(flat_reward + 1e-8) * cond_info['beta'])
+        scalar_logreward = flat_reward.squeeze().clamp(min=1e-30).log()
+        assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
+        return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]

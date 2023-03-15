@@ -106,7 +106,7 @@ class SEHMOOTask(SEHTask):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
-        scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
+        scalar_logreward = (flat_reward * cond_info['preferences']).sum(1).clamp(min=1e-30).log()
         assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
             f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
         return RewardScalar(scalar_logreward * cond_info['beta'])
