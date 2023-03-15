@@ -193,7 +193,6 @@ class TrajectoryBalance:
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        self._last_trajs = trajs
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
         actions = [
             self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
@@ -265,10 +264,11 @@ class TrajectoryBalance:
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
+        # Forward pass of the model, returns a GraphActionCategorical representing the forward
+        # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
         if self.p_b_is_parameterized:
             fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
         else:
-            # Forward pass of the model, returns a GraphActionCategorical and the optional bootstrap predictions
             fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
 
         # Retreive the reward predictions for the full graphs,
@@ -335,7 +335,7 @@ class TrajectoryBalance:
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
 
         if self.is_doing_subTB:
-            # SubTB interprets the per_mol_out predictions to predict the state flow F(s)
+            # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
             # The position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
@@ -477,6 +477,7 @@ class TrajectoryBalance:
             offset = cumul_lens[ep]
             T = int(traj_lengths[ep])
             if self.p_b_is_parameterized:
+                # The length of the trajectory is the padded length, reduce by 1
                 T -= 1
             idces, dests = self._precomp[T - 1]
             fidces = torch.cat(

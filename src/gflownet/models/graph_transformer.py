@@ -185,16 +185,16 @@ class GraphTransformerGFN(nn.Module):
             'edge': 'edge_index',
         }
 
+        # Here we create only the embedding -> logit mapping MLPs that are required by the environment
         mlps = {}
         for atype in chain(env_ctx.action_type_order, env_ctx.bck_action_type_order if do_bck else []):
             num_in, num_out = self._action_type_to_num_inputs_outputs[atype]
             mlps[atype.cname] = mlp(num_in, num_emb, num_out, num_mlp_layers)
+        self.mlps = nn.ModuleDict(mlps)
 
         self.do_bck = do_bck
         if do_bck:
             self.bck_action_type_order = env_ctx.bck_action_type_order
-
-        self.mlps = nn.ModuleDict(mlps)
 
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, num_mlp_layers)
         # TODO: flag for this
