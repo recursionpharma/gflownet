@@ -16,7 +16,7 @@ from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import create_logger
-from gflownet.utils.multiprocessing_proxy import wrap_model_mp
+from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 # This type represents an unprocessed list of reward signals/conditioning information
 FlatRewards = NewType('FlatRewards', Tensor)  # type: ignore
@@ -140,7 +140,7 @@ class GFNTrainer:
         """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
         model.to(self.device)
         if self.num_workers > 0:
-            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+            placeholder = mp_object_wrapper(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
             return placeholder, torch.device('cpu')
         return model, self.device
 
