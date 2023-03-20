@@ -68,7 +68,7 @@ class SamplingIterator(IterableDataset):
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
             # up with 2*batch_size accidentally
             self.offline_batch_size = self.online_batch_size = batch_size
-        self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        self.log_dir = log_dir
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
@@ -141,7 +141,8 @@ class SamplingIterator(IterableDataset):
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
                 num_offline = 0
-                cond_info = self.task.encode_conditional_information(torch.stack([self.data[i] for i in idcs]))
+                cond_info = self.task.encode_conditional_information(
+                    cond_info=torch.stack([self.data[i] for i in idcs]))
                 trajs, flat_rewards = [], []
 
             is_valid = torch.ones(num_offline + num_online).bool()
@@ -194,9 +195,10 @@ class SamplingIterator(IterableDataset):
             batch.flat_rewards = flat_rewards
             batch.mols = mols
             batch.preferences = cond_info.get('preferences', None)
+            batch.focus_dir = cond_info.get('focus_dir', None)
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
-            
+
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
@@ -205,7 +207,7 @@ class SamplingIterator(IterableDataset):
             # Converts back into natural rewards for logging purposes
             # (allows to take averages and plot in objective space)
             rewards = torch.exp(log_rewards / cond_info['beta'])  # TODO: make that a task-dependent operation
-            
+
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
@@ -232,12 +234,16 @@ class SamplingIterator(IterableDataset):
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         rewards = rewards.data.numpy().tolist()
         preferences = cond_info.get('preferences', torch.zeros((len(mols), 0))).data.numpy().tolist()
-        logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences']]
+        focus_dir = cond_info.get('focus_dir', torch.zeros((len(mols), 0))).data.numpy().tolist()
+        logged_keys = [k for k in sorted(cond_info.keys()) if k not in ['encoding', 'preferences', 'focus_dir']]
 
-        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] +
+        data = ([[mols[i], rewards[i]] + flat_rewards[i] + preferences[i] + focus_dir[i] +
                  [cond_info[k][i].item() for k in logged_keys] for i in range(len(trajs))])
+
         data_labels = (['smi', 'r'] + [f'fr_{i}' for i in range(len(flat_rewards[0]))] +
-                       [f'pref_{i}' for i in range(len(preferences[0]))] + [f'ci_{k}' for k in logged_keys])
+                       [f'pref_{i}' for i in range(len(preferences[0]))] +
+                       [f'focus_{i}' for i in range(len(focus_dir[0]))] + [f'ci_{k}' for k in logged_keys])
+
         self.log.insert_many(data, data_labels)
 
 

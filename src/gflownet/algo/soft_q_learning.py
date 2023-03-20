@@ -45,7 +45,7 @@ class SoftQLearning:
         self.max_len = max_len
         self.max_nodes = max_nodes
         self.illegal_action_logreward = hps['illegal_action_logreward']
-        self.alpha = hps['sql_alpha']
+        self.alpha = hps.get('sql_alpha', 0.01)
         self.gamma = hps.get('sql_gamma', 1)
         self.invalid_penalty = hps.get('sql_penalty', -10)
         self.bootstrap_own_reward = False
@@ -54,7 +54,8 @@ class SoftQLearning:
         self.do_q_prime_correction = False
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
 
-    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float):
+    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor,
+                                              random_action_prob: float):
         """Generate trajectories by sampling a model
 
         Parameters

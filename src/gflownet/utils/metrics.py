@@ -8,7 +8,50 @@ from botorch.utils.multi_objective.hypervolume import Hypervolume
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
+from sklearn.cluster import KMeans
 import torch
+
+
+def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
+    """
+    Partition a hypersphere into k clusters.
+    ----------
+    Parameters
+        k: int
+            Number of clusters
+        d: int
+            Dimensionality of the hypersphere
+        n_samples: int
+            Number of samples to use for clustering
+        normalisation: str
+            Normalisation to use for the samples and the cluster centers.
+            Either 'l1' or 'l2'
+    Returns
+    -------
+        v: np.ndarray
+            Array of shape (k, d) containing the cluster centers
+    """
+    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation='l2'):
+        points = np.random.randn(n, d)
+        points = np.abs(points)  # positive quadrant
+        if normalisation == 'l2':
+            points /= np.linalg.norm(points, axis=1, keepdims=True)
+        elif normalisation == 'l1':
+            points /= np.sum(points, axis=1, keepdims=True)
+        else:
+            raise ValueError(f"Unknown normalisation {normalisation}")
+        return points
+
+    points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
+    v = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(points).cluster_centers_
+    if normalisation == 'l2':
+        v /= np.linalg.norm(v, axis=1, keepdims=True)
+    elif normalisation == 'l1':
+        v /= np.sum(v, 1, keepdims=True)
+    else:
+        raise ValueError(f"Unknown normalisation {normalisation}")
+
+    return v
 
 
 def generate_simplex(dims, n_per_dim):
@@ -149,8 +192,8 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
-    from cvxopt import solvers
     from cvxopt import matrix
+    from cvxopt import solvers
 
     solvers.options['abstol'] = 1e-15
     solvers.options['reltol'] = 1e-15

@@ -84,7 +84,8 @@ class TrajectoryBalance:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 1 if max_len is not None else 128)
             self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
 
-    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float):
+    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor,
+                                              random_action_prob: float):
         """Generate trajectories by sampling a model
 
         Parameters

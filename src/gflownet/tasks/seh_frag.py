@@ -1,8 +1,12 @@
 import ast
 import copy
+import json
+import os
+import pathlib
 import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
 
+import git
 import numpy as np
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -35,8 +39,10 @@ class SEHTask(GFNTask):
     objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
     def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
-                 num_thermometer_dim: int, wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 num_thermometer_dim: int, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
@@ -101,7 +107,7 @@ class SEHFragTrainer(GFNTrainer):
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -121,7 +127,7 @@ class SEHFragTrainer(GFNTrainer):
 
     def setup_task(self):
         self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
-                            temperature_parameters=ast.literal_eval(self.hps['temperature_dist_params']),
+                            temperature_parameters=self.hps['temperature_dist_params'], rng=self.rng,
                             num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
@@ -169,6 +175,15 @@ class SEHFragTrainer(GFNTrainer):
             'none': (lambda x: None)
         }[hps['clip_grad_type']]
 
+        # saving hyperparameters
+        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        self.hps['gflownet_git_hash'] = git_hash
+
+        os.makedirs(self.hps['log_dir'], exist_ok=True)
+        fmt_hps = '\n'.join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in self.hps.items()])
+        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
+        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
+
     def step(self, loss: Tensor):
         loss.backward()
         for i in self.model.parameters():
@@ -193,7 +208,7 @@ def main():
         'num_training_steps': 10_000,
         'validate_every': 100,
         'sampling_tau': 0.99,
-        'temperature_dist_params': '(0, 64)',
+        'temperature_dist_params': (0., 64.),
     }
     trial = SEHFragTrainer(hps, torch.device('cuda'))
     trial.verbose = True

@@ -111,7 +111,7 @@ class QM9GapTrainer(GFNTrainer):
             'illegal_action_logreward': -50,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -153,8 +153,8 @@ class QM9GapTrainer(GFNTrainer):
         hps['tb_epsilon'] = ast.literal_eval(eps) if isinstance(eps, str) else eps
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
-        self.task = QM9GapTask(self.training_data, hps['temperature_sample_dist'],
-                               ast.literal_eval(hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+        self.task = QM9GapTask(self.training_data, hps['temperature_sample_dist'], hps['temperature_dist_params'],
+                               wrap_model=self._wrap_model_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']
         self.clip_grad_callback = {

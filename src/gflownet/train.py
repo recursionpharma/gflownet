@@ -161,7 +161,7 @@ class GFNTrainer:
         model, dev = self._wrap_model_mp(self.model)
         iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
                                     ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
-                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True),
+                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
                                     random_action_prob=self.hps.get('valid_random_action_prob', 0.0))
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
@@ -219,6 +219,7 @@ class GFNTrainer:
                 for batch in valid_dl:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, 'valid')
+                    logger.info(f"validation - iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, 'on_validation_end'):
