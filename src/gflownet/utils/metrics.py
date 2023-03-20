@@ -8,8 +8,57 @@ from botorch.utils.multi_objective.hypervolume import Hypervolume
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
+from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 import torch
+
+
+def reach_metric(samples, ref_front=None, reduce="min", reversed=False):
+    """
+    Computes the reach of a set of samples w.r.t a reference pareto front.
+
+    For each point of a reference pareto front `ref_front`, compute the distance to the closest
+    sample. Returns the average of these distances.
+
+    Args:
+        front (torch.Tensor): A tensor containing the coordinates of the points
+            on the Pareto front. The tensor should have shape (n_points, n_objectives).
+        ref_front (torch.Tensor): A tensor containing the coordinates of the points
+            on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
+
+    Returns:
+        float: The coverage metric value.
+    """
+    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+        """Discretise the faces that are at the extremity of a unit hypercube"""
+        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        grid = np.array(list(product(*linear_spaces)))
+        extreme_points = grid[np.any(grid == 1, axis=1)]
+        return extreme_points
+
+    n_objectives = samples.shape[1]
+    if ref_front is None:
+        ref_front = get_limits_of_hypercube(n_dims=n_objectives)
+
+    # Compute the distances between each generated sample and each reference point.
+    distances = cdist(samples, ref_front).T
+    if reversed:
+        distances = distances.T
+
+    # Find the minimum distance for each point on the front.
+    if reduce == "min":
+        reduced_distances = np.min(distances, axis=1)
+    elif reduce == "mean":
+        reduced_distances = np.mean(distances, axis=1)
+    else:
+        raise ValueError(f"Unknown reduction method: {reduce}")
+    max_possible_distance = float(np.linalg.norm(np.ones(n_objectives) - np.zeros(n_objectives)))
+
+    # Compute the reach as the average of the minimum distances.
+    avg_dist = np.mean(reduced_distances, axis=0)
+    reach = 1. - (avg_dist / max_possible_distance)
+
+    return float(reach)
 
 
 def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
