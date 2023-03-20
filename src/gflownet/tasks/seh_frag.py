@@ -19,6 +19,7 @@ from torch.utils.data import Dataset
 import torch_geometric.data as gd
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
@@ -58,7 +59,7 @@ class SEHTask(GFNTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model)
+        model, self.device = self._wrap_model(model, send_to_device=True)
         return {'seh': model}
 
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
@@ -135,6 +136,9 @@ class SEHFragTrainer(GFNTrainer):
             'valid_random_action_prob': 0.,
             'sampling_tau': 0.,
             'num_thermometer_dim': 32,
+            'use_replay_buffer': False,
+            'replay_buffer_size': 10000,
+            'replay_buffer_warmup': 10000,
         }
 
     def setup_algo(self):
@@ -143,7 +147,7 @@ class SEHFragTrainer(GFNTrainer):
     def setup_task(self):
         self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
                             temperature_parameters=self.hps['temperature_dist_params'], rng=self.rng,
-                            num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
+                            num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_for_mp)
 
     def setup_model(self):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
@@ -160,6 +164,7 @@ class SEHFragTrainer(GFNTrainer):
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
+        self.replay_buffer = ReplayBuffer(self.hps['replay_buffer_size'], self.hps['replay_buffer_warmup'], self.rng) if self.hps['use_replay_buffer'] else None
         self.setup_env_context()
         self.setup_algo()
         self.setup_task()

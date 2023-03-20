@@ -35,6 +35,10 @@ class MPObjectPlaceholder:
         self.in_queue.put(('__call__', a, kw))
         return self.out_queue.get()
 
+    def __len__(self):
+        self._check_init()
+        self.in_queue.put(('__len__', (), {}))
+        return self.out_queue.get()
 
 class MPObjectProxy:
     """This class maintains a reference to some object and

@@ -12,6 +12,8 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.utils.data import IterableDataset
 
+from gflownet.data.replay_buffer import ReplayBuffer
+
 
 class SamplingIterator(IterableDataset):
     """This class allows us to parallelise and train faster.
@@ -22,8 +24,9 @@ class SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None, sample_cond_info=True, random_action_prob=0.):
+    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo,
+                 task, device, ratio=0.5, stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info=True,
+                 random_action_prob=0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -31,6 +34,8 @@ class SamplingIterator(IterableDataset):
         model: nn.Module
             The model we sample from (must be on CUDA already or share_memory() must be called so that
             parameters are synchronized between each worker)
+        replay_buffer: ReplayBuffer
+            The replay buffer for training on past data
         batch_size: int
             The number of trajectories, each trajectory will be comprised of many graphs, so this is
             _not_ the batch size in terms of the number of graphs (that will depend on the task)
@@ -51,6 +56,7 @@ class SamplingIterator(IterableDataset):
         """
         self.data = dataset
         self.model = model
+        self.replay_buffer = replay_buffer
         self.batch_size = batch_size
         self.offline_batch_size = int(np.ceil(batch_size * ratio))
         self.online_batch_size = int(np.floor(batch_size * (1 - ratio)))
@@ -186,6 +192,29 @@ class SamplingIterator(IterableDataset):
                     if self.log_molecule_smis:
                         for i, m in zip(valid_idcs, valid_mols):
                             trajs[i]['smi'] = Chem.MolToSmiles(m)
+
+            if self.replay_buffer is not None:
+                # If we have a replay buffer, we push the online trajectories in it
+                # and resample immediately such that the "online" data in the batch
+                # comes from a more stable distribution (try to avoid forgetting)
+                # Important: note that the 'online' metrics now will be describing the data
+                # in the replay buffer and not purely the data from the last generated batch
+
+                # cond_info is a dict, so we need to convert it to a list of dicts
+                cond_info = [{k: v[i] for k, v in cond_info.items()} for i in range(num_offline + num_online)]
+
+                # push the online trajectories in the replay buffer and sample a new 'online' batch
+                for i in range(num_offline, len(trajs)):
+                    self.replay_buffer.push(trajs[i], flat_rewards[i], cond_info[i])
+                replay_trajs, replay_fr, replay_condinfo = self.replay_buffer.sample(num_online)
+
+                # append the online trajectories to the offline ones
+                trajs[num_offline:] = replay_trajs
+                flat_rewards[num_offline:] = replay_fr
+                cond_info[num_offline:] = replay_condinfo
+
+                # convert cond_info back to a dict
+                cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
 
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards

@@ -73,7 +73,7 @@ class SEHMOOTask(SEHTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model)
+        model, self.device = self._wrap_model(model, send_to_device=True)
         return {'seh': model}
 
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
@@ -217,7 +217,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                preference_type=self.hps['preference_type'], focus_type=self.hps['focus_type'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
-                               wrap_model=self._wrap_model_mp)
+                               wrap_model=self._wrap_for_mp)
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
@@ -364,6 +364,8 @@ def main():
         'focus_cosim': 0.99,
         'n_valid': 15,
         'n_valid_repeats': 8,
+        'use_replay_buffer': True,
+        'replay_buffer_warmup': 1000,
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:

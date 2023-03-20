@@ -1,6 +1,7 @@
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
+import psutil
 
 from rdkit.Chem.rdchem import Mol as RDMol
 import torch
@@ -11,6 +12,7 @@ from torch.utils.data import Dataset
 import torch.utils.tensorboard
 import torch_geometric.data as gd
 
+from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphBuildingEnv
@@ -100,6 +102,7 @@ class GFNTrainer:
         self.model: nn.Module
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
+        self.replay_buffer: ReplayBuffer
         self.sampling_model: nn.Module
         self.mb_size: int
         self.env: GraphBuildingEnv
@@ -136,21 +139,26 @@ class GFNTrainer:
     def step(self, loss: Tensor):
         raise NotImplementedError()
 
-    def _wrap_model_mp(self, model):
-        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
-        model.to(self.device)
-        if self.num_workers > 0:
-            placeholder = mp_object_wrapper(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+    def _wrap_for_mp(self, obj, send_to_device=False):
+        """Wraps an object in a placeholder whose reference can be sent to a
+        data worker process (only if the number of workers is non-zero)."""
+        if send_to_device:
+            obj.to(self.device)
+        if self.num_workers > 0 and obj is not None:
+            placeholder = mp_object_wrapper(obj, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
             return placeholder, torch.device('cpu')
-        return model, self.device
+        else:
+            return obj, self.device
 
     def build_callbacks(self):
         return {}
 
     def build_training_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_model_mp(self.sampling_model)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'train'),
+        model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
+        replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
+        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo,
+                                    self.task, dev, replay_buffer=replay_buffer, ratio=self.offline_ratio,
+                                    log_dir=os.path.join(self.hps['log_dir'], 'train'),
                                     random_action_prob=self.hps.get('random_action_prob', 0.0))
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
@@ -158,9 +166,10 @@ class GFNTrainer:
                                            persistent_workers=self.num_workers > 0)
 
     def build_validation_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_model_mp(self.model)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
+        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo,
+                                    self.task, dev, ratio=self.valid_offline_ratio,
+                                    log_dir=os.path.join(self.hps['log_dir'], 'valid'),
                                     sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
                                     random_action_prob=self.hps.get('valid_random_action_prob', 0.0))
         for hook in self.valid_sampling_hooks:
@@ -210,7 +219,12 @@ class GFNTrainer:
         for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
+            mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.**3)
+            if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
+                logger.info(f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} (main process memory usage: {mem_usage:.2f} GB)")
+                continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
+            info['mem_usage'] = mem_usage
             self.log(info, it, 'train')
             if self.verbose:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
