@@ -203,7 +203,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
-        self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
+        self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_reach=True))
 
         n_obj = len(self.hps['objectives'])
 
