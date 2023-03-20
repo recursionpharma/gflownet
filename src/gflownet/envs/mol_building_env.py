@@ -13,6 +13,7 @@ from gflownet.envs.graph_building_env import Graph
 from gflownet.envs.graph_building_env import GraphAction
 from gflownet.envs.graph_building_env import GraphActionType
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
 
@@ -21,10 +22,30 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
     """A specification of what is being generated for a GraphBuildingEnv
 
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
-
     """
-    def __init__(self, atoms=['H', 'C', 'N', 'O', 'F'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
-                 charges=[0, 1, -1], expl_H_range=[0, 1], allow_explicitly_aromatic=False):
+    def __init__(self, atoms=['C', 'N', 'O', 'F', 'P', 'S'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
+                 charges=[0, 1, -1], expl_H_range=[0, 1], allow_explicitly_aromatic=False, num_rw_feat=8):
+        """An env context for building molecules atom-by-atom and bond-by-bond.
+
+        Parameters
+        ----------
+        atoms: List[str]
+            The list of allowed atoms. (default, [C, N, O, F, P, S], the six "biological" elements)
+        num_cond_dim: int
+            The number of dimensions the conditioning vector will have. (default 0)
+        chiral_types: List[rdkit.Chem.rdchem.ChiralType]
+            The list of allowed chiral types. (default [unspecified, CW, CCW])
+        charges: List[int]
+            The list of allowed charges on atoms. (default [0, 1, -1])
+        expl_H_range: List[int]
+            The list of allowed explicit # of H values. (default [0, 1])
+        allow_explicitly_aromatic: bool
+            If true, then the agent is allowed to set bonds to be aromatic, otherwise the agent has to
+            generate a Kekulized version of aromatic rings and we rely on rdkit to recover aromaticity.
+            (default False)
+        num_rw_feat: int
+            If >0, augments the feature representation with n-step random walk features. (default n=8).
+        """
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
             'v': atoms + ['*'],
@@ -34,6 +55,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             'no_impl': [False, True],
             'fill_wildcard': [None] + atoms,  # default is, there is nothing
         }
+        self.num_rw_feat = num_rw_feat
+
         self.default_wildcard_replacement = 'C'
         self.negative_attrs = ['fill_wildcard']
         self.atom_attr_defaults = {k: self.atom_attr_values[k][0] for k in self.atom_attr_values}
@@ -89,7 +112,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         # These values are used by Models to know how many inputs/logits to produce
         self.num_new_node_values = len(atoms)
         self.num_node_attr_logits = len(self.atom_attr_logit_map)
-        self.num_node_dim = self.atom_attr_size + 1
+        self.num_node_dim = self.atom_attr_size + 1 + self.num_rw_feat
         self.num_edge_attr_logits = len(self.bond_attr_logit_map)
         self.num_edge_dim = self.bond_attr_size
         self.num_cond_dim = num_cond_dim
@@ -154,7 +177,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim))
+        x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
         add_node_mask = torch.ones((x.shape[0], self.num_new_node_values))
         explicit_valence = {}
@@ -221,8 +244,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             return all([explicit_valence[i] + 1 <= max_valence[i] for i in e])
 
         non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape((2, -1))
-
-        return gd.Data(
+        data = gd.Data(
             x,
             edge_index,
             edge_attr,
@@ -232,6 +254,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
             set_edge_attr_mask=set_edge_attr_mask,
         )
+        if self.num_rw_feat > 0:
+            data.x = torch.cat([data.x, random_walk_probs(data, self.num_rw_feat, skip_odd=True)], 1)
+        return data
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
