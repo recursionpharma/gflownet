@@ -196,7 +196,6 @@ class SamplingIterator(IterableDataset):
             batch.num_offline = num_offline
             batch.num_online = num_online
             batch.flat_rewards = flat_rewards
-            batch.mols = mols
             batch.preferences = cond_info.get('preferences', None)
             batch.focus_dir = cond_info.get('focus_dir', None)
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
