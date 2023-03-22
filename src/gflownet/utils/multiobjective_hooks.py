@@ -14,7 +14,7 @@ from gflownet.utils import metrics
 
 class MultiObjectiveStatsHook:
     def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=True, compute_hsri=False,
-                 compute_normed=False):
+                 compute_normed=False, compute_reach=False):
         # This __init__ is only called in the main process. This object is then (potentially) cloned
         # in pytorch data worker processed and __call__'ed from within those processes. This means
         # each process will compute its own Pareto front, which we will accumulate in the main
@@ -26,6 +26,7 @@ class MultiObjectiveStatsHook:
         self.compute_hvi = compute_hvi
         self.compute_hsri = compute_hsri
         self.compute_normed = compute_normed
+        self.compute_reach = compute_reach
         self.pareto_queue: mp.Queue = mp.Queue()
         self.pareto_front = None
         self.pareto_front_smi = None
@@ -132,6 +133,12 @@ class MultiObjectiveStatsHook:
                 **info,
                 'hsri': hsri_w_pareto,
                 'lifetime_hsri': self.pareto_metrics[1],
+            }
+        if self.compute_reach:
+            reach = metrics.reach_metric(flat_rewards, ref_front=None, reduce="min", reversed=False)
+            info = {
+                **info,
+                'lifetime_reach': reach,
             }
 
         return info

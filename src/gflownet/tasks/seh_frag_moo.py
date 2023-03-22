@@ -253,7 +253,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup(self):
         super().setup()
-        self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir']))
+        self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_reach=True))
 
         # instantiate preference and focus conditioning vectors for validation
 
