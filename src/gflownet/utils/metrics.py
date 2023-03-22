@@ -13,7 +13,7 @@ from sklearn.cluster import KMeans
 import torch
 
 
-def reach_metric(samples, ref_front=None, reduce="min", reversed=False):
+def get_reach_metric(samples, ref_front: np.ndarray = None, reduce: str = "min", reversed: bool = False):
     """
     Computes the reach of a set of samples w.r.t a reference pareto front.
 
@@ -21,13 +21,13 @@ def reach_metric(samples, ref_front=None, reduce="min", reversed=False):
     sample. Returns the average of these distances.
 
     Args:
-        front (torch.Tensor): A tensor containing the coordinates of the points
+        front (ndarray): A numpy array containing the coordinates of the points
             on the Pareto front. The tensor should have shape (n_points, n_objectives).
-        ref_front (torch.Tensor): A tensor containing the coordinates of the points
+        ref_front (ndarray): A numpy array containing the coordinates of the points
             on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
 
     Returns:
-        float: The coverage metric value.
+        float: The reach-metric value.
     """
     def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
         """Discretise the faces that are at the extremity of a unit hypercube"""

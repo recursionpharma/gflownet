@@ -135,7 +135,7 @@ class MultiObjectiveStatsHook:
                 'lifetime_hsri': self.pareto_metrics[1],
             }
         if self.compute_reach:
-            reach = metrics.reach_metric(flat_rewards, ref_front=None, reduce="min", reversed=False)
+            reach = metrics.get_reach_metric(flat_rewards, ref_front=None, reduce="min", reversed=False)
             info = {
                 **info,
                 'lifetime_reach': reach,
