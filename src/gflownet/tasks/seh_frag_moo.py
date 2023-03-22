@@ -235,7 +235,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_env_context(self):
         n_cond = self.hps['num_thermometer_dim'] + 2 * len(self.hps['objectives'])  # 1 for prefs and 1 for focus region
         self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=n_cond)
-    
+
     def setup(self):
         super().setup()
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_reach=True))

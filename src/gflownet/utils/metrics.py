@@ -1,7 +1,6 @@
 from copy import deepcopy
 from itertools import product
 import math
-from scipy.spatial.distance import cdist
 
 from botorch.utils.multi_objective import infer_reference_point
 from botorch.utils.multi_objective import pareto
@@ -9,6 +8,7 @@ from botorch.utils.multi_objective.hypervolume import Hypervolume
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
+from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 import torch
 
@@ -17,7 +17,7 @@ def reach_metric(samples, ref_front=None, reduce="min", reversed=False):
     """
     Computes the reach of a set of samples w.r.t a reference pareto front.
 
-    For each point of a reference pareto front `ref_front`, compute the distance to the closest 
+    For each point of a reference pareto front `ref_front`, compute the distance to the closest
     sample. Returns the average of these distances.
 
     Args:
@@ -29,7 +29,6 @@ def reach_metric(samples, ref_front=None, reduce="min", reversed=False):
     Returns:
         float: The coverage metric value.
     """
-    
     def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
         """Discretise the faces that are at the extremity of a unit hypercube"""
         linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
@@ -242,7 +241,7 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
-    
+
     # intentional non-top-level imports to avoid
     # cvxopt dependency for M1 chip users
     from cvxopt import matrix
