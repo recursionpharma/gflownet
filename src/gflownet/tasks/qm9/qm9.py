@@ -7,6 +7,7 @@ import numpy as np
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from ruamel.yaml import YAML
+import scipy.stats as stats
 import torch
 from torch import Tensor
 import torch.nn as nn
@@ -28,13 +29,16 @@ from gflownet.utils.transforms import thermometer
 
 class QM9GapTask(GFNTask):
     """This class captures conditional information generation and reward transforms"""
-    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float, float],
+                 num_thermometer_dim: int, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self.load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
+        self.num_thermometer_dim = num_thermometer_dim
         # TODO: fix interface
         self._min, self._max, self._percentile_95 = self.dataset.get_stats(percentile=0.05)  # type: ignore
         self._width = self._max - self._min
@@ -70,21 +74,39 @@ class QM9GapTask(GFNTask):
         gap_model, self.device = self._wrap_model(gap_model)
         return {'mxmnet_gap': gap_model}
 
-    def sample_conditional_information(self, n):
+    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
         beta = None
-        if self.temperature_sample_dist == 'gamma':
-            beta = self.rng.gamma(*self.temperature_dist_params, n).astype(np.float32)
-        elif self.temperature_sample_dist == 'uniform':
-            beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-        elif self.temperature_sample_dist == 'beta':
-            beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, 32)  # TODO: hyperparameters
-        return {'beta': torch.tensor(beta), 'encoding': beta_enc}
+        if self.temperature_sample_dist == 'constant':
+            assert type(self.temperature_dist_params) in [float, int]
+            beta = np.array(self.temperature_dist_params).repeat(n).astype(np.float32)
+            beta_enc = torch.zeros((n, self.num_thermometer_dim))
+        else:
+            if self.temperature_sample_dist == 'gamma':
+                loc, scale = self.temperature_dist_params
+                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
+                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
+            elif self.temperature_sample_dist == 'uniform':
+                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'loguniform':
+                low, high = np.log(self.temperature_dist_params)
+                beta = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'beta':
+                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = 1
+            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
-    def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+        assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
+        return {'beta': beta, 'encoding': beta_enc}
+
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return RewardScalar(flat_reward.flatten()**cond_info['beta'])
+        scalar_logreward = flat_reward.squeeze().clamp(min=1e-30).log()
+        assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
+        return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
@@ -108,10 +130,10 @@ class QM9GapTrainer(GFNTrainer):
             'num_emb': 128,
             'num_layers': 4,
             'tb_epsilon': None,
-            'illegal_action_logreward': -50,
+            'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': (.5, 32),
+            'temperature_dist_params': (.5, 32.),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -122,6 +144,7 @@ class QM9GapTrainer(GFNTrainer):
             'clip_grad_param': 10,
             'random_action_prob': .001,
             'sampling_tau': 0.,
+            'num_thermometer_dim': 32,
         }
 
     def setup(self):
@@ -153,8 +176,9 @@ class QM9GapTrainer(GFNTrainer):
         hps['tb_epsilon'] = ast.literal_eval(eps) if isinstance(eps, str) else eps
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
-        self.task = QM9GapTask(self.training_data, hps['temperature_sample_dist'], hps['temperature_dist_params'],
-                               wrap_model=self._wrap_model_mp)
+        self.task = QM9GapTask(dataset=self.training_data, temperature_distribution=hps['temperature_sample_dist'],
+                               temperature_parameters=hps['temperature_dist_params'],
+                               num_thermometer_dim=hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']
         self.clip_grad_callback = {

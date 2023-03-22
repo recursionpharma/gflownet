@@ -7,11 +7,10 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from torch_scatter import scatter
 
+from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.envs.graph_building_env import generate_forward_trajectory
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
-
-from .graph_sampling import GraphSampler
 
 
 class SoftQLearning:
@@ -97,7 +96,7 @@ class SoftQLearning:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def construct_batch(self, trajs, cond_info, rewards):
+    def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
 
         Parameters
@@ -106,8 +105,8 @@ class SoftQLearning:
             A list of N trajectories.
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
-        rewards: Tensor
-            The transformed reward (e.g. R(x) ** beta) for each trajectory. Shape (N,)
+        log_rewards: Tensor
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch
@@ -120,7 +119,7 @@ class SoftQLearning:
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
         batch.actions = torch.tensor(actions)
-        batch.rewards = rewards
+        batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
         return batch
@@ -140,7 +139,7 @@ class SoftQLearning:
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
-        rewards = batch.rewards
+        rewards = torch.exp(batch.log_rewards)
         cond_info = batch.cond_info
 
         # This index says which trajectory each graph belongs to, so

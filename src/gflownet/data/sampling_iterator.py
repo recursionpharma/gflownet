@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import os
 import sqlite3
 from typing import Callable, List
@@ -154,7 +155,7 @@ class SamplingIterator(IterableDataset):
                                                                              random_action_prob=self.random_action_prob)
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
-                    # i.e. predict the output of cond_info_to_reward
+                    # i.e. predict the output of cond_info_to_logreward
                     pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
                     flat_rewards += pred_reward
                 else:
@@ -206,7 +207,8 @@ class SamplingIterator(IterableDataset):
 
             # Converts back into natural rewards for logging purposes
             # (allows to take averages and plot in objective space)
-            rewards = torch.exp(log_rewards / cond_info['beta'])  # TODO: make that a task-dependent operation
+            # TODO: implement that per-task (in case they don't apply the same beta and log transformations)
+            rewards = torch.exp(log_rewards / cond_info['beta'])
 
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
@@ -277,6 +279,7 @@ class SQLiteLog:
         cur.close()
 
     def insert_many(self, rows, column_names):
+        assert all([type(x) is str or not isinstance(x, Iterable) for x in rows[0]]), "rows must only contain scalars"
         if not self._has_results_table:
             self._make_results_table([type(i) for i in rows[0]], column_names)
         cur = self.db.cursor()

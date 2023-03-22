@@ -49,7 +49,7 @@ class GFNAlgorithm:
 
 
 class GFNTask:
-    def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         """Combines a minibatch of reward signal vectors and conditional information into a scalar reward.
 
         Parameters
@@ -62,7 +62,7 @@ class GFNTask:
         Returns
         -------
         reward: RewardScalar
-            A 1d tensor, a scalar reward for each minibatch entry.
+            A 1d tensor, a scalar log-reward for each minibatch entry.
         """
         raise NotImplementedError()
 

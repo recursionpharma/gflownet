@@ -4,11 +4,11 @@ import pathlib
 import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
 
+import git
 import numpy as np
 from rdkit.Chem import Descriptors
 from rdkit.Chem import QED
 from rdkit.Chem.rdchem import Mol as RDMol
-import scipy.stats as stats
 import torch
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
@@ -26,17 +26,16 @@ from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
+from gflownet.tasks.seh_frag import SEHTask
 from gflownet.train import FlatRewards
-from gflownet.train import GFNTask
 from gflownet.train import RewardScalar
 from gflownet.utils import metrics
 from gflownet.utils import sascore
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook
 from gflownet.utils.multiobjective_hooks import TopKHook
-from gflownet.utils.transforms import thermometer
 
 
-class SEHMOOTask(GFNTask):
+class SEHMOOTask(SEHTask):
     """Sets up a multiobjective task where the rewards are (functions of):
     - the the binding energy of a molecule to Soluble Epoxide Hydrolases.
     - its QED
@@ -79,26 +78,7 @@ class SEHMOOTask(GFNTask):
         return {'seh': model}
 
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
-        beta = None
-        if self.temperature_sample_dist == 'constant':
-            assert type(self.temperature_dist_params) in [float, int]
-            beta = np.array(self.temperature_dist_params, dtype=np.float32).repeat(n)
-            beta_enc = torch.zeros((n, self.num_thermometer_dim))
-        else:
-            if self.temperature_sample_dist == 'gamma':
-                loc, scale = self.temperature_dist_params
-                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
-                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-            elif self.temperature_sample_dist == 'uniform':
-                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == 'loguniform':
-                beta = np.exp(self.rng.uniform(*np.log(self.temperature_dist_params), n).astype(np.float32))
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == 'beta':
-                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-                upper_bound = 1
-            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
+        cond_info = super().sample_conditional_information(n)
 
         if self.preference_type is None:
             preferences = torch.ones((n, len(self.objectives)))
@@ -122,8 +102,10 @@ class SEHMOOTask(GFNTask):
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
 
-        encoding = torch.cat([beta_enc, preferences, focus_dir], 1)
-        return {'beta': torch.tensor(beta), 'encoding': encoding, 'preferences': preferences, 'focus_dir': focus_dir}
+        cond_info['encoding'] = torch.cat([cond_info['encoding'], preferences, focus_dir], 1)
+        cond_info['preferences'] = preferences
+        cond_info['focus_dir'] = focus_dir
+        return cond_info
 
     def encode_conditional_information(self, cond_info: torch.TensorType) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == 'constant':
@@ -132,6 +114,7 @@ class SEHMOOTask(GFNTask):
         else:
             beta = torch.ones(len(cond_info)) * self.temperature_dist_params[-1]
             beta_enc = torch.ones((len(cond_info), self.num_thermometer_dim))
+        assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
 
         preferences = cond_info[:, :len(self.objectives)].float()
         focus_dir = cond_info[:, len(self.objectives):].float()
@@ -150,7 +133,9 @@ class SEHMOOTask(GFNTask):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
-        scalar_logreward = torch.log((flat_reward * cond_info['preferences']).sum(1) + 1e-8)
+        scalar_logreward = (flat_reward * cond_info['preferences']).sum(1).clamp(min=1e-30).log()
+        assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
 
         if self.focus_type is not None:
             cosim = nn.functional.cosine_similarity(flat_reward, cond_info['focus_dir'], dim=1)
@@ -250,7 +235,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_env_context(self):
         n_cond = self.hps['num_thermometer_dim'] + 2 * len(self.hps['objectives'])  # 1 for prefs and 1 for focus region
         self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=n_cond)
-
+    
     def setup(self):
         super().setup()
         self.sampling_hooks.append(MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_reach=True))
@@ -324,6 +309,17 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         self.algo.task = self.task
 
+        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        self.hps['gflownet_git_hash'] = git_hash
+
+        os.makedirs(self.hps['log_dir'], exist_ok=True)
+        torch.save({
+            'hps': self.hps,
+        }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
+        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
+        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
+        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
+
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
         # dependency is required.
@@ -355,26 +351,38 @@ class RepeatedCondInfoDataset:
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'objectives': ['seh', 'qed'],
-        'focus_type': "centered",
-        'focus_cosim': 0.99,
-        'log_dir': '/mnt/ps/home/CORP/julien.roy/logs/seh_frag_moo/debug_run/',
+        'log_dir': "./logs/debug_run",
+        'overwrite_existing_exp': True,
+        'seed': 0,
+        'global_batch_size': 64,
         'num_training_steps': 20_000,
         'validate_every': 1,
-        'sampling_tau': 0.95,
         'num_layers': 4,
+        'algo': 'TB',
+        'objectives': ['seh', 'qed'],
+        'learning_rate': 1e-4,
+        'Z_learning_rate': 1e-3,
+        'lr_decay': 20000,
+        'Z_lr_decay': 50000,
+        'sampling_tau': 0.95,
+        'random_action_prob': 0.1,
         'num_data_loader_workers': 8,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
-        'global_batch_size': 64,
-        'algo': 'TB',
-        'seed': 0,
-        'preference_type': "dirichlet",
+        'num_thermometer_dim': 32,
+        'preference_type': 'dirichlet',
+        'focus_type': "centered",
+        'focus_cosim': 0.99,
         'n_valid': 15,
         'n_valid_repeats': 8,
     }
     if os.path.exists(hps['log_dir']):
-        shutil.rmtree(hps['log_dir'])
+        if hps['overwrite_existing_exp']:
+            shutil.rmtree(hps['log_dir'])
+        else:
+            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(hps['log_dir'])
+
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()

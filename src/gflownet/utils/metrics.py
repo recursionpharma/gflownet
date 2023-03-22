@@ -242,6 +242,9 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
+    
+    # intentional non-top-level imports to avoid
+    # cvxopt dependency for M1 chip users
     from cvxopt import matrix
     from cvxopt import solvers
 
