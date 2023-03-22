@@ -24,7 +24,7 @@ class MultiObjectiveReinforce(TrajectoryBalance):
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
-        rewards = batch.rewards
+        rewards = torch.exp(batch.log_rewards)
         cond_info = batch.cond_info
 
         # This index says which trajectory each graph belongs to, so

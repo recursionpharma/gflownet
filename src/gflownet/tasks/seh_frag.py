@@ -1,5 +1,8 @@
 import ast
 import copy
+import os
+import shutil
+import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -33,13 +36,16 @@ class SEHTask(GFNTask):
     This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
     objective, or of the original paper when using Flow Matching (TODO: port to this repo).
     """
-    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float],
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+    def __init__(self, dataset: Dataset, temperature_distribution: str, temperature_parameters: Tuple[float, float],
+                 num_thermometer_dim: int, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
+        self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_sample_dist = temperature_distribution
         self.temperature_dist_params = temperature_parameters
+        self.num_thermometer_dim = num_thermometer_dim
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -52,25 +58,39 @@ class SEHTask(GFNTask):
         model, self.device = self._wrap_model(model)
         return {'seh': model}
 
-    def sample_conditional_information(self, n):
+    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
         beta = None
-        if self.temperature_sample_dist == 'gamma':
-            loc, scale = self.temperature_dist_params
-            beta = self.rng.gamma(loc, scale, n).astype(np.float32)
-            upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-        elif self.temperature_sample_dist == 'uniform':
-            beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
-            upper_bound = self.temperature_dist_params[1]
-        elif self.temperature_sample_dist == 'beta':
-            beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
-            upper_bound = 1
-        beta_enc = thermometer(torch.tensor(beta), 32, 0, upper_bound)  # TODO: hyperparameters
-        return {'beta': torch.tensor(beta), 'encoding': beta_enc}
+        if self.temperature_sample_dist == 'constant':
+            assert type(self.temperature_dist_params) is float
+            beta = np.array(self.temperature_dist_params).repeat(n).astype(np.float32)
+            beta_enc = torch.zeros((n, self.num_thermometer_dim))
+        else:
+            if self.temperature_sample_dist == 'gamma':
+                loc, scale = self.temperature_dist_params
+                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
+                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
+            elif self.temperature_sample_dist == 'uniform':
+                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'loguniform':
+                low, high = np.log(self.temperature_dist_params)
+                beta = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
+                upper_bound = self.temperature_dist_params[1]
+            elif self.temperature_sample_dist == 'beta':
+                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
+                upper_bound = 1
+            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
-    def cond_info_to_reward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+        assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
+        return {'beta': beta, 'encoding': beta_enc}
+
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
             flat_reward = torch.tensor(flat_reward)
-        return flat_reward.flatten()**cond_info['beta']
+        scalar_logreward = flat_reward.squeeze().clamp(min=1e-30).log()
+        assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
+            f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
+        return RewardScalar(scalar_logreward * cond_info['beta'])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -88,8 +108,10 @@ class SEHTask(GFNTask):
 class SEHFragTrainer(GFNTrainer):
     def default_hps(self) -> Dict[str, Any]:
         return {
+            'hostname': socket.gethostname(),
             'bootstrap_own_reward': False,
             'learning_rate': 1e-4,
+            'Z_learning_rate': 1e-4,
             'global_batch_size': 64,
             'num_emb': 128,
             'num_layers': 4,
@@ -97,7 +119,7 @@ class SEHFragTrainer(GFNTrainer):
             'illegal_action_logreward': -75,
             'reward_loss_multiplier': 1,
             'temperature_sample_dist': 'uniform',
-            'temperature_dist_params': '(.5, 32)',
+            'temperature_dist_params': (.5, 32.),
             'weight_decay': 1e-8,
             'num_data_loader_workers': 8,
             'momentum': 0.9,
@@ -107,30 +129,35 @@ class SEHFragTrainer(GFNTrainer):
             'clip_grad_type': 'norm',
             'clip_grad_param': 10,
             'random_action_prob': 0.,
+            'valid_random_action_prob': 0.,
             'sampling_tau': 0.,
-            'num_cond_dim': 32,
+            'num_thermometer_dim': 32,
         }
 
     def setup_algo(self):
         self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
 
     def setup_task(self):
-        self.task = SEHTask(self.training_data, self.hps['temperature_sample_dist'],
-                            ast.literal_eval(self.hps['temperature_dist_params']), wrap_model=self._wrap_model_mp)
+        self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
+                            temperature_parameters=self.hps['temperature_dist_params'],
+                            num_thermometer_dim=self.hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
 
     def setup_model(self):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+
+    def setup_env_context(self):
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=self.hps['num_thermometer_dim'])
 
     def setup(self):
         hps = self.hps
         RDLogger.DisableLog('rdApp.*')
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=hps['num_cond_dim'])
         self.training_data = []
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
+        self.setup_env_context()
         self.setup_algo()
         self.setup_task()
         self.setup_model()
@@ -140,7 +167,7 @@ class SEHFragTrainer(GFNTrainer):
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = torch.optim.Adam(non_Z_params, hps['learning_rate'], (hps['momentum'], 0.999),
                                     weight_decay=hps['weight_decay'], eps=hps['adam_eps'])
-        self.opt_Z = torch.optim.Adam(Z_params, hps['learning_rate'], (0.9, 0.999))
+        self.opt_Z = torch.optim.Adam(Z_params, hps['Z_learning_rate'], (0.9, 0.999))
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2**(-steps / hps['lr_decay']))
         self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(self.opt_Z, lambda steps: 2**(-steps / hps['Z_lr_decay']))
 
@@ -178,15 +205,25 @@ class SEHFragTrainer(GFNTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        'lr_decay': 10000,
+        'log_dir': "./logs/debug_run",
+        'overwrite_existing_exp': True,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
-        'log_dir': '/scratch/logs/seh_frag/run_0/',
+        'log_dir': './logs/debug_run',
         'num_training_steps': 10_000,
-        'validate_every': 100,
+        'validate_every': 1,
+        'lr_decay': 20000,
         'sampling_tau': 0.99,
-        'temperature_dist_params': '(0, 64)',
+        'num_data_loader_workers': 8,
+        'temperature_dist_params': (0., 64.),
     }
-    trial = SEHFragTrainer(hps, torch.device('cuda'))
+    if os.path.exists(hps['log_dir']):
+        if hps['overwrite_existing_exp']:
+            shutil.rmtree(hps['log_dir'])
+        else:
+            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(hps['log_dir'])
+
+    trial = SEHFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True
     trial.run()
 
