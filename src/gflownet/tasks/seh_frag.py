@@ -85,7 +85,7 @@ class SEHTask(GFNTask):
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
-        return {'beta': beta, 'encoding': beta_enc}
+        return {'beta': torch.tensor(beta), 'encoding': beta_enc}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
