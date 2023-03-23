@@ -295,7 +295,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         self.hps['fixed_focus_dirs'] = np.unique(self.task.fixed_focus_dirs,
                                                  axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
-        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
+        with open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w') as f:
+            json.dump(self.hps, f)
         assert valid_focus_dirs.shape == (
             n_valid, n_obj), f"Invalid shape for valid_preferences, {valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
 

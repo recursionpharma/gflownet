@@ -197,7 +197,8 @@ class SEHFragTrainer(GFNTrainer):
         os.makedirs(self.hps['log_dir'], exist_ok=True)
         fmt_hps = '\n'.join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in self.hps.items()])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
+        with open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w') as f:
+            json.dump(self.hps, f)
 
     def step(self, loss: Tensor):
         loss.backward()
