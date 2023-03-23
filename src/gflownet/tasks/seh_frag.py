@@ -164,7 +164,8 @@ class SEHFragTrainer(GFNTrainer):
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
-        self.replay_buffer = ReplayBuffer(self.hps['replay_buffer_size'], self.hps['replay_buffer_warmup'], self.rng) if self.hps['use_replay_buffer'] else None
+        self.replay_buffer = ReplayBuffer(self.hps['replay_buffer_size'], self.hps['replay_buffer_warmup'],
+                                          self.rng) if self.hps['use_replay_buffer'] else None
         self.setup_env_context()
         self.setup_algo()
         self.setup_task()

@@ -1,8 +1,8 @@
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
-import psutil
 
+import psutil
 from rdkit.Chem.rdchem import Mol as RDMol
 import torch
 from torch import Tensor
@@ -156,8 +156,8 @@ class GFNTrainer:
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo,
-                                    self.task, dev, replay_buffer=replay_buffer, ratio=self.offline_ratio,
+        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
+                                    replay_buffer=replay_buffer, ratio=self.offline_ratio,
                                     log_dir=os.path.join(self.hps['log_dir'], 'train'),
                                     random_action_prob=self.hps.get('random_action_prob', 0.0))
         for hook in self.sampling_hooks:
@@ -167,9 +167,8 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo,
-                                    self.task, dev, ratio=self.valid_offline_ratio,
-                                    log_dir=os.path.join(self.hps['log_dir'], 'valid'),
+        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
+                                    ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
                                     sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
                                     random_action_prob=self.hps.get('valid_random_action_prob', 0.0))
         for hook in self.valid_sampling_hooks:
@@ -221,7 +220,9 @@ class GFNTrainer:
             batch_idx = it % epoch_length
             mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.**3)
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
-                logger.info(f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} (main process memory usage: {mem_usage:.2f} GB)")
+                logger.info(
+                    f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} "
+                    f"(main process memory usage: {mem_usage:.2f} GB)")
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
             info['mem_usage'] = mem_usage

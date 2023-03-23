@@ -40,6 +40,7 @@ class MPObjectPlaceholder:
         self.in_queue.put(('__len__', (), {}))
         return self.out_queue.get()
 
+
 class MPObjectProxy:
     """This class maintains a reference to some object and
     creates a `placeholder` attribute which can be safely passed to
@@ -112,8 +113,8 @@ class MPObjectProxy:
 def mp_object_wrapper(obj, num_workers, cast_types):
     """Construct a multiprocessing object proxy for torch DataLoaders so
     that it does not need to be copied in every worker's memory. For example,
-    this can be used to wrap a model such that only the main process makes 
-    cuda calls by forwarding data through the model, or a replay buffer 
+    this can be used to wrap a model such that only the main process makes
+    cuda calls by forwarding data through the model, or a replay buffer
     such that the new data is pushed in from the worker processes but only the
     main process has to hold the full buffer in memory.
 

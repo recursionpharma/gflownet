@@ -1,3 +1,5 @@
+from typing import List
+
 import numpy as np
 
 
@@ -7,7 +9,7 @@ class ReplayBuffer(object):
         self.warmup = warmup
         assert self.warmup <= self.capacity, "ReplayBuffer warmup must be smaller than capacity"
 
-        self.buffer = []
+        self.buffer: List[tuple] = []
         self.position = 0
         self.rng = rng
 

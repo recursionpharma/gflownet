@@ -24,8 +24,8 @@ class SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo,
-                 task, device, ratio=0.5, stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info=True,
+    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
+                 stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info=True,
                  random_action_prob=0.):
         """Parameters
         ----------
