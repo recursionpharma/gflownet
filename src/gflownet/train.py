@@ -226,6 +226,7 @@ class GFNTrainer:
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
             info['mem_usage'] = mem_usage
+            info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
             self.log(info, it, 'train')
             if self.verbose:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
