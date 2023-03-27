@@ -38,7 +38,6 @@ class TrajectoryBalance:
         https://arxiv.org/abs/2201.13259
 
         Hyperparameters used:
-        random_action_prob: float, probability of taking a uniform random action when sampling
         illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
         bootstrap_own_reward: bool, if True, uses the .reward batch data to predict rewards for sampled data
         tb_epsilon: float, if not None, adds this epsilon in the numerator and denominator of the log-ratio
@@ -83,12 +82,12 @@ class TrajectoryBalance:
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp,
                                           correct_idempotent=self.correct_idempotent,
                                           pad_with_terminal_state=self.p_b_is_parameterized)
-        self.graph_sampler.random_action_prob = hps['random_action_prob']
         if self.is_doing_subTB:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 2 if max_len is not None else 128)
             self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
 
-    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
+    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor,
+                                              random_action_prob: float):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -99,6 +98,8 @@ class TrajectoryBalance:
             List of N Graph endpoints
         cond_info: torch.tensor
             Conditional information, shape (N, n_info)
+        random_action_prob: float
+            Probability of taking a random action
         Returns
         -------
         data: List[Dict]
@@ -113,7 +114,7 @@ class TrajectoryBalance:
         """
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
         for i in range(n):
             data[i]['logZ'] = logZ_pred[i].item()
@@ -187,7 +188,7 @@ class TrajectoryBalance:
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         log_rewards: Tensor
-            The transformed reward (e.g. log(R(x) ** beta)) for each trajectory. Shape (N,)
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch

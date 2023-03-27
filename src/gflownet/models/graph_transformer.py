@@ -149,10 +149,10 @@ class GraphTransformerGFN(nn.Module):
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
-
         self.action_type_order = env_ctx.action_type_order
 
-        # Every action type gets its own MLP that is fed the output of the GraphTransformer
+        # Every action type gets its own MLP that is fed the output of the GraphTransformer.
+        # Here we define the number of inputs and outputs of each of those (potential) MLPs.
         self._action_type_to_num_inputs_outputs = {
             GraphActionType.Stop: (num_glob_final, 1),
             GraphActionType.AddNode: (num_final, env_ctx.num_new_node_values),

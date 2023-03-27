@@ -5,8 +5,6 @@ import math
 from botorch.utils.multi_objective import infer_reference_point
 from botorch.utils.multi_objective import pareto
 from botorch.utils.multi_objective.hypervolume import Hypervolume
-from cvxopt import matrix
-from cvxopt import solvers
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
@@ -126,13 +124,6 @@ def r2_indicator_set(reference_points, solutions, utopian_point):
     return r2
 
 
-solvers.options['abstol'] = 1e-15
-solvers.options['reltol'] = 1e-15
-solvers.options['feastol'] = 1e-15
-solvers.options['maxiters'] = 1000
-solvers.options['show_progress'] = False
-
-
 def sharpeRatio(p, Q, x, rf):
     """ Compute the Sharpe ratio.
     Returns the Sharpe ratio given the expected return vector, p,
@@ -158,6 +149,17 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
+
+    # intentional non-top-level imports to avoid
+    # cvxopt dependency for M1 chip users
+    from cvxopt import matrix
+    from cvxopt import solvers
+
+    solvers.options['abstol'] = 1e-15
+    solvers.options['reltol'] = 1e-15
+    solvers.options['feastol'] = 1e-15
+    solvers.options['maxiters'] = 1000
+    solvers.options['show_progress'] = False
     n = len(p)
 
     # inequality constraints (investment in assets is higher or equal to 0)

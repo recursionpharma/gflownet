@@ -40,12 +40,12 @@ class GraphSampler:
         self.rng = rng
         # Experimental flags
         self.sample_temp = sample_temp
-        self.random_action_prob = 0
         self.sanitize_samples = True
         self.correct_idempotent = correct_idempotent
         self.pad_with_terminal_state = pad_with_terminal_state
 
-    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device):
+    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device,
+                          random_action_prob: float = 0.):
         """Samples a model in a minibatch
 
         Parameters
@@ -98,7 +98,7 @@ class GraphSampler:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(
-                    self.rng.uniform(size=len(torch_graphs)) < self.random_action_prob, device=dev).float()
+                    self.rng.uniform(size=len(torch_graphs)) < random_action_prob, device=dev).float()
                 # Set the logits to some large value if they're not masked, this way the masked
                 # actions have no probability of getting sampled, and there is a uniform
                 # distribution over the rest
