@@ -86,7 +86,8 @@ class TrajectoryBalance:
         self.graph_sampler.random_action_prob = hps['random_action_prob']
         if self.is_doing_subTB:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 2 if max_len is not None else 128)
-            self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
+            self._init_subtb(torch.device('cuda') if torch.cuda.is_available() else
+                             torch.device('cpu'))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
         """Generate trajectories by sampling a model
@@ -328,7 +329,7 @@ class TrajectoryBalance:
         else:
             log_p_B = batch.log_p_B
         assert log_p_F.shape == log_p_B.shape
-        
+
         # This is the log probability of each trajectory
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')

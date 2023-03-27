@@ -31,7 +31,8 @@ class GraphTransformer(nn.Module):
     The per graph outputs are the concatenation of a global mean pooling operation, of the final
     virtual node embeddings, and of the conditional information embedding.
     """
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type='pre'):
+    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type='pre',
+                 i2h_width=1):
         """
         Parameters
         ----------
@@ -57,9 +58,9 @@ class GraphTransformer(nn.Module):
         assert ln_type in ['pre', 'post']
         self.ln_type = ln_type
 
-        self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
-        self.e2h = mlp(e_dim, num_emb, num_emb, 2)
-        self.c2h = mlp(g_dim, num_emb, num_emb, 2)
+        self.x2h = mlp(x_dim + num_noise, int(num_emb * i2h_width), num_emb, 2)
+        self.e2h = mlp(e_dim, int(num_emb * i2h_width), num_emb, 2)
+        self.c2h = mlp(g_dim, int(num_emb * i2h_width), num_emb, 2)
         self.graph2emb = nn.ModuleList(
             sum([[
                 gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add', norm=None),
@@ -137,12 +138,13 @@ class GraphTransformerGFN(nn.Module):
 
     Outputs logits corresponding to the action types used by the env_ctx argument.
     """
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1,
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1, i2h_width=1,
                  do_bck=False):
         """See `GraphTransformer` for argument values"""
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
+                                       i2h_width=i2h_width,
                                        num_heads=num_heads, ln_type=ln_type)
         num_final = num_emb
         num_glob_final = num_emb * 2

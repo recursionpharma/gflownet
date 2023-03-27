@@ -1,4 +1,5 @@
 import ast
+import bz2
 import gzip
 import os
 import pickle
@@ -59,9 +60,7 @@ def count_reward(g):
 
 
 def load_clique_data(data_root):
-    data = pickle.load(gzip.open(data_root+'/two_col_7_graphs.pkl.gz', 'rb'))
-    #data = pickle.load(gzip.open('/mnt/bh1/scratch/emmanuel.bengio/data/cliques/two_col_7_graphs.pkl.gz', 'rb'))
-    #data = pickle.load(gzip.open('/Users/emmanuel.bengio/rs/two_col_7_graphs.pkl.gz', 'rb'))
+    data = pickle.load(bz2.open(data_root+'/two_col_7_graphs.pkl.bz', 'rb'))
     return data
 
 
@@ -122,6 +121,8 @@ class CliqueDataset(Dataset):
         print(train, self.idcs.shape)
         self._gc = nx.complete_graph(7)
         self._enum_edges = list(self._gc.edges)
+        self.compute_Fsa = False
+        self.compute_normalized_Fsa = False
 
     def __len__(self):
         return len(self.idcs)
@@ -139,9 +140,25 @@ class CliqueDataset(Dataset):
             return np.float32(0)
 
     def collate_fn(self, batch):
-        graphs, rewards = zip(*batch)
+        graphs, rewards, idcs = zip(*batch)
         batch = self.ctx.collate(graphs)
-        batch.y = torch.as_tensor(rewards)
+        if self.regress_to_F:
+            batch.y = torch.as_tensor([self.epc.mdp_graph.nodes[i]['F'] for i in idcs])
+        else:
+            batch.y = torch.as_tensor(rewards)
+        if self.compute_Fsa:
+            all_targets = []
+            for data_idx in idcs:
+                targets = [torch.zeros_like(getattr(self.epc._Data[data_idx], i.mask_name))-100 for i in self.ctx.action_type_order]
+                for neighbor in list(self.epc.mdp_graph.neighbors(data_idx)):
+                    for _, edge in self.epc.mdp_graph.get_edge_data(data_idx, neighbor).items():
+                        a, F = edge['a'], edge['F']
+                        targets[a[0]][a[1], a[2]] = F
+                if self.compute_normalized_Fsa:
+                    logZ = torch.log(sum([i.exp().sum() for i in targets]))
+                    targets = [i - logZ for i in targets]
+                all_targets.append(targets)
+            batch.y = torch.cat([torch.cat(i).flatten() for i in zip(*all_targets)])
         return batch
 
     def __getitem__(self, idx):
@@ -149,7 +166,7 @@ class CliqueDataset(Dataset):
         g = self.data[idx]
         r = torch.tensor(self.reward(g).reshape((1,)))
         if self.output_graphs:
-            return self.ctx.graph_to_Data(g), r
+            return self.ctx.graph_to_Data(g), r, idx
         else:
             return g, r
 
@@ -250,9 +267,9 @@ class CliquesTrainer(GFNTrainer):
         max_nodes = hps.get('max_nodes', 7)
         print(self.log_dir)
         self.rng = np.random.default_rng(142857)
-        self._data = load_clique_data(hps['data_root'])
-        self.ctx = CliquesEnvContext(max_nodes, 4, 2, num_cond_dim=1, graph_data=self._data)
         self.env = GraphBuildingEnv()
+        self._data = [self.env.new()] + load_clique_data(hps['data_root'])
+        self.ctx = CliquesEnvContext(max_nodes, 4, 2, num_cond_dim=1, graph_data=self._data)
         self._do_supervised = hps.get('do_supervised', False)
 
         self.training_data = CliqueDataset(self._data, self.ctx, 4, train=True, ratio=hps.get('train_ratio', 0.9),
@@ -261,16 +278,20 @@ class CliquesTrainer(GFNTrainer):
                                        modal_seed=hps.get('modal_seed', None), max_nodes=max_nodes)
         self.training_data.reward_func = self.test_data.reward_func = self.hps.get('reward_func', 'cliques')
         num_emb, num_layers, num_heads = hps['num_emb'], hps['num_layers'], hps.get('num_heads', 2)
-        if self._do_supervised:
+        i2h_width = hps.get('i2h_width', 1)
+        if self._do_supervised and not hps.get('regress_to_Fsa', True):
             model = GraphTransformerRegressor(x_dim=self.ctx.num_node_dim, e_dim=self.ctx.num_edge_dim, g_dim=1,
                                               num_emb=num_emb, num_layers=num_layers, num_heads=num_heads,
+                                              i2h_width=i2h_width,
                                               ln_type=hps.get('ln_type', 'pre'))
         else:
             model = GraphTransformerGFN(self.ctx, num_emb=hps['num_emb'], num_layers=hps['num_layers'],
                                         num_mlp_layers=hps['num_mlp_layers'], num_heads=num_heads,
+                                        i2h_width=i2h_width,
                                         ln_type=hps.get('ln_type', 'pre'),
                                         do_bck=hps['tb_p_b_is_parameterized'])
-            self.test_data = RepeatedPreferenceDataset(np.ones((32, 1)), 8)
+            if not self._do_supervised:
+                self.test_data = RepeatedPreferenceDataset(np.ones((32, 1)), 8)
 
         self.model = self.sampling_model = model
         params = [i for i in self.model.parameters()]
@@ -300,9 +321,12 @@ class CliquesTrainer(GFNTrainer):
         self.valid_offline_ratio = 0
 
         self.algo.task = self.task
-        if not self._do_supervised:
-            self.exact_prob_cb = ExactProbCompCallback(self, [self.env.new()] + self.training_data.data, self.device,
-                                                       cache_path=hps['data_root']+'/two_col_7_precomp_px_v2.pkl.gz')
+        self.exact_prob_cb = ExactProbCompCallback(self, self.training_data.data, self.device,
+                                                   cache_path=hps['data_root']+'/two_col_7_precomp_px_v6.pkl')
+        train_idcs, test_idcs = self.exact_prob_cb.get_structured_test_split(hps.get('train_ratio', 0.9))
+        self.training_data.idcs = train_idcs
+        self.test_data.idcs = test_idcs
+        if not self._do_supervised or hps.get('regress_to_Fsa', False):
             self._callbacks = {'true_px_error': self.exact_prob_cb}
         else:
             self._callbacks = {}
@@ -341,9 +365,7 @@ def hashg(g):
 
 class ExactProbCompCallback:
     def __init__(self, trial, states, dev, mbs=128,
-                 cache_path='two_col_7_precomp_px_v2.pkl.gz',
-                 #cache_path='/mnt/bh1/scratch/emmanuel.bengio/data/cliques/two_col_7_precomp_px_v2.pkl.gz',
-                 #cache_path='/Users/emmanuel.bengio/rs/two_col_7_precomp_px_v2.pkl.gz',
+                 cache_path=None,
                  do_save_px=True,
                  log_rewards=None,
                  tqdm_disable=None):
@@ -353,18 +375,28 @@ class ExactProbCompCallback:
         self.states = states
         self.cache_path = cache_path
         if self.cache_path is not None:
-            bs, ids = torch.load(gzip.open(cache_path, 'rb'))
+            print("Loading cache @", cache_path)
+            # cache = torch.load(bz2.open(cache_path, 'rb'))
+            cache = torch.load(open(cache_path, 'rb'))
+            self.mdp_graph = cache['mdp']
+            self._Data = cache['Data']
+            self._hash_to_graphs = cache['hashmap']
+            bs, ids = cache['batches'], cache['idces']
+            print("Done")
             self.precomputed_batches, self.precomputed_indices = ([
                 i.to(dev) for i in bs
             ], [[(j[0].to(dev), j[1].to(dev)) for j in i] for i in ids])
         else:
-            self._compute_things(tqdm_disable)
+            pass
+            # self._compute_things(tqdm_disable)
         if log_rewards is None:
             self.log_rewards = np.array([self.trial.training_data.reward(i) for i in tqdm(self.states, disable=tqdm_disable)])
         else:
             self.log_rewards = log_rewards
         self.logZ = np.log(np.sum(np.exp(self.log_rewards)))
         self.true_log_probs = self.log_rewards - self.logZ
+        # This is reward-dependent
+        self.recompute_flow()
         self.do_save_px = do_save_px
         if do_save_px:
             os.makedirs(self.trial.hps['log_dir'], exist_ok=True)
@@ -381,43 +413,45 @@ class ExactProbCompCallback:
             torch.save(log_probs, open(self.trial.hps['log_dir'] + f'/log_px_{self._save_increment}.pt', 'wb'))
             self._save_increment += 1
 
+    def get_graph_idx(self, g, default=None):
+        iso = lambda u, v: is_isomorphic(u, v, lambda a, b: a == b, lambda a, b: a == b)
+        h = hashg(g)
+        if h not in self._hash_to_graphs and default is not None:
+            return default
+        bucket = self._hash_to_graphs[h]
+        if len(bucket) == 1:
+            return bucket[0]
+        for i in bucket:
+            if iso(self.states[i], g):
+                return i
+        if default is not None:
+            return default
+        raise ValueError(g)
+    
     def _compute_things(self, tqdm_disable=None):
         states, mbs, dev = self.states, self.mbs, self.dev
+        mdp_graph = nx.MultiDiGraph()
         self.precomputed_batches = []
         self.precomputed_indices = []
+        self._hash_to_graphs = {}
         states_hash = [hashg(i) for i in tqdm(states, disable=tqdm_disable)]
-        states_Data = [self.trial.ctx.graph_to_Data(i) for i in tqdm(states, disable=tqdm_disable)]
+        self._Data = states_Data = gd.Batch.from_data_list([
+            self.trial.ctx.graph_to_Data(i) for i in tqdm(states, disable=tqdm_disable)])
         ones = torch.ones((mbs, self.trial.ctx.num_cond_dim)).to(dev)
-        hash_to_graphs = {}
-        for i, h, g in zip(range(len(states)), states_hash, states):
-            hash_to_graphs[h] = hash_to_graphs.get(h, list()) + [(g, i)]
-
-        iso = lambda u, v: is_isomorphic(u, v, lambda a, b: a == b, lambda a, b: a == b)
-
-        def get_graph_idx(g, default=None):
-            h = hashg(g)
-            if h not in hash_to_graphs and default is not None:
-                return default
-            bucket = hash_to_graphs[h]
-            if len(bucket) == 1:
-                return bucket[0][1]
-            for i in bucket:
-                if iso(i[0], g):
-                    return i[1]
-            if default is not None:
-                return default
-            raise ValueError(g)
+        for i, h in enumerate(states_hash):
+            self._hash_to_graphs[h] = self._hash_to_graphs.get(h, list()) + [i]
 
         for bi in tqdm(range(0, len(states), mbs), disable=tqdm_disable):
             bs = states[bi:bi + mbs]
             bD = states_Data[bi:bi + mbs]
             indices = list(range(bi, bi + len(bs)))
-            non_terminals = [(i, j, k) for i, j, k in zip(bs, bD, indices) if not self.is_terminal(i)]
-            if not len(non_terminals):
-                self.precomputed_batches.append(None)
-                self.precomputed_indices.append(None)
-                continue
-            bs, bD, indices = zip(*non_terminals)
+            # TODO: if the environment's masks are well designed, this non_terminal business shouldn't be necessary
+            #non_terminals = [(i, j, k) for i, j, k in zip(bs, bD, indices) if not self.is_terminal(i)]
+            #if not len(non_terminals):
+            #    self.precomputed_batches.append(None)
+            #    self.precomputed_indices.append(None)
+            #    continue
+            # bs, bD, indices = zip(*non_terminals)
             batch = self.trial.ctx.collate(bD).to(dev)
             self.precomputed_batches.append(batch)
 
@@ -426,7 +460,6 @@ class ExactProbCompCallback:
             actions = [list() for i in range(len(bs))]
             offset = 0
             for u, i in enumerate(cat.logits):
-                #for k, j in enumerate(map(list, ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy())):
                 for j in ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy():
                     # We're using nonzero above to enumerate all positions, but we still need to check
                     # if the mask is nonzero since we only want the legal actions.
@@ -443,18 +476,29 @@ class ExactProbCompCallback:
                     idx = indices[jb]
                     sp = (self.trial.env.step(bs[jb], self.trial.ctx.aidx_to_GraphAction(bD[jb], a[:3]))
                           if a[0] != 0 else bs[jb])
-                    spidx = get_graph_idx(sp, len(states))
-                    if a[0] == 0 or spidx >= len(states) or self.is_terminal(sp):
+                    spidx = self.get_graph_idx(sp, len(states))
+                    if a[0] == 0 or spidx >= len(states):
                         end_indices.append((idx, spidx, srcidx))
+                        mdp_graph.add_edge(idx, spidx, srci=srcidx, term=True, a=a)
                     else:
                         being_indices.append((idx, spidx, srcidx))
+                        mdp_graph.add_edge(idx, spidx, srci=srcidx, term=False, a=a)
                 all_indices.append((torch.tensor(end_indices).T.to(dev), torch.tensor(being_indices).T.to(dev)))
             self.precomputed_indices.append(all_indices)
+        self.mdp_graph = mdp_graph
 
-    def is_terminal(self, g):
-        return len(g.nodes) > 7 or len(g.edges) >= 21
+    def save_cache(self, path):
+        with bz2.open(path, 'wb') as f:
+            torch.save({
+                'batches': [i.cpu() for i in self.precomputed_batches],
+                'idces': [[(j[0].cpu(), j[1].cpu()) for j in i] for i in self.precomputed_indices],
+                'Data': self._Data,
+                'mdp': self.mdp_graph,
+                'hashmap': self._hash_to_graphs,
+            }, f)
 
     def compute_prob(self, model, cond_info=None, tqdm_disable=None):
+        # +1 to count illegal actions prob (may not be applicable to well-masked envs)
         prob_of_being_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
@@ -469,11 +513,12 @@ class ExactProbCompCallback:
         for bi, batch, pre_indices in zip(tqdm(range(0, len(self.states), self.mbs), disable=tqdm_disable),
                                           self.precomputed_batches, self.precomputed_indices):
             bs = self.states[bi:bi + self.mbs]
-            indices = list(range(bi, bi + len(bs)))
-            non_terminals = [(i, j) for i, j in zip(bs, indices) if not self.is_terminal(i)]
-            if not len(non_terminals):
-                continue
-            bs, indices = zip(*non_terminals)
+            # This isn't even right:
+            # indices = list(range(bi, bi + len(bs)))
+            # non_terminals = [(i, j) for i, j in zip(bs, indices) if not self.is_terminal(i)]
+            # if not len(non_terminals):
+            #     continue
+            # bs, indices = zip(*non_terminals)
             with torch.no_grad():
                 cat, *_, mo = model(batch, cond_info[:len(bs)])
             logprobs = torch.cat([i.flatten() for i in cat.logsoftmax()])
@@ -488,10 +533,61 @@ class ExactProbCompCallback:
                                                    out=prob_of_ending_t.exp()).log()
         return prob_of_ending_t
 
+    def recompute_flow(self):
+        g = self.mdp_graph
+        for i in g:
+            g.nodes[i]['F'] = -100
+        for i in tqdm(list(range(len(g)))[::-1]):
+            p = sorted(list(g.predecessors(i)), reverse=True)
+            num_back = len([n for n in p if n != i])
+            for j in p:
+                if j == i:
+                    g.nodes[j]['F'] = np.logaddexp(g.nodes[j]['F'], self.log_rewards[j])
+                    g.edges[(i, i, 0)]['F'] = self.log_rewards[j].item()
+                else:
+                    backflow = np.log(np.exp(g.nodes[i]['F']) / num_back)
+                    g.nodes[j]['F'] = np.logaddexp(g.nodes[j]['F'], backflow)
+                    # Here we're making a decision to split flow backwards equally for idempotent actions
+                    # from the same state. I think it's ok?
+                    ed = g.get_edge_data(j, i)
+                    for k, vs in ed.items():
+                        g.edges[(j, i, k)]['F'] = np.log(np.exp(backflow) / len(ed))
+
+    def get_structured_test_split(self, r, seed=142857):
+        test_set = set()
+        n = int((1 - r) * len(self.states))
+        np.random.seed(seed)
+        while len(test_set) < n:
+            i0 = np.random.randint(len(self.states))
+            s0 = self.states[i0]
+            if len(s0.nodes) < 7:  # TODO: unhardcode this
+                continue
+            s = s0
+            idx = i0
+            while len(s.nodes) > 5:  # TODO: unhardcode this
+                test_set.add(idx)
+                actions = [(u, a.item(), b.item())
+                           for u, ra in enumerate(self.trial.ctx.bck_action_type_order)
+                           for a, b in getattr(self._Data[idx], ra.mask_name).nonzero()]
+                action = actions[np.random.randint(len(actions))]
+                gaction = self.trial.ctx.aidx_to_GraphAction(self._Data[idx], action, fwd=False)
+                s = self.trial.env.step(s, gaction)
+                idx = self.get_graph_idx(s)  # This finds the graph index taking into account isomorphism
+                s = self.states[idx]  # We still have to get the original graph so that the Data instance is correct
+        train_set = list(set(range(len(self.states))).difference(test_set))
+        test_set = list(test_set)
+        np.random.shuffle(train_set)
+        return train_set, test_set
 
 class Regression:
     def compute_batch_losses(self, model, batch, **kw):
-        pred = model(batch, torch.ones((batch.y.shape[0], 1), device=batch.x.device))
+        if self.regress_to_Fsa:
+            fwd_cat, *other = model(batch, torch.zeros((batch.num_graphs, 1), device=batch.x.device))
+            mask = torch.cat([i.flatten() for i in fwd_cat.masks])
+            pred = torch.cat([i.flatten() for i in fwd_cat.logits]) * mask
+            batch.y = batch.y * mask
+        else:
+            pred = model(batch, torch.zeros((batch.num_graphs, 1), device=batch.x.device))
         if self.loss_type == 'MSE':
             loss = (pred - batch.y).pow(2).mean()
         elif self.loss_type == 'MAE':
@@ -504,16 +600,23 @@ class CliquesSupervisedTrainer(CliquesTrainer):
         super().setup()
         self.algo = Regression()
         self.algo.loss_type = self.hps.get('loss_type', 'MSE')
+        self.algo.regress_to_Fsa = self.hps.get('regress_to_Fsa', False)
         self.training_data.output_graphs = True
         self.test_data.output_graphs = True
+        for i in [self.training_data, self.test_data]:
+            i.compute_Fsa = self.hps.get('regress_to_Fsa', False)
+            i.regress_to_F = self.hps.get('regress_to_F', False)
+            i.compute_normalized_Fsa = self.hps.get('regress_to_P_F', False)
+            i.epc = self.exact_prob_cb
 
     def build_training_data_loader(self) -> DataLoader:
         return torch.utils.data.DataLoader(self.training_data, batch_size=self.mb_size, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0,
+                                           shuffle=True,
                                            collate_fn=self.training_data.collate_fn)
 
     def build_validation_data_loader(self) -> DataLoader:
-        return torch.utils.data.DataLoader(self.test_data, batch_size=self.mb_size * 4, num_workers=self.num_workers,
+        return torch.utils.data.DataLoader(self.test_data, batch_size=self.mb_size, num_workers=self.num_workers,
                                            persistent_workers=self.num_workers > 0,
                                            collate_fn=self.test_data.collate_fn)
 
@@ -531,346 +634,230 @@ def main():
         'do_supervised': False,  # Change this to launch a supervised job
     }
 
-    hps = [
-        {
-            **_hps,
-            'log_dir': '/scratch/emmanuel.bengio/logs/cliques_gfn/run_0/',
-        },
-        {
-            **_hps,
-            'log_dir': '/scratch/emmanuel.bengio/logs/cliques_gfn/run_1/',
-            'temperature_dist_params': '(1, 1.001)',
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_0/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 0,
-            'global_batch_size': 4,
-            'tb_correct_idempotent': False,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': False,
-            'validate_every': 250,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_1/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 0,
-            'global_batch_size': 4,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': False,
-            'validate_every': 250,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_2/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 0,
-            'global_batch_size': 2,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'validate_every': 250,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_3/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 8,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 500,
-            
-            'num_layers': 4,
-            'num_mlp_layers': 2,
-            'num_heads': 4,
-            'num_emb': 128,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_4/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 8,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 500,
-            
-            'num_layers': 6,
-            'num_mlp_layers': 2,
-            'num_heads': 4,
-            'num_emb': 128,
-            'learning_rate': 1e-4,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_7/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 8,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': False,
-            'num_training_steps': 5000,
-            'validate_every': 500,
-            
-            'num_layers': 6,
-            'num_mlp_layers': 2,
-            'num_heads': 4,
-            'num_emb': 128,
-            'learning_rate': 1e-4,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_8/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 8,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': False,
-            'num_training_steps': 5000,
-            'validate_every': 100,
-            
-            'num_layers': 4,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 128,
-            'learning_rate': 1e-4,
-            'max_nodes': 7,
-        },
-        # After more bug fixes
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_9/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': False,
-            'num_training_steps': 5000,
-            'validate_every': 100,
-            
-            'num_layers': 4,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 128,
-            'learning_rate': 1e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_10/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 200,
-            
-            'num_layers': 4,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 128,
-            'learning_rate': 1e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_11/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 200,
-            
-            'num_layers': 8,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 96,
-            'learning_rate': 1e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_12/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 64,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 200,
-            
-            'num_layers': 8,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 96,
-            'learning_rate': 3e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_13/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 256,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000,
-            'validate_every': 200,
-            
-            'num_layers': 8,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 96,
-            'learning_rate': 3e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_14/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 16,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000 * 4,
-            'validate_every': 200,
-            
-            'num_layers': 8,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 96,
-            'learning_rate': 3e-4,
-            'max_nodes': 7,
-        },
-        {
-            **_hps,
-            'log_dir': './tmp/run_pb_15/',
-            'temperature_distribution': 'const',
-            'temperature_dist_params': '1',
-            'reward_func': 'const',
-            'num_data_loader_workers': 16,
-            'global_batch_size': 32,
-            'tb_correct_idempotent': True,
-            'tb_p_b_is_parameterized': True,
-            'tb_do_subtb': True,
-            'num_training_steps': 5000 * 2,
-            'validate_every': 200,
-            
-            'num_layers': 8,
-            'num_mlp_layers': 2,
-            'num_heads': 2,
-            'num_emb': 96,
-            'learning_rate': 3e-4,
-            'max_nodes': 7,
-        },
-    ]
-
-    hps += [{
-        **hps[-1],
-        'log_dir': './tmp/run_pb_16/',
-        'learning_rate': 1e-3,
-        'global_batch_size': 32,
-        'num_training_steps': 5000 * 2,
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_17/',
-        'learning_rate': 1e-3,
-        'global_batch_size': 16,
-        'num_training_steps': 5000 * 4,
-        'data_root': '/scratch/emmanuel.bengio/data/cliques',
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_18/',
+    
+    _hps = {
+        'num_training_steps': 5000,
+        'validate_every': 500,
+        'num_data_loader_workers': 8,
         'learning_rate': 3e-4,
-        'momentum': 0.99,
-        'global_batch_size': 32,
-        'num_training_steps': 5000 * 2,
-        'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_19/',
-        'learning_rate': 3e-4,
-        'momentum': 0.95,
-        'opt': 'SGD',
-        'global_batch_size': 32,
-        'num_training_steps': 5000 * 2,
-        'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_20/',
-        'learning_rate': 3e-4,
-        'global_batch_size': 32,
-        'num_training_steps': 10000 * 2,
-        'tb_p_b_is_parameterized': False,
-        #'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_21/',
-        'learning_rate': 3e-4,
-        'global_batch_size': 32,
-        'num_training_steps': 10000 * 2,
-        'tb_p_b_is_parameterized': True,
-        'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
-    }, {
-        **hps[-1],
-        'log_dir': './tmp/run_pb_22/',
-        'learning_rate': 3e-4,
-        'global_batch_size': 32,
-        'num_training_steps': 10000 * 2,
-        'tb_p_b_is_parameterized': True,
-        'tb_do_subtb': False,
-        #'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+        'num_layers': 3,
+        'num_mlp_layers': 1,
+        'num_emb': 128,
+        'global_batch_size': 128,
+        'do_supervised': True,  # Change this to launch a supervised job
     }
+
+    hps = [
+        {**_hps,
+         'log_dir': './tmp/run_csup_0',
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         },
+        {**_hps,
+         'log_dir': './tmp/run_csup_1',
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 6,
+         'num_heads': 4,
+         'reward_func': 'count',
+         },
+        {**_hps, # Adds shuffle
+         'log_dir': './tmp/run_csup_2',
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 6,
+         'num_heads': 4,
+         'reward_func': 'count',
+         },
+        {**_hps, # What does sup learning get?
+         'log_dir': './tmp/run_csup_3',
+         'regress_to_F': False,
+         'regress_to_Fsa': False,
+         'num_layers': 6,
+         'num_heads': 4,
+         'reward_func': 'count',
+         },
+        {**_hps, # minor bug fix
+         'log_dir': './tmp/run_csup_4',
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 6,
+         'num_heads': 4,
+         'reward_func': 'count',
+         },
+        {**_hps, 
+         'log_dir': './tmp/run_csup_5',
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4, 
+         'reward_func': 'count',
+         },
+        {**_hps, 
+         'num_training_steps': 5000,
+         'log_dir': './tmp/run_csup_6',
+         'global_batch_size': 512,
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4, 
+         'reward_func': 'count',
+         },
+        {**_hps,
+         'num_training_steps': 20000,
+         'log_dir': './tmp/run_csup_7',
+         'global_batch_size': 256,
+         'learning_rate': 1e-3,
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_8',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_9',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_10',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': True,
+         'regress_to_Fsa': False,
+         'num_layers': 6,
+         'num_heads': 3,
+         'num_mlp_layers': 1,
+         'i2h_width': 1,
+         'reward_func': 'count',
+         'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_11',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_12',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'weight_decay': 1e-3,
+         'reward_func': 'count',
+         'data_root': '/scratch/emmanuel.bengio/data/cliques',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_13',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'regress_to_P_F': True,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'data_root': '/scratch/emmanuel.bengio/data/cliques',
+         },
+        # With p(x) measure
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_14',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'regress_to_P_F': True,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'num_data_loader_workers': 0,
+         'data_root': '/scratch/emmanuel.bengio/data/cliques',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_15',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'regress_to_P_F': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'data_root': '/scratch/emmanuel.bengio/data/cliques',
+         },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_csup_16',
+         'global_batch_size': 256,
+         'learning_rate': 1e-4,
+         'regress_to_F': False,
+         'regress_to_Fsa': True,
+         'regress_to_P_F': False,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'num_data_loader_workers': 50,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
+         'train_ratio': 0.99, ####
+         },
     ]
 
     if 1:
         import sys
-        trial = CliquesTrainer(hps[int(sys.argv[1])], torch.device('cuda'))
+        trial = CliquesSupervisedTrainer(hps[int(sys.argv[1])], torch.device('cuda'))
         trial.verbose = True
         trial.run()
 
