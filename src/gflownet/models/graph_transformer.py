@@ -143,7 +143,7 @@ class GraphTransformerGFN(nn.Module):
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       num_heads=num_heads)
+                                       num_heads=num_heads, ln_type=ln_type)
         num_final = num_emb
         num_glob_final = num_emb * 2
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
