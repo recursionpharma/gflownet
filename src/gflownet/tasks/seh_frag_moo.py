@@ -88,7 +88,7 @@ class SEHMOOTask(SEHTask):
         cond_info['preferences'] = preferences
         return cond_info
 
-    def encode_conditional_information(self, preferences: torch.TensorType) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, preferences: Tensor) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == 'constant':
             beta = torch.ones(len(preferences)) * self.temperature_dist_params
             beta_enc = torch.zeros((len(preferences), self.num_thermometer_dim))
@@ -106,15 +106,10 @@ class SEHMOOTask(SEHTask):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
-<<<<<<< HEAD
-        scalar_reward = (flat_reward * cond_info['preferences']).sum(1).log()
-        return RewardScalar(scalar_reward * cond_info['beta'])
-=======
         scalar_logreward = (flat_reward * cond_info['preferences']).sum(1).clamp(min=1e-30).log()
         assert len(scalar_logreward.shape) == len(cond_info['beta'].shape), \
             f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
         return RewardScalar(scalar_logreward * cond_info['beta'])
->>>>>>> trunk
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -123,7 +118,7 @@ class SEHMOOTask(SEHTask):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
 
         else:
-            flat_rewards = []
+            flat_rewards: List[Tensor] = []
             if 'seh' in self.objectives:
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
