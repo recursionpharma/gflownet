@@ -375,7 +375,7 @@ def main():
     os.makedirs(hps['log_dir'])
 
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-    trial.verbose = True
+    trial.print_every = 1
     trial.run()
 
 

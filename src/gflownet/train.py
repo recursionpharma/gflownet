@@ -120,8 +120,8 @@ class GFNTrainer:
         self.offline_ratio = self.hps.get('offline_ratio', 0.5)
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
-        # If True, print messages during training
-        self.verbose = False
+        # Print the loss every `self.print_every` iterations
+        self.print_every = 1000
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
@@ -229,7 +229,7 @@ class GFNTrainer:
             info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
             info['num_workers'] = self.num_workers
             self.log(info, it, 'train')
-            if self.verbose:
+            if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
 
             if it % self.hps['validate_every'] == 0:
