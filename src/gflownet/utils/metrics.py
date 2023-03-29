@@ -13,9 +13,10 @@ from sklearn.cluster import KMeans
 import torch
 
 
-def get_reach_metric(samples, ref_front: np.ndarray = None, reduce: str = "min", reversed: bool = False):
+def get_IGD(samples, ref_front: np.ndarray = None):
     """
-    Computes the reach of a set of samples w.r.t a reference pareto front.
+    Computes the Inverse Generational Distance of a set of samples w.r.t a reference pareto front.
+    see: https://www.sciencedirect.com/science/article/abs/pii/S0377221720309620
 
     For each point of a reference pareto front `ref_front`, compute the distance to the closest
     sample. Returns the average of these distances.
@@ -27,7 +28,7 @@ def get_reach_metric(samples, ref_front: np.ndarray = None, reduce: str = "min",
             on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
 
     Returns:
-        float: The reach-metric value.
+        float: The IGD value.
     """
     def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
         """Discretise the faces that are at the extremity of a unit hypercube"""
@@ -42,23 +43,61 @@ def get_reach_metric(samples, ref_front: np.ndarray = None, reduce: str = "min",
 
     # Compute the distances between each generated sample and each reference point.
     distances = cdist(samples, ref_front).T
-    if reversed:
-        distances = distances.T
 
     # Find the minimum distance for each point on the front.
-    if reduce == "min":
-        reduced_distances = np.min(distances, axis=1)
-    elif reduce == "mean":
-        reduced_distances = np.mean(distances, axis=1)
-    else:
-        raise ValueError(f"Unknown reduction method: {reduce}")
-    max_possible_distance = float(np.linalg.norm(np.ones(n_objectives) - np.zeros(n_objectives)))
+    min_distances = np.min(distances, axis=1)
 
-    # Compute the reach as the average of the minimum distances.
-    avg_dist = np.mean(reduced_distances, axis=0)
-    reach = 1. - (avg_dist / max_possible_distance)
+    # Compute the igd as the average of the minimum distances.
+    igd = np.mean(min_distances, axis=0)
 
-    return float(reach)
+    return float(igd)
+
+
+def get_PC_entropy(samples, ref_front=None):
+    """
+    Computes entropy of the Pareto-Clustered (PC) distribution of the samples.
+
+    For each point in the samples, the closest point in the reference front is
+    found. We then compute the entropy of the empirical distribution of the
+    samples in the clusters defined by the reference front.
+
+    Parameters
+    ----------
+        Args:
+        front (ndarray): A numpy array containing the coordinates of the points
+            on the Pareto front. The tensor should have shape (n_points, n_objectives).
+        ref_front (ndarray): A numpy array containing the coordinates of the points
+            on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
+
+    Returns:
+        float: The IGD value.
+    """
+    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+        """Discretise the faces that are at the extremity of a unit hypercube"""
+        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        grid = np.array(list(product(*linear_spaces)))
+        extreme_points = grid[np.any(grid == 1, axis=1)]
+        return extreme_points
+
+    n_objectives = samples.shape[1]
+    if ref_front is None:
+        ref_front = get_limits_of_hypercube(n_dims=n_objectives)
+
+    # Compute the distances between each generated sample and each reference point.
+    distances = cdist(samples, ref_front).T
+
+    # Find the closest reference point for each generated sample.
+    closest_point = np.argmin(distances, axis=0)
+
+    # Construct a categorical distribution from the closest reference points.
+    # by counting the number of samples in each category.
+    pc_dist = np.bincount(closest_point, minlength=ref_front.shape[0])
+    pc_dist = pc_dist / pc_dist.sum()
+
+    # Compute its entropy.
+    pc_ent = -np.sum(pc_dist * np.log(pc_dist + 1e-8))
+
+    return float(pc_ent)
 
 
 def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
