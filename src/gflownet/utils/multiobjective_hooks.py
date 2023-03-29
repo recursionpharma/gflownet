@@ -14,7 +14,7 @@ from gflownet.utils import metrics
 
 class MultiObjectiveStatsHook:
     def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=True, compute_hsri=False,
-                 compute_normed=False, compute_reach=False):
+                 compute_normed=False, compute_igd=False, compute_pc_entropy=False):
         # This __init__ is only called in the main process. This object is then (potentially) cloned
         # in pytorch data worker processed and __call__'ed from within those processes. This means
         # each process will compute its own Pareto front, which we will accumulate in the main
@@ -26,7 +26,8 @@ class MultiObjectiveStatsHook:
         self.compute_hvi = compute_hvi
         self.compute_hsri = compute_hsri
         self.compute_normed = compute_normed
-        self.compute_reach = compute_reach
+        self.compute_igd = compute_igd
+        self.compute_pc_entropy = compute_pc_entropy
         self.pareto_queue: mp.Queue = mp.Queue()
         self.pareto_front = None
         self.pareto_front_smi = None
@@ -134,11 +135,17 @@ class MultiObjectiveStatsHook:
                 'hsri': hsri_w_pareto,
                 'lifetime_hsri': self.pareto_metrics[1],
             }
-        if self.compute_reach:
-            reach = metrics.get_reach_metric(flat_rewards, ref_front=None, reduce="min", reversed=False)
+        if self.compute_igd:
+            igd = metrics.get_IGD(flat_rewards, ref_front=None)
             info = {
                 **info,
-                'lifetime_reach': reach,
+                'lifetime_igd': igd,
+            }
+        if self.compute_pc_entropy:
+            pc_ent = metrics.get_PC_entropy(flat_rewards, ref_front=None)
+            info = {
+                **info,
+                'lifetime_PC_entropy': pc_ent,
             }
 
         return info
