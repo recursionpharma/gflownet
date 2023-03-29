@@ -13,7 +13,7 @@ from gflownet.utils import metrics
 
 
 class MultiObjectiveStatsHook:
-    def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=True, compute_hsri=False,
+    def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=False, compute_hsri=False,
                  compute_normed=False, compute_reach=False):
         # This __init__ is only called in the main process. This object is then (potentially) cloned
         # in pytorch data worker processed and __call__'ed from within those processes. This means
