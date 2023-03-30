@@ -216,30 +216,20 @@ class SamplingIterator(IterableDataset):
                 # convert cond_info back to a dict
                 cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
 
-            flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
+            flat_rewards = torch.stack(flat_rewards)
             log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
             log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
-            # Construct batch
-            batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
-            batch.num_offline = num_offline
-            batch.num_online = num_online
-            batch.flat_rewards = flat_rewards
-            batch.preferences = cond_info.get('preferences', None)
-            batch.focus_dir = cond_info.get('focus_dir', None)
-            # TODO: we could very well just pass the cond_info dict to construct_batch above,
-            # and the algo can decide what it wants to put in the batch object
 
+            # Computes some metrics
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
                     i['data_idx'] = j
-
-            # Converts back into natural rewards for logging purposes
-            # (allows to take averages and plot in objective space)
-            # TODO: implement that per-task (in case they don't apply the same beta and log transformations)
+            #  note: we convert back into natural rewards for logging purposes
+            #  (allows to take averages and plot in objective space)
+            #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
             rewards = torch.exp(log_rewards / cond_info['beta'])
-
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
@@ -249,7 +239,18 @@ class SamplingIterator(IterableDataset):
                     extra_info.update(
                         hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                              {k: v[num_offline:] for k, v in cond_info.items()}))
-                batch.extra_info = extra_info
+
+            # Construct batch
+            batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
+            batch.num_offline = num_offline
+            batch.num_online = num_online
+            batch.flat_rewards = flat_rewards
+            batch.preferences = cond_info.get('preferences', None)
+            batch.focus_dir = cond_info.get('focus_dir', None)
+            batch.extra_info = extra_info
+            # TODO: we could very well just pass the cond_info dict to construct_batch above,
+            # and the algo can decide what it wants to put in the batch object
+
             yield batch
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
