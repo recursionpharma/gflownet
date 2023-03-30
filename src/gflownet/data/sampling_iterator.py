@@ -193,29 +193,6 @@ class SamplingIterator(IterableDataset):
                         for i, m in zip(valid_idcs, valid_mols):
                             trajs[i]['smi'] = Chem.MolToSmiles(m)
 
-            if self.replay_buffer is not None:
-                # If we have a replay buffer, we push the online trajectories in it
-                # and resample immediately such that the "online" data in the batch
-                # comes from a more stable distribution (try to avoid forgetting)
-                # Important: note that the 'online' metrics now will be describing the data
-                # in the replay buffer and not purely the data from the last generated batch
-
-                # cond_info is a dict, so we need to convert it to a list of dicts
-                cond_info = [{k: v[i] for k, v in cond_info.items()} for i in range(num_offline + num_online)]
-
-                # push the online trajectories in the replay buffer and sample a new 'online' batch
-                for i in range(num_offline, len(trajs)):
-                    self.replay_buffer.push(trajs[i], flat_rewards[i], cond_info[i])
-                replay_trajs, replay_fr, replay_condinfo = self.replay_buffer.sample(num_online)
-
-                # append the online trajectories to the offline ones
-                trajs[num_offline:] = replay_trajs
-                flat_rewards[num_offline:] = replay_fr
-                cond_info[num_offline:] = replay_condinfo
-
-                # convert cond_info back to a dict
-                cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
-
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
             log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
@@ -239,6 +216,29 @@ class SamplingIterator(IterableDataset):
                     extra_info.update(
                         hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                              {k: v[num_offline:] for k, v in cond_info.items()}))
+
+            if self.replay_buffer is not None:
+                # If we have a replay buffer, we push the online trajectories in it
+                # and resample immediately such that the "online" data in the batch
+                # comes from a more stable distribution (try to avoid forgetting)
+                # Important: note that the 'online' metrics now will be describing the data
+                # in the replay buffer and not purely the data from the last generated batch
+
+                # cond_info is a dict, so we need to convert it to a list of dicts
+                cond_info = [{k: v[i] for k, v in cond_info.items()} for i in range(num_offline + num_online)]
+
+                # push the online trajectories in the replay buffer and sample a new 'online' batch
+                for i in range(num_offline, len(trajs)):
+                    self.replay_buffer.push(trajs[i], flat_rewards[i], cond_info[i])
+                replay_trajs, replay_fr, replay_condinfo = self.replay_buffer.sample(num_online)
+
+                # append the online trajectories to the offline ones
+                trajs[num_offline:] = replay_trajs
+                flat_rewards[num_offline:] = replay_fr
+                cond_info[num_offline:] = replay_condinfo
+
+                # convert cond_info back to a dict
+                cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
 
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
