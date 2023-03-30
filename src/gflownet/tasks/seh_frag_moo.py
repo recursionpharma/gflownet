@@ -137,8 +137,8 @@ class SEHMOOTask(SEHTask):
             f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
 
         if self.focus_type is not None:
-            cosim = nn.functional.cosine_similarity(flat_reward, cond_info['focus_dir'], dim=1)
-            scalar_logreward[cosim < self.focus_cosim] = self.illegal_action_logreward
+            focus_mask = metrics.get_focus_mask(flat_reward, cond_info['focus_dir'], self.focus_cosim)
+            scalar_logreward[focus_mask] = self.illegal_action_logreward
 
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
@@ -238,7 +238,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup(self):
         super().setup()
         self.sampling_hooks.append(
-            MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_igd=True, compute_pc_entropy=True))
+            MultiObjectiveStatsHook(256, self.hps['log_dir'], compute_igd=True, compute_pc_entropy=True,
+                                    compute_focus_accuracy=True if self.hps['focus_type'] is not None else False,
+                                    focus_cosim=self.hps['focus_cosim']))
 
         # instantiate preference and focus conditioning vectors for validation
 

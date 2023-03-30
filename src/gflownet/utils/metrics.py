@@ -11,6 +11,17 @@ from rdkit import DataStructs
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 import torch
+import torch.nn as nn
+
+
+def get_focus_mask(flat_rewards, focus_dirs, focus_cosim):
+    cosim = nn.functional.cosine_similarity(flat_rewards, focus_dirs, dim=1)
+    return cosim < focus_cosim
+
+
+def get_focus_accuracy(flat_rewards, focus_dirs, focus_cosim):
+    focus_successes = 1. - get_focus_mask(flat_rewards, focus_dirs, focus_cosim).float()
+    return focus_successes.sum() / len(flat_rewards)
 
 
 def get_IGD(samples, ref_front: np.ndarray = None):
