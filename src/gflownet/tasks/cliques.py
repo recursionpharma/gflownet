@@ -1,6 +1,5 @@
 import ast
 import bz2
-import gzip
 import os
 import pickle
 from typing import Any, Callable, Dict, List, Tuple
@@ -19,7 +18,7 @@ from tqdm import tqdm
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.cliques_env import CliquesEnvContext
-from gflownet.envs.graph_building_env import GraphBuildingEnv, Graph
+from gflownet.envs.graph_building_env import GraphBuildingEnv, Graph, GraphActionType
 from gflownet.models.graph_transformer import GraphTransformerGFN, GraphTransformer
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
@@ -59,8 +58,45 @@ def count_reward(g):
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
-def load_clique_data(data_root):
-    data = pickle.load(bz2.open(data_root+'/two_col_7_graphs.pkl.bz', 'rb'))
+def generate_two_col_data(data_root):
+    atl = nx.generators.atlas.graph_atlas_g()
+    # Filter out disconnected graphs
+    conn = [i for i in atl if 1 <= len(i.nodes) <= 7 and nx.is_connected(i)]
+    # Create all possible two-colored graphs
+    two_col_graphs = [nx.Graph()]
+    pb = tqdm(range(117142), disable=None)
+    hashes = {}
+    rejected = 0
+
+    def node_eq(a, b):
+        return a == b
+    for g in conn:
+        for i in range(2**len(g.nodes)):
+            g = g.copy()
+            for j in range(len(g.nodes)):
+                bit = i % 2
+                i //= 2
+                g.nodes[j]['v'] = bit
+            h = nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(g, node_attr='v')
+            if h not in hashes:
+                hashes[h] = [g]
+                two_col_graphs.append(g)
+            else:
+                if not any(nx.algorithms.isomorphism.is_isomorphic(g, gp, node_eq) for gp in hashes[h]):
+                    hashes[h].append(g)
+                    two_col_graphs.append(g)
+                else:
+                    pb.set_description(f'{rejected}', refresh=False)
+                    rejected += 1
+            pb.update(1)
+    with bz2.open(data_root + '/two_col_7_graphs.pkl.bz', 'wb') as f:
+        pickle.dump(two_col_graphs, f)
+    return two_col_graphs
+
+
+def load_two_col_data(data_root):
+    with bz2.open(data_root+'/two_col_7_graphs.pkl.bz', 'rb') as f:
+        data = pickle.load(f)
     return data
 
 
@@ -268,7 +304,7 @@ class CliquesTrainer(GFNTrainer):
         print(self.log_dir)
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
-        self._data = [self.env.new()] + load_clique_data(hps['data_root'])
+        self._data = load_two_col_data(hps['data_root'])
         self.ctx = CliquesEnvContext(max_nodes, 4, 2, num_cond_dim=1, graph_data=self._data)
         self._do_supervised = hps.get('do_supervised', False)
 
@@ -322,8 +358,14 @@ class CliquesTrainer(GFNTrainer):
 
         self.algo.task = self.task
         self.exact_prob_cb = ExactProbCompCallback(self, self.training_data.data, self.device,
-                                                   cache_path=hps['data_root']+'/two_col_7_precomp_px_v6.pkl')
-        train_idcs, test_idcs = self.exact_prob_cb.get_structured_test_split(hps.get('train_ratio', 0.9))
+                                                   cache_path=hps['data_root']+'/two_col_epc_cache.pkl')
+        split_type = hps.get('test_split_type', 'random')
+        if split_type == 'random':
+            pass
+        elif split_type == 'bck_traj':
+            train_idcs, test_idcs = self.exact_prob_cb.get_bck_trajectory_test_split(hps.get('train_ratio', 0.9))
+        elif split_type == 'subtrees':
+            train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9))
         self.training_data.idcs = train_idcs
         self.test_data.idcs = test_idcs
         if not self._do_supervised or hps.get('regress_to_Fsa', False):
@@ -368,12 +410,17 @@ class ExactProbCompCallback:
                  cache_path=None,
                  do_save_px=True,
                  log_rewards=None,
-                 tqdm_disable=None):
+                 tqdm_disable=None,
+                 ctx=None,
+                 env=None):
         self.trial = trial
+        self.ctx = trial.ctx if trial is not None else ctx
+        self.env = trial.env if trial is not None else env
         self.mbs = mbs
         self.dev = dev
         self.states = states
         self.cache_path = cache_path
+        self.mdp_graph = None
         if self.cache_path is not None:
             print("Loading cache @", cache_path)
             # cache = torch.load(bz2.open(cache_path, 'rb'))
@@ -388,7 +435,6 @@ class ExactProbCompCallback:
             ], [[(j[0].to(dev), j[1].to(dev)) for j in i] for i in ids])
         else:
             pass
-            # self._compute_things(tqdm_disable)
         if log_rewards is None:
             self.log_rewards = np.array([self.trial.training_data.reward(i) for i in tqdm(self.states, disable=tqdm_disable)])
         else:
@@ -396,7 +442,8 @@ class ExactProbCompCallback:
         self.logZ = np.log(np.sum(np.exp(self.log_rewards)))
         self.true_log_probs = self.log_rewards - self.logZ
         # This is reward-dependent
-        self.recompute_flow()
+        if self.mdp_graph is not None:
+            self.recompute_flow()
         self.do_save_px = do_save_px
         if do_save_px:
             os.makedirs(self.trial.hps['log_dir'], exist_ok=True)
@@ -428,7 +475,7 @@ class ExactProbCompCallback:
             return default
         raise ValueError(g)
     
-    def _compute_things(self, tqdm_disable=None):
+    def compute_cache(self, tqdm_disable=None):
         states, mbs, dev = self.states, self.mbs, self.dev
         mdp_graph = nx.MultiDiGraph()
         self.precomputed_batches = []
@@ -436,8 +483,8 @@ class ExactProbCompCallback:
         self._hash_to_graphs = {}
         states_hash = [hashg(i) for i in tqdm(states, disable=tqdm_disable)]
         self._Data = states_Data = gd.Batch.from_data_list([
-            self.trial.ctx.graph_to_Data(i) for i in tqdm(states, disable=tqdm_disable)])
-        ones = torch.ones((mbs, self.trial.ctx.num_cond_dim)).to(dev)
+            self.ctx.graph_to_Data(i) for i in tqdm(states, disable=tqdm_disable)])
+        ones = torch.ones((mbs, self.ctx.num_cond_dim)).to(dev)
         for i, h in enumerate(states_hash):
             self._hash_to_graphs[h] = self._hash_to_graphs.get(h, list()) + [i]
 
@@ -452,29 +499,37 @@ class ExactProbCompCallback:
             #    self.precomputed_indices.append(None)
             #    continue
             # bs, bD, indices = zip(*non_terminals)
-            batch = self.trial.ctx.collate(bD).to(dev)
+            batch = self.ctx.collate(bD).to(dev)
             self.precomputed_batches.append(batch)
 
-            with torch.no_grad():
-                cat, *_, mo = self.trial.model(batch, ones[:len(bs)])
+            #with torch.no_grad():
+            #    cat, *_, mo = self.trial.model(batch, ones[:len(bs)])
             actions = [list() for i in range(len(bs))]
             offset = 0
-            for u, i in enumerate(cat.logits):
-                for j in ((i * 0 + 1) * cat.masks[u]).nonzero().cpu().numpy():
+            for u, i in enumerate(ctx.action_type_order):
+                # /!\ This assumes mask.shape == cat.logit[i].shape
+                mask = getattr(batch, i.mask_name)
+                batch_key = GraphTransformerGFN._graph_part_to_key[GraphTransformerGFN._action_type_to_graph_part[i]]
+                batch_idx = (
+                    getattr(batch, f'{batch_key}_batch' if batch_key != 'x' else 'batch') if batch_key is not None
+                    else torch.arange(batch.num_graphs, device=dev)
+                )
+                mslice = batch._slice_dict[batch_key] if batch_key is not None else torch.arange(batch.num_graphs + 1, device=dev)
+                for j in mask.nonzero().cpu().numpy():
                     # We're using nonzero above to enumerate all positions, but we still need to check
                     # if the mask is nonzero since we only want the legal actions.
                     # We *don't* wan't mask.nonzero() because then `k` would be wrong
-                    k = j[0] * i.shape[1] + j[1] + offset
-                    jb = cat.batch[u][j[0]].item()
-                    actions[jb].append((u, j[0] - cat.slice[u][jb].item(), j[1], k))
-                offset += i.numel()
+                    k = j[0] * mask.shape[1] + j[1] + offset
+                    jb = batch_idx[j[0]].item()
+                    actions[jb].append((u, j[0] - mslice[jb].item(), j[1], k))
+                offset += mask.numel()
             all_indices = []
             for jb, j_acts in enumerate(actions):
                 end_indices = []
                 being_indices = []
                 for *a, srcidx in j_acts:
                     idx = indices[jb]
-                    sp = (self.trial.env.step(bs[jb], self.trial.ctx.aidx_to_GraphAction(bD[jb], a[:3]))
+                    sp = (self.env.step(bs[jb], self.ctx.aidx_to_GraphAction(bD[jb], a[:3]))
                           if a[0] != 0 else bs[jb])
                     spidx = self.get_graph_idx(sp, len(states))
                     if a[0] == 0 or spidx >= len(states):
@@ -488,7 +543,7 @@ class ExactProbCompCallback:
         self.mdp_graph = mdp_graph
 
     def save_cache(self, path):
-        with bz2.open(path, 'wb') as f:
+        with open(path, 'wb') as f:
             torch.save({
                 'batches': [i.cpu() for i in self.precomputed_batches],
                 'idces': [[(j[0].cpu(), j[1].cpu()) for j in i] for i in self.precomputed_indices],
@@ -503,7 +558,7 @@ class ExactProbCompCallback:
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         if cond_info is None:
-            cond_info = torch.zeros((self.mbs, self.trial.ctx.num_cond_dim)).to(self.dev)
+            cond_info = torch.zeros((self.mbs, self.ctx.num_cond_dim)).to(self.dev)
         if cond_info.ndim == 1:
             cond_info = cond_info[None, :] * torch.ones((self.mbs, 1)).to(self.dev)
         if cond_info.ndim == 2 and cond_info.shape[0] == 1:
@@ -533,11 +588,11 @@ class ExactProbCompCallback:
                                                    out=prob_of_ending_t.exp()).log()
         return prob_of_ending_t
 
-    def recompute_flow(self):
+    def recompute_flow(self, tqdm_disable=None):
         g = self.mdp_graph
         for i in g:
             g.nodes[i]['F'] = -100
-        for i in tqdm(list(range(len(g)))[::-1]):
+        for i in tqdm(list(range(len(g)))[::-1], tqdm_disable=tqdm_disable):
             p = sorted(list(g.predecessors(i)), reverse=True)
             num_back = len([n for n in p if n != i])
             for j in p:
@@ -553,7 +608,7 @@ class ExactProbCompCallback:
                     for k, vs in ed.items():
                         g.edges[(j, i, k)]['F'] = np.log(np.exp(backflow) / len(ed))
 
-    def get_structured_test_split(self, r, seed=142857):
+    def get_bck_trajectory_test_split(self, r, seed=142857):
         test_set = set()
         n = int((1 - r) * len(self.states))
         np.random.seed(seed)
@@ -567,17 +622,50 @@ class ExactProbCompCallback:
             while len(s.nodes) > 5:  # TODO: unhardcode this
                 test_set.add(idx)
                 actions = [(u, a.item(), b.item())
-                           for u, ra in enumerate(self.trial.ctx.bck_action_type_order)
+                           for u, ra in enumerate(self.ctx.bck_action_type_order)
                            for a, b in getattr(self._Data[idx], ra.mask_name).nonzero()]
                 action = actions[np.random.randint(len(actions))]
-                gaction = self.trial.ctx.aidx_to_GraphAction(self._Data[idx], action, fwd=False)
-                s = self.trial.env.step(s, gaction)
+                gaction = self.ctx.aidx_to_GraphAction(self._Data[idx], action, fwd=False)
+                s = self.env.step(s, gaction)
                 idx = self.get_graph_idx(s)  # This finds the graph index taking into account isomorphism
                 s = self.states[idx]  # We still have to get the original graph so that the Data instance is correct
         train_set = list(set(range(len(self.states))).difference(test_set))
         test_set = list(test_set)
         np.random.shuffle(train_set)
         return train_set, test_set
+
+    def get_subtree_test_split(self, r, seed=142857):
+        test_set = set()
+        n = int((1 - r) * len(self.states))
+        np.random.seed(seed)
+        start_states = [s0 for s0 in self.states if len(s0.nodes) == 6 and len(s0.edges) >= 11]
+        while len(test_set) < n:
+            s0 = start_states[np.random.randint(len(start_states))]
+            i0 = self.get_graph_idx(s0)
+            if i0 in test_set:
+                continue
+            stack = [(s0, i0)]
+            while len(stack):
+                s, i = stack.pop()
+                if i in test_set:
+                    continue
+                test_set.add(i)
+                actions = [(u, a.item(), b.item())
+                           for u, ra in enumerate(self.ctx.action_type_order) if ra != GraphActionType.Stop
+                           for a, b in getattr(self._Data[i], ra.mask_name).nonzero()]
+                for action in actions:
+                    gaction = self.ctx.aidx_to_GraphAction(self._Data[i], action, fwd=True)
+                    sp = self.env.step(s, gaction)
+                    ip = self.get_graph_idx(sp)  # This finds the graph index taking into account isomorphism
+                    if ip in test_set:
+                        continue
+                    sp = self.states[ip]  # We still have to get the original graph so that the Data instance is correct
+                    stack.append((sp, ip))
+        train_set = list(set(range(len(self.states))).difference(test_set))
+        test_set = list(test_set)
+        np.random.shuffle(train_set)
+        return train_set, test_set
+
 
 class Regression:
     def compute_batch_losses(self, model, batch, **kw):
@@ -863,4 +951,18 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    if len(sys.argv) == 3:
+        if sys.argv[1] == '--recompute-all':
+            #states = generate_two_col_data(sys.argv[2])
+            states = load_two_col_data(sys.argv[2])
+            env = GraphBuildingEnv()
+            ctx = CliquesEnvContext(7, 4, 2, num_cond_dim=1, graph_data=states)
+            epc = ExactProbCompCallback(None, states, torch.device('cpu'), ctx=ctx, env=env, do_save_px=False,
+                                        log_rewards=1)
+            epc.compute_cache()
+            epc.save_cache(sys.argv[2] + '/two_col_epc_cache.pkl')
+        else:
+            raise ValueError(sys.argv)
+    else:
+        main()

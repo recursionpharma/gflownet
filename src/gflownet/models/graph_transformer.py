@@ -138,14 +138,36 @@ class GraphTransformerGFN(nn.Module):
 
     Outputs logits corresponding to the action types used by the env_ctx argument.
     """
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1, i2h_width=1,
-                 do_bck=False):
+
+    # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
+    # embeddings to the right MLP
+    _action_type_to_graph_part = {
+        GraphActionType.Stop: 'graph',
+        GraphActionType.AddNode: 'node',
+        GraphActionType.SetNodeAttr: 'node',
+        GraphActionType.AddEdge: 'non_edge',
+        GraphActionType.SetEdgeAttr: 'edge',
+        GraphActionType.RemoveNode: 'node',
+        GraphActionType.RemoveNodeAttr: 'node',
+        GraphActionType.RemoveEdge: 'edge',
+        GraphActionType.RemoveEdgeAttr: 'edge',
+    }
+
+    # The torch_geometric batch key each graph part corresponds to
+    _graph_part_to_key = {
+        'graph': None,
+        'node': 'x',
+        'non_edge': 'non_edge_index',
+        'edge': 'edge_index',
+    }
+
+    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1,
+                 i2h_width=1, do_bck=False):
         """See `GraphTransformer` for argument values"""
         super().__init__()
         self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
                                        g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       i2h_width=i2h_width,
-                                       num_heads=num_heads, ln_type=ln_type)
+                                       i2h_width=i2h_width, num_heads=num_heads, ln_type=ln_type)
         num_final = num_emb
         num_glob_final = num_emb * 2
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
@@ -165,26 +187,6 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.RemoveNodeAttr: (num_final, env_ctx.num_node_attrs - 1),
             GraphActionType.RemoveEdge: (num_final, 1),
             GraphActionType.RemoveEdgeAttr: (num_final, env_ctx.num_edge_attrs),
-        }
-        # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
-        # embeddings to the right MLP
-        self._action_type_to_graph_part = {
-            GraphActionType.Stop: 'graph',
-            GraphActionType.AddNode: 'node',
-            GraphActionType.SetNodeAttr: 'node',
-            GraphActionType.AddEdge: 'non_edge',
-            GraphActionType.SetEdgeAttr: 'edge',
-            GraphActionType.RemoveNode: 'node',
-            GraphActionType.RemoveNodeAttr: 'node',
-            GraphActionType.RemoveEdge: 'edge',
-            GraphActionType.RemoveEdgeAttr: 'edge',
-        }
-        # The torch_geometric batch key each graph part corresponds to
-        self._graph_part_to_key = {
-            'graph': None,
-            'node': 'x',
-            'non_edge': 'non_edge_index',
-            'edge': 'edge_index',
         }
 
         mlps = {}
