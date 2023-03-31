@@ -24,9 +24,9 @@ class SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info=True,
-                 random_action_prob=0.):
+    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio: float = 0.5,
+                 stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info: bool = True,
+                 random_action_prob: float = 0., hindsight_ratio: float = 0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -69,6 +69,7 @@ class SamplingIterator(IterableDataset):
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
         self.random_action_prob = random_action_prob
+        self.hindsight_ratio = hindsight_ratio
         self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
@@ -240,6 +241,16 @@ class SamplingIterator(IterableDataset):
 
                 # convert cond_info back to a dict
                 cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
+
+            if self.hindsight_ratio > 0.:
+                # Relabels some of the online trajectories with hindsight
+                assert hasattr(self.task, 'relabel_condinfo_and_logrewards'), \
+                    "Hindsight requires the task to implement relabel_condinfo_and_logrewards"
+                # samples indexes of trajectories without repeats
+                hindsight_idxs = torch.randperm(num_online)[:int(num_online * self.hindsight_ratio)] + num_offline
+                cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(cond_info, log_rewards, flat_rewards,
+                                                                                   hindsight_idxs)
+                log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
 
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
