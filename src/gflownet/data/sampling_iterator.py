@@ -230,14 +230,16 @@ class SamplingIterator(IterableDataset):
 
                 # push the online trajectories in the replay buffer and sample a new 'online' batch
                 for i in range(num_offline, len(trajs)):
-                    self.replay_buffer.push(trajs[i], log_rewards[i], flat_rewards[i], cond_info[i])
-                replay_trajs, replay_logr, replay_fr, replay_condinfo = self.replay_buffer.sample(num_online)
+                    self.replay_buffer.push(trajs[i], log_rewards[i], flat_rewards[i], cond_info[i], is_valid[i])
+                replay_trajs, replay_logr, replay_fr, replay_condinfo, replay_valid = \
+                    self.replay_buffer.sample(num_online)
 
                 # append the online trajectories to the offline ones
                 trajs[num_offline:] = replay_trajs
                 log_rewards[num_offline:] = replay_logr
                 flat_rewards[num_offline:] = replay_fr
                 cond_info[num_offline:] = replay_condinfo
+                is_valid[num_offline:] = replay_valid
 
                 # convert cond_info back to a dict
                 cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
