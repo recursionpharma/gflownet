@@ -1,3 +1,5 @@
+import time
+import pickle
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
@@ -151,11 +153,11 @@ class GFNTrainer:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
                                     ratio=self.offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'train'),
-                                    random_action_prob=self.hps.get('random_action_prob', 0.0))
+                                    random_action_prob=self.hps.get('random_action_prob', 0.0),)
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+                                           persistent_workers=self.num_workers > 0, prefetch_factor=2)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
@@ -166,7 +168,7 @@ class GFNTrainer:
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+                                           persistent_workers=self.num_workers > 0, prefetch_factor=1)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
         try:
@@ -207,11 +209,24 @@ class GFNTrainer:
         callbacks = self.build_callbacks()
         start = self.hps.get('start_at_step', 0) + 1
         logger.info("Starting training")
+        import subprocess
+        lsof_counts = []
         for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
+            t0 = time.time()
+            #batch = pickle.loads(batch)
+            t1 = time.time()
+            print(t1-t0)
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
             self.log(info, it, 'train')
+            print(list(map(int, open('/proc/sys/fs/file-nr', 'r').read().split())))
+            if not it % 10 and False:
+                
+                lsof = subprocess.check_output("lsof /dev/shm", shell=True).decode().splitlines()
+                nshm = len([i for i in lsof if '/dev/shm/torch' in i])
+                print(len(lsof), nshm)
+                lsof_counts.append(nshm)
             if self.verbose:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
 
@@ -227,6 +242,8 @@ class GFNTrainer:
                 self.log(end_metrics, it, 'valid_end')
                 self._save_state(it)
         self._save_state(self.hps['num_training_steps'])
+        print(lsof_counts)
+        print(torch.tensor(lsof_counts).float().mean().item())
 
     def _save_state(self, it):
         torch.save({

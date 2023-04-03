@@ -231,7 +231,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         torch.save({
             'hps': self.hps,
         }, open(pathlib.Path(self.hps['log_dir']) / 'hps.pt', 'wb'))
-        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
+        fmt_hps = '\n'.join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in sorted(self.hps.items())])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
         json.dump(self.hps, open(pathlib.Path(self.hps['log_dir']) / 'hps.json', 'w'))
 
@@ -270,9 +270,10 @@ def main():
         'overwrite_existing_exp': True,
         'seed': 0,
         'global_batch_size': 64,
-        'num_training_steps': 20_000,
-        'validate_every': 1,
+        'num_training_steps': 100,
+        'validate_every': 500,
         'num_layers': 4,
+        #'num_emb': 8,
         'algo': 'TB',
         'objectives': ['seh', 'qed'],
         'learning_rate': 1e-4,
@@ -281,7 +282,7 @@ def main():
         'Z_lr_decay': 50000,
         'sampling_tau': 0.95,
         'random_action_prob': 0.1,
-        'num_data_loader_workers': 8,
+        'num_data_loader_workers': 64,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
@@ -291,10 +292,11 @@ def main():
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:
-            shutil.rmtree(hps['log_dir'])
+            print('/!\\ I want to remove', hps['log_dir'])
+            # shutil.rmtree(hps['log_dir'])
         else:
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps['log_dir'])
+    os.makedirs(hps['log_dir'], exist_ok=True)
 
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     trial.verbose = True

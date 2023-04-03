@@ -1,3 +1,4 @@
+import pickle
 from collections import defaultdict
 import pathlib
 import queue
@@ -7,7 +8,8 @@ from typing import List
 import numpy as np
 import torch
 from torch import Tensor
-import torch.multiprocessing as mp
+#import torch.multiprocessing as mp
+import multiprocessing as mp
 
 from gflownet.utils import metrics
 
@@ -54,7 +56,8 @@ class MultiObjectiveStatsHook:
         num_updates = 0
         while not self.stop.is_set():
             try:
-                r, smi, owid = self.pareto_queue.get(True, 1)  # Block for a second then check if we've stopped
+                # Block for a second then check if we've stopped
+                r, smi, owid = pickle.loads(self.pareto_queue.get(True, 1))
             except queue.Empty:
                 continue
             except ConnectionError as e:
@@ -106,7 +109,7 @@ class MultiObjectiveStatsHook:
 
         worker_info = torch.utils.data.get_worker_info()
         wid = (worker_info.id if worker_info is not None else 0)
-        self.pareto_queue.put((gfn_pareto, pareto_smi, wid))
+        self.pareto_queue.put(pickle.dumps((gfn_pareto, pareto_smi, wid)))
         info = {}
         if self.compute_hvi:
             unnorm_hypervolume_with_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=True)
@@ -145,14 +148,14 @@ class TopKHook:
         self.num_preferences = num_preferences
 
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
-        self.queue.put([(i['data_idx'], r) for i, r in zip(trajs, rewards)])
+        self.queue.put(pickle.dumps([(i['data_idx'], r) for i, r in zip(trajs, rewards)]))
         return {}
 
     def finalize(self):
         data = []
         while not self.queue.empty():
             try:
-                data += self.queue.get(True, 1)
+                data += pickle.loads(self.queue.get(True, 1))
             except queue.Empty:
                 # print("Warning, TopKHook queue timed out!")
                 break

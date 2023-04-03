@@ -1,8 +1,10 @@
 import queue
 import threading
+import pickle
 
 import torch
-import torch.multiprocessing as mp
+#import torch.multiprocessing as mp
+import multiprocessing as mp
 
 
 class MPModelPlaceholder:
@@ -24,13 +26,13 @@ class MPModelPlaceholder:
     # TODO: make a generic method for this based on __getattr__
     def logZ(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('logZ', a, kw))
-        return self.out_queue.get()
+        self.in_queue.put(pickle.dumps(('logZ', a, kw)))
+        return pickle.loads(self.out_queue.get())
 
     def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('__call__', a, kw))
-        return self.out_queue.get()
+        self.in_queue.put(pickle.dumps(('__call__', a, kw)))
+        return pickle.loads(self.out_queue.get())
 
 
 class MPModelProxy:
@@ -79,7 +81,7 @@ class MPModelProxy:
         while not self.stop.is_set():
             for qi, q in enumerate(self.in_queues):
                 try:
-                    r = q.get(True, 1e-5)
+                    r = pickle.loads(q.get(True, 1e-5))
                 except queue.Empty:
                     continue
                 except ConnectionError:
@@ -91,13 +93,13 @@ class MPModelProxy:
                 result = f(*args, **kwargs)
                 if isinstance(result, (list, tuple)):
                     msg = [self.to_msg(i) for i in result]
-                    self.out_queues[qi].put(msg)
+                    self.out_queues[qi].put(pickle.dumps(msg))
                 elif isinstance(result, dict):
                     msg = {k: self.to_msg(i) for k, i in result.items()}
-                    self.out_queues[qi].put(msg)
+                    self.out_queues[qi].put(pickle.dumps(msg))
                 else:
                     msg = self.to_msg(result)
-                    self.out_queues[qi].put(msg)
+                    self.out_queues[qi].put(pickle.dumps(msg))
 
 
 def wrap_model_mp(model, num_workers, cast_types):
