@@ -71,7 +71,7 @@ class MPModelProxy:
             Types that will be cast to cuda when received as arguments of method calls.
             torch.Tensor is cast by default.
         pickle_messages: bool
-            If True, this pickles messages 
+            If True, this pickles messages
         """
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
@@ -125,7 +125,7 @@ class MPModelProxy:
                     self.out_queues[qi].put(self.encode(msg))
 
 
-def wrap_model_mp(model, num_workers, cast_types):
+def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False):
     """Construct a multiprocessing model proxy for torch DataLoaders so
     that only one process ends up making cuda calls and holding cuda
     tensors in memory.
@@ -139,6 +139,8 @@ def wrap_model_mp(model, num_workers, cast_types):
     cast_types: tuple
         Types that will be cast to cuda when received as arguments of method calls.
         torch.Tensor is cast by default.
+    pickle_messages: bool
+            If True, this pickles messages 
 
     Returns
     -------
@@ -146,4 +148,4 @@ def wrap_model_mp(model, num_workers, cast_types):
         A placeholder model whose method calls route arguments to the main process
 
     """
-    return MPModelProxy(model, num_workers, cast_types).placeholder
+    return MPModelProxy(model, num_workers, cast_types, pickle_messages).placeholder

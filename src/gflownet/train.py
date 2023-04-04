@@ -1,5 +1,3 @@
-import time
-import pickle
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
@@ -126,6 +124,8 @@ class GFNTrainer:
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
+        # Pickle messages to reduce load on shared memory (conversely, increases load on CPU)
+        self.pickle_messages = hps.get('mp_pickle_messages', False)
 
         self.setup()
 
@@ -142,7 +142,8 @@ class GFNTrainer:
         """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
         model.to(self.device)
         if self.num_workers > 0:
-            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical),
+                                        pickle_messages=self.pickle_messages)
             return placeholder, torch.device('cpu')
         return model, self.device
 
@@ -153,7 +154,7 @@ class GFNTrainer:
         model, dev = self._wrap_model_mp(self.sampling_model)
         iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
                                     ratio=self.offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'train'),
-                                    random_action_prob=self.hps.get('random_action_prob', 0.0),)
+                                    random_action_prob=self.hps.get('random_action_prob', 0.0))
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
