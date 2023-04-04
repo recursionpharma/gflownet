@@ -196,7 +196,7 @@ class TrajectoryBalance:
         ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
-        batch.log_p_B = torch.cat([torch.as_tensor(i['bck_logprobs']) for i in trajs], 0)
+        batch.log_p_B = torch.cat([i['bck_logprobs'] for i in trajs], 0)
         batch.actions = torch.tensor(actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
