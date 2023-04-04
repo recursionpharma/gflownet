@@ -364,10 +364,12 @@ class CliquesTrainer(GFNTrainer):
             pass
         elif split_type == 'bck_traj':
             train_idcs, test_idcs = self.exact_prob_cb.get_bck_trajectory_test_split(hps.get('train_ratio', 0.9))
+            self.training_data.idcs = train_idcs
+            self.test_data.idcs = test_idcs
         elif split_type == 'subtrees':
             train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9))
-        self.training_data.idcs = train_idcs
-        self.test_data.idcs = test_idcs
+            self.training_data.idcs = train_idcs
+            self.test_data.idcs = test_idcs
         if not self._do_supervised or hps.get('regress_to_Fsa', False):
             self._callbacks = {'true_px_error': self.exact_prob_cb}
         else:
@@ -388,7 +390,7 @@ class CliquesTrainer(GFNTrainer):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
 
 
-class RepeatedPreferenceDataset:
+class RepeatedPreferenceDataset(CliqueDataset):
     def __init__(self, preferences, repeat):
         self.prefs = preferences
         self.repeat = repeat
@@ -422,17 +424,7 @@ class ExactProbCompCallback:
         self.cache_path = cache_path
         self.mdp_graph = None
         if self.cache_path is not None:
-            print("Loading cache @", cache_path)
-            # cache = torch.load(bz2.open(cache_path, 'rb'))
-            cache = torch.load(open(cache_path, 'rb'))
-            self.mdp_graph = cache['mdp']
-            self._Data = cache['Data']
-            self._hash_to_graphs = cache['hashmap']
-            bs, ids = cache['batches'], cache['idces']
-            print("Done")
-            self.precomputed_batches, self.precomputed_indices = ([
-                i.to(dev) for i in bs
-            ], [[(j[0].to(dev), j[1].to(dev)) for j in i] for i in ids])
+            self.load_cache(self.cache_path)
         else:
             pass
         if log_rewards is None:
@@ -448,6 +440,19 @@ class ExactProbCompCallback:
         if do_save_px:
             os.makedirs(self.trial.hps['log_dir'], exist_ok=True)
         self._save_increment = 0
+
+    def load_cache(self, cache_path):
+        print("Loading cache @", cache_path)
+        cache = torch.load(open(cache_path, 'rb'))
+        self.mdp_graph = cache['mdp']
+        self._Data = cache['Data']
+        self._hash_to_graphs = cache['hashmap']
+        bs, ids = cache['batches'], cache['idces']
+        print("Done")
+        self.precomputed_batches, self.precomputed_indices = ([
+            i.to(self.dev) for i in bs
+        ], [[(j[0].to(self.dev), j[1].to(self.dev)) for j in i] for i in ids])
+        
 
     def on_validation_end(self, metrics):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
@@ -592,7 +597,7 @@ class ExactProbCompCallback:
         g = self.mdp_graph
         for i in g:
             g.nodes[i]['F'] = -100
-        for i in tqdm(list(range(len(g)))[::-1], tqdm_disable=tqdm_disable):
+        for i in tqdm(list(range(len(g)))[::-1], disable=tqdm_disable):
             p = sorted(list(g.predecessors(i)), reverse=True)
             num_back = len([n for n in p if n != i])
             for j in p:
@@ -935,17 +940,58 @@ def main():
          'num_layers': 8,
          'num_heads': 4,
          'num_mlp_layers': 2,
-         'num_data_loader_workers': 50,
+         'num_data_loader_workers': 20,
          'i2h_width': 4,
          'reward_func': 'count',
          'data_root': '/mnt/bh1/scratch/emmanuel.bengio/data/cliques',
          'train_ratio': 0.99, ####
          },
+        {**_hps,
+         'num_training_steps': 50000,
+         'log_dir': './tmp/run_gfn_offline_17',
+         'global_batch_size': 256 // 20,
+         'learning_rate': 1e-4,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'num_data_loader_workers': 8,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'test_split_type': 'subtrees',
+         'data_root': '/rxrx/data/user/emmanuel.bengio/data/cliques',
+         'train_ratio': 0.9,
+         'offline_ratio': 1.0,
+         'do_supervised': False,
+         'validate_every': 100,
+         },
+        {**_hps,
+         'num_training_steps': 4000,
+         'log_dir': './tmp/run_gfn_offline_18',
+         'global_batch_size': 256 // 20,
+         'learning_rate': 1e-4,
+         'num_layers': 8,
+         'num_heads': 4,
+         'num_mlp_layers': 2,
+         'num_data_loader_workers': 8,
+         'i2h_width': 4,
+         'reward_func': 'count',
+         'test_split_type': 'subtrees',
+         'data_root': '/rxrx/data/user/emmanuel.bengio/data/cliques',
+         'train_ratio': 0.9,
+         'offline_ratio': 1.0,
+         'do_supervised': False,
+         'tb_do_subtb': False,
+         'validate_every': 100,
+         },
     ]
 
     if 1:
         import sys
-        trial = CliquesSupervisedTrainer(hps[int(sys.argv[1])], torch.device('cuda'))
+        mhps = hps[int(sys.argv[1])]
+        if mhps['do_supervised']:
+            trial = CliquesSupervisedTrainer(mhps, torch.device('cuda'))
+        else:
+            trial = CliquesTrainer(mhps, torch.device('cuda'))            
         trial.verbose = True
         trial.run()
 

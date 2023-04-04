@@ -320,6 +320,8 @@ class GraphBuildingEnv:
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
     """Sample (uniformly) a trajectory that generates `g`"""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
+    if len(g.nodes) == 0:
+        return [(g, GraphAction(GraphActionType.Stop))]
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
     stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)]
