@@ -206,7 +206,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         'log_dir': "./logs/debug_run",
-        'overwrite_existing_exp': False,
+        'overwrite_existing_exp': True,
         'qm9_h5_path': '/data/chem/qm9/qm9.h5',
         'log_dir': './logs/debug_run',
         'num_training_steps': 10_000,

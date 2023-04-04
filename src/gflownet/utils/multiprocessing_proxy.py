@@ -71,7 +71,9 @@ class MPModelProxy:
             Types that will be cast to cuda when received as arguments of method calls.
             torch.Tensor is cast by default.
         pickle_messages: bool
-            If True, this pickles messages
+            If True, pickle messages sent between processes. This reduces load on shared
+            memory, but increases load on CPU. It is recommended to activate this flag if 
+            encountering "Too many open files"-type errors.
         """
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
@@ -140,7 +142,9 @@ def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False)
         Types that will be cast to cuda when received as arguments of method calls.
         torch.Tensor is cast by default.
     pickle_messages: bool
-            If True, this pickles messages 
+            If True, pickle messages sent between processes. This reduces load on shared
+            memory, but increases load on CPU. It is recommended to activate this flag if 
+            encountering "Too many open files"-type errors.
 
     Returns
     -------

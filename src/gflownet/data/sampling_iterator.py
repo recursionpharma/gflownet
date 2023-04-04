@@ -1,4 +1,3 @@
-import pickle
 from collections.abc import Iterable
 import os
 import sqlite3
@@ -220,7 +219,6 @@ class SamplingIterator(IterableDataset):
                              {k: v[num_offline:] for k, v in cond_info.items()}))
                 batch.extra_info = extra_info
             yield batch
-            #yield pickle.dumps(batch)
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
         if self.log_molecule_smis:
