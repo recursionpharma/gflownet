@@ -215,7 +215,6 @@ class GFNTrainer:
             batch_idx = it % epoch_length
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
             self.log(info, it, 'train')
-            print(list(map(int, open('/proc/sys/fs/file-nr', 'r').read().split())))
             if self.verbose:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
 

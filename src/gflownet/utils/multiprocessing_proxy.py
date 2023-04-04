@@ -1,6 +1,6 @@
+import pickle
 import queue
 import threading
-import pickle
 
 import torch
 import torch.multiprocessing as mp
@@ -32,7 +32,7 @@ class MPModelPlaceholder:
         if self.pickle_messages:
             return pickle.loads(m)
         return m
-        
+
     # TODO: make a generic method for this based on __getattr__
     def logZ(self, *a, **kw):
         self._check_init()
@@ -72,7 +72,7 @@ class MPModelProxy:
             torch.Tensor is cast by default.
         pickle_messages: bool
             If True, pickle messages sent between processes. This reduces load on shared
-            memory, but increases load on CPU. It is recommended to activate this flag if 
+            memory, but increases load on CPU. It is recommended to activate this flag if
             encountering "Too many open files"-type errors.
         """
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
@@ -143,7 +143,7 @@ def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False)
         torch.Tensor is cast by default.
     pickle_messages: bool
             If True, pickle messages sent between processes. This reduces load on shared
-            memory, but increases load on CPU. It is recommended to activate this flag if 
+            memory, but increases load on CPU. It is recommended to activate this flag if
             encountering "Too many open files"-type errors.
 
     Returns
