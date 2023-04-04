@@ -158,7 +158,10 @@ class GFNTrainer:
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0, prefetch_factor=1)
+                                           persistent_workers=self.num_workers > 0,
+                                           # The 2 here is an odd quirk of torch 1.10, it is fixed and
+                                           # replaced by None in torch 2.
+                                           prefetch_factor=1 if self.num_workers else 2)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
@@ -169,7 +172,8 @@ class GFNTrainer:
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0, prefetch_factor=1)
+                                           persistent_workers=self.num_workers > 0,
+                                           prefetch_factor=1 if self.num_workers else 2)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
         try:
