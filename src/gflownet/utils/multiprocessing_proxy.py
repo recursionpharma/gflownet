@@ -78,7 +78,7 @@ class MPModelProxy:
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.pickle_messages = pickle_messages
-        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
+        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues, pickle_messages)
         self.model = model
         self.device = next(model.parameters()).device
         self.cuda_types = (torch.Tensor,) + cast_types
