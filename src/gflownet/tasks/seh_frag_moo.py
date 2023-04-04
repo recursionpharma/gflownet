@@ -98,6 +98,7 @@ class SEHMOOTask(SEHTask):
         elif self.focus_type == "dirichlet":
             m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
             focus_dir = m.sample([n])
+            focus_dir = nn.functional.normalize(focus_dir, p=2, dim=1)
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
 
