@@ -139,6 +139,7 @@ class SEHFragTrainer(GFNTrainer):
             'use_replay_buffer': False,
             'replay_buffer_size': 10000,
             'replay_buffer_warmup': 10000,
+            'mp_pickle_messages': False,
         }
 
     def setup_algo(self):

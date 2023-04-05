@@ -18,7 +18,9 @@ build-backend = "setuptools.build_meta"
 # readme = "README.md"
 
 [tool.bandit]
-skips = ["B101"]
+# B101 detects the use of asserts
+# B301 and B403 detect the use of pickle
+skips = ["B101", "B301", "B403"]
 exclude_dirs = ["tests", ".tox", ".venv"]
 
 # [tool.flake8] not yet supported

@@ -361,7 +361,7 @@ def main():
         'seed': 0,
         'global_batch_size': 64,
         'num_training_steps': 20_000,
-        'validate_every': 1,
+        'validate_every': 5,
         'num_layers': 4,
         'algo': 'TB',
         'objectives': ['seh', 'qed'],
@@ -381,8 +381,9 @@ def main():
         'n_valid': 15,
         'n_valid_repeats': 8,
         'use_replay_buffer': True,
-        'replay_buffer_warmup': 100,
+        'replay_buffer_warmup': 0,
         'hindsight_ratio': 0.5,
+        'mp_pickle_messages': True
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:
