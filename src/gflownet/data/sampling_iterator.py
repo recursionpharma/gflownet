@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from copy import deepcopy
 import os
 import sqlite3
 from typing import Callable, List
@@ -230,7 +231,8 @@ class SamplingIterator(IterableDataset):
 
                 # push the online trajectories in the replay buffer and sample a new 'online' batch
                 for i in range(num_offline, len(trajs)):
-                    self.replay_buffer.push(trajs[i], log_rewards[i], flat_rewards[i], cond_info[i], is_valid[i])
+                    self.replay_buffer.push(deepcopy(trajs[i]), deepcopy(log_rewards[i]), deepcopy(flat_rewards[i]),
+                                            deepcopy(cond_info[i]), deepcopy(is_valid[i]))
                 replay_trajs, replay_logr, replay_fr, replay_condinfo, replay_valid = \
                     self.replay_buffer.sample(num_online)
 
