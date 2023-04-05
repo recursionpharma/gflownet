@@ -111,6 +111,18 @@ def get_PC_entropy(samples, ref_front=None):
     return float(pc_ent)
 
 
+def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation='l2'):
+    points = np.random.randn(n, d)
+    points = np.abs(points)  # positive quadrant
+    if normalisation == 'l2':
+        points /= np.linalg.norm(points, axis=1, keepdims=True)
+    elif normalisation == 'l1':
+        points /= np.sum(points, axis=1, keepdims=True)
+    else:
+        raise ValueError(f"Unknown normalisation {normalisation}")
+    return points
+
+
 def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
     """
     Partition a hypersphere into k clusters.
@@ -130,17 +142,6 @@ def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation:
         v: np.ndarray
             Array of shape (k, d) containing the cluster centers
     """
-    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation='l2'):
-        points = np.random.randn(n, d)
-        points = np.abs(points)  # positive quadrant
-        if normalisation == 'l2':
-            points /= np.linalg.norm(points, axis=1, keepdims=True)
-        elif normalisation == 'l1':
-            points /= np.sum(points, axis=1, keepdims=True)
-        else:
-            raise ValueError(f"Unknown normalisation {normalisation}")
-        return points
-
     points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
     v = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(points).cluster_centers_
     if normalisation == 'l2':
