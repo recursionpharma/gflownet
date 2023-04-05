@@ -128,7 +128,8 @@ class SEHMOOTask(SEHTask):
 
     def relabel_condinfo_and_logrewards(self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: Tensor,
                                         hindsight_idxs: np.ndarray):
-        assert self.focus_type is not None, "focus_type must be set to use relabel_condinfo_and_logrewards"
+        if self.focus_type is None:
+            return cond_info, log_rewards
         # only keep hindsight_idxs that actually correspond to a violated constraint
         focus_mask = metrics.get_focus_mask(flat_rewards, cond_info['focus_dir'], self.focus_cosim)
         hindsight_idxs = hindsight_idxs[focus_mask[hindsight_idxs]]
