@@ -56,7 +56,9 @@ class FlowMatching(TrajectoryBalance):
         parent_actionidcs = [self.ctx.GraphAction_to_aidx(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)]
         # convert state to Data
         state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj'][1:]]
-        terminal_actions = [self.ctx.GraphAction_to_aidx(tj['traj'][-1][0]) for tj in trajs]
+        terminal_actions = [
+            self.ctx.GraphAction_to_aidx(self.ctx.graph_to_Data(tj['traj'][-1][0]), tj['traj'][-1][1]) for tj in trajs
+        ]
 
         # Create a batch from [*parents, *states]. This order will make it easier when computing the loss
         batch = self.ctx.collate(parent_graphs + state_graphs)
@@ -129,8 +131,8 @@ class FlowMatching(TrajectoryBalance):
         # logZ is simply the outflow of s0, the first graph of each parent set.
         logZ = all_log_outflows[first_graph_idx]
         info = {
-            'intermediate_loss': intermediate_loss.item(),
-            'terminal_loss': terminal_loss.item(),
+            'intermediate_loss': intermediate_loss.mean().item(),
+            'terminal_loss': terminal_loss.mean().item(),
             'loss': loss.item(),
             'logZ': logZ.mean().item(),
         }
