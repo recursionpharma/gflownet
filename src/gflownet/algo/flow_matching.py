@@ -1,23 +1,14 @@
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import networkx as nx
 import numpy as np
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
 from torch_scatter import scatter
-from torch_scatter import scatter_sum
 
-from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.envs.graph_building_env import generate_forward_trajectory
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionCategorical
-from gflownet.envs.graph_building_env import GraphActionType
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.envs.graph_building_env import GraphActionType, GraphBuildingEnv, GraphBuildingEnvContext
 
 
 def relabel(ga, g):
@@ -37,7 +28,8 @@ class FlowMatching(TrajectoryBalance):
                  hps: Dict[str, Any], max_len=None, max_nodes=None):
         super().__init__(env, ctx, rng, hps, max_len=max_len, max_nodes=max_nodes)
         self.fm_epsilon = torch.as_tensor(hps.get('fm_epsilon', 1e-38)).log()
-        assert ctx.action_type_order.index(GraphActionType.Stop) == 0
+        self.fm_balanced_loss = hps.get('fm_balanced_loss', True)
+        self.fm_leaf_coef = hps.get('fm_leaf_coef', 10)
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -55,15 +47,23 @@ class FlowMatching(TrajectoryBalance):
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
+        # For every s' (i.e. every state except the first of each trajectory), enumerate parents
         parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj['traj'][1:]]
+        # convert parents to Data
         parent_graphs = [self.ctx.graph_to_Data(pstate) for parent in parents for pact, pstate in parent]
+        # convert actions to aidx
         parent_actions = [pact for parent in parents for pact, pstate in parent]
         parent_actionidcs = [self.ctx.GraphAction_to_aidx(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)]
+        # convert state to Data
         state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj'][1:]]
+        terminal_actions = [self.ctx.GraphAction_to_aidx(tj['traj'][-1][0]) for tj in trajs]
+
+        # Create a batch from [*parents, *states]. This order will make it easier when computing the loss
         batch = self.ctx.collate(parent_graphs + state_graphs)
         batch.num_parents = torch.tensor([len(i) for i in parents])
         batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
-        batch.parent_acts = parent_actionidcs
+        batch.parent_acts = torch.tensor(parent_actionidcs)
+        batch.terminal_acts = torch.tensor(terminal_actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
@@ -74,29 +74,59 @@ class FlowMatching(TrajectoryBalance):
     def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):
         dev = batch.x.device
         eps = self.fm_epsilon.to(dev)
+        # Compute relevant quantities
         num_trajs = len(batch.log_rewards)
         num_states = int(batch.num_parents.shape[0])
         total_num_parents = batch.num_parents.sum()
-        states_batch_idx = torch.arange(num_states, device=dev)
-        parents_batch_idx = states_batch_idx.repeat_interleave(batch.num_parents)
+        # Compute, for every parent, the index of the state it corresponds to (all states are
+        # considered numbered 0..N regardless of which trajectory they correspond to)
+        parents_state_idx = torch.arange(num_states, device=dev).repeat_interleave(batch.num_parents)
+        # Compute, for every state, the index of the trajectory it corresponds to
         states_traj_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens - 1)
+        # Idem for parents
         parents_traj_idx = states_traj_idx.repeat_interleave(batch.num_parents)
-
+        # Compute the index of the first graph of every trajectory via a cumsum of the trajectory
+        # lengths. This works because by design the first parent of every trajectory is s0 (i.e. s1
+        # only has one parent that is s0)
         num_parents_per_traj = scatter(batch.num_parents, states_traj_idx, 0, reduce='sum')
         first_graph_idx = torch.cumsum(
             torch.cat([torch.zeros_like(num_parents_per_traj[0])[None], num_parents_per_traj]), 0)
+        # Similarly we want the index of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens - 1, 0) + total_num_parents - 1
+
+        # Query the model for Fsa. The model will output a GraphActionCategorical, but we will
+        # simply interpret the logits as F(s, a). Conveniently the policy of a GFN is the softmax of
+        # log F(s,a) so we don't have to change anything in the sampling routines.
         cat, graph_out = model(batch, batch.cond_info[torch.cat([parents_traj_idx, states_traj_idx], 0)])
-        parent_log_F_sa = cat.log_prob(batch.parent_acts, cat.logits, torch.arange(total_num_parents, device=dev))
-        log_inflows = scatter(parent_log_F_sa.exp(), parents_batch_idx, 0).log()
+        # We compute \sum_{s,a : T(s,a)=s'} F(s,a), first we index all the parent's outputs by the
+        # parent actions. To do so we reuse the log_prob mechanism, but specify that the logprobs
+        # tensor is actually just the logits (which we chose to interpret as edge flows F(s,a). We
+        # only need the parent's outputs so we specify those batch indices.
+        parent_log_F_sa = cat.log_prob(batch.parent_acts, logprobs=cat.logits,
+                                       batch=torch.arange(total_num_parents, device=dev))
+        # The inflows is then simply the sum reduction of exponentiating the log edge flows. The
+        # indices are the state index that each parent belongs to.
+        log_inflows = scatter(parent_log_F_sa.exp(), parents_state_idx, 0, reduce='sum').log()
+        # To compute the outflows we can just logsumexp the log F(s,a) predictions. We do so for the
+        # entire batch, which is slightly wasteful (TODO). We only take the last outflows here, and
+        # later take the log outflows of s0 to estimate logZ.
         all_log_outflows = cat.logsumexp()
         log_outflows = all_log_outflows[total_num_parents:]
-        intermediate_loss = (torch.logaddexp(log_inflows, eps) - torch.logaddexp(log_outflows, eps)).pow(2).mean()
 
-        fake_stop_actions = torch.zeros((num_trajs, 3), dtype=torch.long, device=dev)
-        log_F_s_stop = cat.log_prob(fake_stop_actions, cat.logits, final_graph_idx)
-        terminal_loss = (torch.logaddexp(log_F_s_stop, eps) - torch.logaddexp(batch.log_rewards, eps)).pow(2).mean()
-        loss = intermediate_loss + terminal_loss
+        # The loss of intermediary states is inflow - outflow. We use the log-epsilon variant (see FM paper)
+        intermediate_loss = (torch.logaddexp(log_inflows, eps) - torch.logaddexp(log_outflows, eps)).pow(2)
+        # To compute the loss of the terminal states we match F(s, a'), where a' is the action that
+        # terminated the trajectory, to R(s). We again use the mechanism of log_prob
+        log_F_s_stop = cat.log_prob(batch.terminal_acts, cat.logits, final_graph_idx)
+        terminal_loss = (torch.logaddexp(log_F_s_stop, eps) - torch.logaddexp(batch.log_rewards, eps)).pow(2)
+
+        if self.fm_balanced_loss:
+            loss = intermediate_loss.mean() + terminal_loss.mean() * self.fm_leaf_coef
+        else:
+            loss = (intermediate_loss.sum() + terminal_loss.sum()) / (intermediate_loss.shape[0] +
+                                                                      terminal_loss.shape[0])
+
+        # logZ is simply the outflow of s0, the first graph of each parent set.
         logZ = all_log_outflows[first_graph_idx]
         info = {
             'intermediate_loss': intermediate_loss.item(),
