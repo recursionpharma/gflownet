@@ -16,6 +16,7 @@ from torch.utils.data import Dataset
 import torch_geometric.data as gd
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.algo.flow_matching import FlowMatching
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
@@ -132,10 +133,18 @@ class SEHFragTrainer(GFNTrainer):
             'valid_random_action_prob': 0.,
             'sampling_tau': 0.,
             'num_thermometer_dim': 32,
+            'algo': 'TB',
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
+        algo = self.hps.get('algo', 'TB')
+        if algo == 'TB':
+            algo = TrajectoryBalance
+        elif algo == 'FM':
+            algo = FlowMatching
+        else:
+            raise ValueError(algo)
+        self.algo = algo(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
 
     def setup_task(self):
         self.task = SEHTask(dataset=self.training_data, temperature_distribution=self.hps['temperature_sample_dist'],
