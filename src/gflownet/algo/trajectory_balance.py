@@ -133,7 +133,7 @@ class TrajectoryBalance:
         """
         return [{'traj': generate_forward_trajectory(i)} for i in graphs]
 
-    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
+    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction, return_aidx: bool = True):
         """Returns the list of idempotent actions for a given transition.
 
         Note, this is slow! Correcting for idempotency is needed to estimate p(x) correctly, but
@@ -150,20 +150,22 @@ class TrajectoryBalance:
             The next state's graph
         action: GraphAction
             Action leading from g to gp
+        return_aidx: bool
+            If true returns of list of action indices, else a list of GraphAction
 
         Returns
         -------
-        actions: List[Tuple[int,int,int]]
+        actions: Union[List[Tuple[int,int,int]], List[GraphAction]]
             The list of idempotent actions that all lead from g to gp.
 
         """
         iaction = self.ctx.GraphAction_to_aidx(gd, action)
         if action.action == GraphActionType.Stop:
-            return [iaction]
+            return [iaction if return_aidx else action]
         mask_name = self.ctx.action_mask_names[iaction[0]]
         lmask = getattr(gd, mask_name)
         nz = lmask.nonzero()
-        actions = [iaction]
+        actions = [iaction if return_aidx else action]
         for i in nz:
             aidx = (iaction[0], i[0].item(), i[1].item())
             if aidx == iaction:
@@ -171,7 +173,7 @@ class TrajectoryBalance:
             ga = self.ctx.aidx_to_GraphAction(gd, aidx)
             child = self.env.step(g, ga)
             if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
-                actions.append(aidx)
+                actions.append(aidx if return_aidx else ga)
         return actions
 
     def construct_batch(self, trajs, cond_info, log_rewards):

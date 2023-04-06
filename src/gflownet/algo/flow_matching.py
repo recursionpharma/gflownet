@@ -39,6 +39,7 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # in a number of settings the regular loss is more stable.
         self.fm_balanced_loss = hps.get('fm_balanced_loss', False)
         self.fm_leaf_coef = hps.get('fm_leaf_coef', 10)
+        self.correct_idempotent = self.correct_idempotent or hps.get('fm_correct_idempotent', False)
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -56,10 +57,39 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        # For every s' (i.e. every state except the first of each trajectory), enumerate parents
-        parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj['traj'][1:]]
-        # convert parents to Data
-        parent_graphs = [self.ctx.graph_to_Data(pstate) for parent in parents for pact, pstate in parent]
+        if not self.correct_idempotent:
+            # For every s' (i.e. every state except the first of each trajectory), enumerate parents
+            parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj['traj'][1:]]
+            # convert parents to Data
+            parent_graphs = [self.ctx.graph_to_Data(pstate) for parent in parents for pact, pstate in parent]
+        else:
+            # Here we again enumerate parents
+            states = [i[0] for tj in trajs for i in tj['traj'][1:]]
+            base_parents = [[relabel(*i) for i in self.env.parents(i)] for i in states]
+            base_parent_graphs = [
+                [self.ctx.graph_to_Data(pstate) for pact, pstate in parent_set] for parent_set in base_parents
+            ]
+            parents = []
+            parent_graphs = []
+            for state, parent_set, parent_set_graphs in zip(states, base_parents, base_parent_graphs):
+                new_parent_set = []
+                new_parent_graphs = []
+                # But for each parent we add all the possible (action, parent) pairs to the sets of parents
+                for (ga, p), pd in zip(parent_set, parent_set_graphs):
+                    ipa = self.get_idempotent_actions(p, pd, state, ga, return_aidx=False)
+                    new_parent_set += [(a, p) for a in ipa]
+                    new_parent_graphs += [pd] * len(ipa)
+                parents.append(new_parent_set)
+                parent_graphs += new_parent_graphs
+            # Implementation Note: no further correction is required for environments where episodes
+            # always end in a Stop action. If this is not the case, then this implementation is
+            # incorrect in that it doesn't account for the multiple ways that one could reach the
+            # terminal state (because it assumes that a terminal state has only one parent and gives
+            # 100% of the reward-flow to the edge between that parent and the terminal state, which
+            # for stop actions is correct). Notably, this error will happen in environments where
+            # there are invalid states that make episodes end prematurely (when those invalid states
+            # have multiple possible parents).
+
         # convert actions to aidx
         parent_actions = [pact for parent in parents for pact, pstate in parent]
         parent_actionidcs = [self.ctx.GraphAction_to_aidx(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)]
