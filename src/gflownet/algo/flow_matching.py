@@ -13,7 +13,7 @@ from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionTyp
 
 
 def relabel(ga: GraphAction, g: Graph):
-    """Relabel the nodes for g, and the graph action ga applied to g. 
+    """Relabel the nodes for g to 0-N, and the graph action ga applied to g.
 
     This is necessary because torch_geometric and EnvironmentContext classes expect nodes to be
     labeled 0-N, whereas GraphBuildingEnv.parent can return parents with e.g. a removed node that
