@@ -8,10 +8,17 @@ import torch_geometric.data as gd
 from torch_scatter import scatter
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.envs.graph_building_env import GraphActionType, GraphBuildingEnv, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionType, GraphBuildingEnv,
+                                              GraphBuildingEnvContext)
 
 
-def relabel(ga, g):
+def relabel(ga: GraphAction, g: Graph):
+    """Relabel the nodes for g, and the graph action ga applied to g. 
+
+    This is necessary because torch_geometric and EnvironmentContext classes expect nodes to be
+    labeled 0-N, whereas GraphBuildingEnv.parent can return parents with e.g. a removed node that
+    creates a gap in 0-N, leading to a faulty encoding of the graph.
+    """
     rmap = dict(zip(g.nodes, range(len(g.nodes))))
     if not len(g) and ga.action == GraphActionType.AddNode:
         rmap[0] = 0  # AddNode can add to the empty graph, the source is still 0
@@ -23,12 +30,14 @@ def relabel(ga, g):
     return ga, g
 
 
-class FlowMatching(TrajectoryBalance):
+class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could have a generic GFNAlgorithm class
     def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
                  hps: Dict[str, Any], max_len=None, max_nodes=None):
         super().__init__(env, ctx, rng, hps, max_len=max_len, max_nodes=max_nodes)
         self.fm_epsilon = torch.as_tensor(hps.get('fm_epsilon', 1e-38)).log()
-        self.fm_balanced_loss = hps.get('fm_balanced_loss', True)
+        # We include the "balanced loss" as a possibility to reproduce results from the FM paper, but
+        # in a number of settings the regular loss is more stable.
+        self.fm_balanced_loss = hps.get('fm_balanced_loss', False)
         self.fm_leaf_coef = hps.get('fm_leaf_coef', 10)
 
     def construct_batch(self, trajs, cond_info, log_rewards):
