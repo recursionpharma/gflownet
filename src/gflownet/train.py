@@ -124,6 +124,8 @@ class GFNTrainer:
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
+        # Pickle messages to reduce load on shared memory (conversely, increases load on CPU)
+        self.pickle_messages = hps.get('mp_pickle_messages', False)
 
         self.setup()
 
@@ -140,7 +142,8 @@ class GFNTrainer:
         """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
         model.to(self.device)
         if self.num_workers > 0:
-            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical),
+                                        pickle_messages=self.pickle_messages)
             return placeholder, torch.device('cpu')
         return model, self.device
 
@@ -154,8 +157,14 @@ class GFNTrainer:
                                     random_action_prob=self.hps.get('random_action_prob', 0.0))
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
-        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+        return torch.utils.data.DataLoader(
+            iterator,
+            batch_size=None,
+            num_workers=self.num_workers,
+            persistent_workers=self.num_workers > 0,
+            # The 2 here is an odd quirk of torch 1.10, it is fixed and
+            # replaced by None in torch 2.
+            prefetch_factor=1 if self.num_workers else 2)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_model_mp(self.model)
@@ -166,7 +175,8 @@ class GFNTrainer:
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+                                           persistent_workers=self.num_workers > 0,
+                                           prefetch_factor=1 if self.num_workers else 2)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
         try:
