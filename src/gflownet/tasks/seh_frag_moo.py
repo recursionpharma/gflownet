@@ -87,7 +87,7 @@ class SEHMOOTask(SEHTask):
         cond_info['preferences'] = preferences
         return cond_info
 
-    def encode_conditional_information(self, preferences: torch.TensorType) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, preferences: Tensor) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == 'constant':
             beta = torch.ones(len(preferences)) * self.temperature_dist_params
             beta_enc = torch.zeros((len(preferences), self.num_thermometer_dim))
@@ -117,7 +117,7 @@ class SEHMOOTask(SEHTask):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
 
         else:
-            flat_rewards = []
+            flat_rewards: List[Tensor] = []
             if 'seh' in self.objectives:
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
@@ -165,15 +165,15 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_algo(self):
         hps = self.hps
         if hps['algo'] == 'TB':
-            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'SQL':
-            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'A2C':
-            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'MOREINFORCE':
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
         elif hps['algo'] == 'MOQL':
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps['max_nodes'])
 
     def setup_task(self):
         self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
@@ -187,7 +187,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                                    num_layers=self.hps['num_layers'],
                                                    num_objectives=len(self.hps['objectives']))
         else:
-            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'])
+            model = GraphTransformerGFN(self.ctx, num_emb=self.hps['num_emb'], num_layers=self.hps['num_layers'],
+                                        do_bck=self.hps['tb_p_b_is_parameterized'])
 
         if self.hps['algo'] in ['A2C', 'MOQL']:
             model.do_mask = False
