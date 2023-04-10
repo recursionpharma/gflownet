@@ -372,7 +372,7 @@ def main():
         'Z_lr_decay': 50000,
         'sampling_tau': 0.95,
         'random_action_prob': 0.1,
-        'num_data_loader_workers': 0,
+        'num_data_loader_workers': 2,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,

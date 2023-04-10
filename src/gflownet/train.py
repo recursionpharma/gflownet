@@ -1,5 +1,6 @@
 import os
 import pathlib
+import time
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 import psutil
@@ -226,6 +227,7 @@ class GFNTrainer:
         callbacks = self.build_callbacks()
         start = self.hps.get('start_at_step', 0) + 1
         logger.info("Starting training")
+        start_time = time.time()
         for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
@@ -239,6 +241,7 @@ class GFNTrainer:
             info['mem_usage'] = mem_usage
             info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
             info['num_workers'] = self.num_workers
+            info['elapsed_time'] = time.time() - start_time
             self.log(info, it, 'train')
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
