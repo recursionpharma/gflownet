@@ -173,10 +173,10 @@ class GraphTransformerGFN(nn.Module):
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
-
         self.action_type_order = env_ctx.action_type_order
 
-        # Every action type gets its own MLP that is fed the output of the GraphTransformer
+        # Every action type gets its own MLP that is fed the output of the GraphTransformer.
+        # Here we define the number of inputs and outputs of each of those (potential) MLPs.
         self._action_type_to_num_inputs_outputs = {
             GraphActionType.Stop: (num_glob_final, 1),
             GraphActionType.AddNode: (num_final, env_ctx.num_new_node_values),
@@ -185,28 +185,24 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.SetEdgeAttr: (num_edge_feat, env_ctx.num_edge_attr_logits),
             GraphActionType.RemoveNode: (num_final, 1),
             GraphActionType.RemoveNodeAttr: (num_final, env_ctx.num_node_attrs - 1),
-            GraphActionType.RemoveEdge: (num_final, 1),
-            GraphActionType.RemoveEdgeAttr: (num_final, env_ctx.num_edge_attrs),
+            GraphActionType.RemoveEdge: (num_edge_feat, 1),
+            GraphActionType.RemoveEdgeAttr: (num_edge_feat, env_ctx.num_edge_attrs),
         }
 
+        # Here we create only the embedding -> logit mapping MLPs that are required by the environment
         mlps = {}
         for atype in chain(env_ctx.action_type_order, env_ctx.bck_action_type_order if do_bck else []):
             num_in, num_out = self._action_type_to_num_inputs_outputs[atype]
             mlps[atype.cname] = mlp(num_in, num_emb, num_out, num_mlp_layers)
+        self.mlps = nn.ModuleDict(mlps)
 
         self.do_bck = do_bck
         if do_bck:
             self.bck_action_type_order = env_ctx.bck_action_type_order
-
-        self.mlps = nn.ModuleDict(mlps)
 
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, num_mlp_layers)
         # TODO: flag for this
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
-
-        self.do_bck = do_bck
-        if do_bck:
-            self.bck_action_type_order = env_ctx.bck_action_type_order
 
     def _action_type_to_mask(self, t, g):
         return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)

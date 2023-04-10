@@ -5,12 +5,141 @@ import math
 from botorch.utils.multi_objective import infer_reference_point
 from botorch.utils.multi_objective import pareto
 from botorch.utils.multi_objective.hypervolume import Hypervolume
-from cvxopt import matrix
-from cvxopt import solvers
 import numpy as np
 from rdkit import Chem
 from rdkit import DataStructs
+from scipy.spatial.distance import cdist
+from sklearn.cluster import KMeans
 import torch
+
+
+def get_IGD(samples, ref_front: np.ndarray = None):
+    """
+    Computes the Inverse Generational Distance of a set of samples w.r.t a reference pareto front.
+    see: https://www.sciencedirect.com/science/article/abs/pii/S0377221720309620
+
+    For each point of a reference pareto front `ref_front`, compute the distance to the closest
+    sample. Returns the average of these distances.
+
+    Args:
+        front (ndarray): A numpy array containing the coordinates of the points
+            on the Pareto front. The tensor should have shape (n_points, n_objectives).
+        ref_front (ndarray): A numpy array containing the coordinates of the points
+            on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
+
+    Returns:
+        float: The IGD value.
+    """
+    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+        """Discretise the faces that are at the extremity of a unit hypercube"""
+        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        grid = np.array(list(product(*linear_spaces)))
+        extreme_points = grid[np.any(grid == 1, axis=1)]
+        return extreme_points
+
+    n_objectives = samples.shape[1]
+    if ref_front is None:
+        ref_front = get_limits_of_hypercube(n_dims=n_objectives)
+
+    # Compute the distances between each generated sample and each reference point.
+    distances = cdist(samples, ref_front).T
+
+    # Find the minimum distance for each point on the front.
+    min_distances = np.min(distances, axis=1)
+
+    # Compute the igd as the average of the minimum distances.
+    igd = np.mean(min_distances, axis=0)
+
+    return float(igd)
+
+
+def get_PC_entropy(samples, ref_front=None):
+    """
+    Computes entropy of the Pareto-Clustered (PC) distribution of the samples.
+
+    For each point in the samples, the closest point in the reference front is
+    found. We then compute the entropy of the empirical distribution of the
+    samples in the clusters defined by the reference front.
+
+    Parameters
+    ----------
+        Args:
+        front (ndarray): A numpy array containing the coordinates of the points
+            on the Pareto front. The tensor should have shape (n_points, n_objectives).
+        ref_front (ndarray): A numpy array containing the coordinates of the points
+            on the true Pareto front. The tensor should have shape (n_true_points, n_objectives).
+
+    Returns:
+        float: The IGD value.
+    """
+    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+        """Discretise the faces that are at the extremity of a unit hypercube"""
+        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        grid = np.array(list(product(*linear_spaces)))
+        extreme_points = grid[np.any(grid == 1, axis=1)]
+        return extreme_points
+
+    n_objectives = samples.shape[1]
+    if ref_front is None:
+        ref_front = get_limits_of_hypercube(n_dims=n_objectives)
+
+    # Compute the distances between each generated sample and each reference point.
+    distances = cdist(samples, ref_front).T
+
+    # Find the closest reference point for each generated sample.
+    closest_point = np.argmin(distances, axis=0)
+
+    # Construct a categorical distribution from the closest reference points.
+    # by counting the number of samples in each category.
+    pc_dist = np.bincount(closest_point, minlength=ref_front.shape[0])
+    pc_dist = pc_dist / pc_dist.sum()
+
+    # Compute its entropy.
+    pc_ent = -np.sum(pc_dist * np.log(pc_dist + 1e-8))
+
+    return float(pc_ent)
+
+
+def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
+    """
+    Partition a hypersphere into k clusters.
+    ----------
+    Parameters
+        k: int
+            Number of clusters
+        d: int
+            Dimensionality of the hypersphere
+        n_samples: int
+            Number of samples to use for clustering
+        normalisation: str
+            Normalisation to use for the samples and the cluster centers.
+            Either 'l1' or 'l2'
+    Returns
+    -------
+        v: np.ndarray
+            Array of shape (k, d) containing the cluster centers
+    """
+    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation='l2'):
+        points = np.random.randn(n, d)
+        points = np.abs(points)  # positive quadrant
+        if normalisation == 'l2':
+            points /= np.linalg.norm(points, axis=1, keepdims=True)
+        elif normalisation == 'l1':
+            points /= np.sum(points, axis=1, keepdims=True)
+        else:
+            raise ValueError(f"Unknown normalisation {normalisation}")
+        return points
+
+    points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
+    v = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(points).cluster_centers_
+    if normalisation == 'l2':
+        v /= np.linalg.norm(v, axis=1, keepdims=True)
+    elif normalisation == 'l1':
+        v /= np.sum(v, 1, keepdims=True)
+    else:
+        raise ValueError(f"Unknown normalisation {normalisation}")
+
+    return v
 
 
 def generate_simplex(dims, n_per_dim):
@@ -126,13 +255,6 @@ def r2_indicator_set(reference_points, solutions, utopian_point):
     return r2
 
 
-solvers.options['abstol'] = 1e-15
-solvers.options['reltol'] = 1e-15
-solvers.options['feastol'] = 1e-15
-solvers.options['maxiters'] = 1000
-solvers.options['show_progress'] = False
-
-
 def sharpeRatio(p, Q, x, rf):
     """ Compute the Sharpe ratio.
     Returns the Sharpe ratio given the expected return vector, p,
@@ -158,6 +280,17 @@ def sharpeRatio(p, Q, x, rf):
 
 def _sharpeRatioQPMax(p, Q, rf):
     """ Sharpe ratio maximization problem - QP formulation """
+
+    # intentional non-top-level imports to avoid
+    # cvxopt dependency for M1 chip users
+    from cvxopt import matrix
+    from cvxopt import solvers
+
+    solvers.options['abstol'] = 1e-15
+    solvers.options['reltol'] = 1e-15
+    solvers.options['feastol'] = 1e-15
+    solvers.options['maxiters'] = 1000
+    solvers.options['show_progress'] = False
     n = len(p)
 
     # inequality constraints (investment in assets is higher or equal to 0)

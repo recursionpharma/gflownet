@@ -128,7 +128,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         ]
         self.device = torch.device('cpu')
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]):
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
         act_type, act_row, act_col = [int(i) for i in action_idx]
         t = self.action_type_order[act_type]

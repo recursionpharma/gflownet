@@ -1,3 +1,4 @@
+import pickle
 import queue
 import threading
 
@@ -8,9 +9,10 @@ import torch.multiprocessing as mp
 class MPModelPlaceholder:
     """This class can be used as a Model in a worker process, and
     translates calls to queries to the main process"""
-    def __init__(self, in_queues, out_queues):
+    def __init__(self, in_queues, out_queues, pickle_messages=False):
         self.qs = in_queues, out_queues
         self.device = torch.device('cpu')
+        self.pickle_messages = pickle_messages
         self._is_init = False
 
     def _check_init(self):
@@ -21,16 +23,26 @@ class MPModelPlaceholder:
         self.out_queue = self.qs[1][info.id]
         self._is_init = True
 
+    def encode(self, m):
+        if self.pickle_messages:
+            return pickle.dumps(m)
+        return m
+
+    def decode(self, m):
+        if self.pickle_messages:
+            return pickle.loads(m)
+        return m
+
     # TODO: make a generic method for this based on __getattr__
     def logZ(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('logZ', a, kw))
-        return self.out_queue.get()
+        self.in_queue.put(self.encode(('logZ', a, kw)))
+        return self.decode(self.out_queue.get())
 
     def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('__call__', a, kw))
-        return self.out_queue.get()
+        self.in_queue.put(self.encode(('__call__', a, kw)))
+        return self.decode(self.out_queue.get())
 
 
 class MPModelProxy:
@@ -46,7 +58,7 @@ class MPModelProxy:
     processes.
 
     """
-    def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple):
+    def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
         """Construct a multiprocessing model proxy for torch DataLoaders.
 
         Parameters
@@ -58,10 +70,15 @@ class MPModelProxy:
         cast_types: tuple
             Types that will be cast to cuda when received as arguments of method calls.
             torch.Tensor is cast by default.
+        pickle_messages: bool
+            If True, pickle messages sent between processes. This reduces load on shared
+            memory, but increases load on CPU. It is recommended to activate this flag if
+            encountering "Too many open files"-type errors.
         """
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
-        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues)
+        self.pickle_messages = pickle_messages
+        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues, pickle_messages)
         self.model = model
         self.device = next(model.parameters()).device
         self.cuda_types = (torch.Tensor,) + cast_types
@@ -72,14 +89,24 @@ class MPModelProxy:
     def __del__(self):
         self.stop.set()
 
-    def to_msg(self, i):
+    def encode(self, m):
+        if self.pickle_messages:
+            return pickle.dumps(m)
+        return m
+
+    def decode(self, m):
+        if self.pickle_messages:
+            return pickle.loads(m)
+        return m
+
+    def to_cpu(self, i):
         return i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i
 
     def run(self):
         while not self.stop.is_set():
             for qi, q in enumerate(self.in_queues):
                 try:
-                    r = q.get(True, 1e-5)
+                    r = self.decode(q.get(True, 1e-5))
                 except queue.Empty:
                     continue
                 except ConnectionError:
@@ -90,17 +117,17 @@ class MPModelProxy:
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
                 result = f(*args, **kwargs)
                 if isinstance(result, (list, tuple)):
-                    msg = [self.to_msg(i) for i in result]
-                    self.out_queues[qi].put(msg)
+                    msg = [self.to_cpu(i) for i in result]
+                    self.out_queues[qi].put(self.encode(msg))
                 elif isinstance(result, dict):
-                    msg = {k: self.to_msg(i) for k, i in result.items()}
-                    self.out_queues[qi].put(msg)
+                    msg = {k: self.to_cpu(i) for k, i in result.items()}
+                    self.out_queues[qi].put(self.encode(msg))
                 else:
-                    msg = self.to_msg(result)
-                    self.out_queues[qi].put(msg)
+                    msg = self.to_cpu(result)
+                    self.out_queues[qi].put(self.encode(msg))
 
 
-def wrap_model_mp(model, num_workers, cast_types):
+def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False):
     """Construct a multiprocessing model proxy for torch DataLoaders so
     that only one process ends up making cuda calls and holding cuda
     tensors in memory.
@@ -114,6 +141,10 @@ def wrap_model_mp(model, num_workers, cast_types):
     cast_types: tuple
         Types that will be cast to cuda when received as arguments of method calls.
         torch.Tensor is cast by default.
+    pickle_messages: bool
+            If True, pickle messages sent between processes. This reduces load on shared
+            memory, but increases load on CPU. It is recommended to activate this flag if
+            encountering "Too many open files"-type errors.
 
     Returns
     -------
@@ -121,4 +152,4 @@ def wrap_model_mp(model, num_workers, cast_types):
         A placeholder model whose method calls route arguments to the main process
 
     """
-    return MPModelProxy(model, num_workers, cast_types).placeholder
+    return MPModelProxy(model, num_workers, cast_types, pickle_messages).placeholder

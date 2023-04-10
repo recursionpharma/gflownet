@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import os
 import sqlite3
 from typing import Callable, List
@@ -20,7 +21,7 @@ class SamplingIterator(IterableDataset):
 
     """
     def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None, sample_cond_info=True):
+                 stream=True, log_dir: str = None, sample_cond_info=True, random_action_prob=0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -59,12 +60,14 @@ class SamplingIterator(IterableDataset):
         self.stream = stream
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
+        self.random_action_prob = random_action_prob
+        self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
         if not sample_cond_info:
             # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
             # then "offline" refers to cond info and online to x, so no duplication and we don't end
             # up with 2*batch_size accidentally
             self.offline_batch_size = self.online_batch_size = batch_size
-        self.log_dir = log_dir if self.ratio < 1 and self.stream else None
+        self.log_dir = log_dir
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
@@ -145,10 +148,11 @@ class SamplingIterator(IterableDataset):
             if num_online > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, num_online,
-                                                                             cond_info['encoding'][num_offline:])
+                                                                             cond_info['encoding'][num_offline:],
+                                                                             random_action_prob=self.random_action_prob)
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,
-                    # i.e. predict the output of cond_info_to_reward
+                    # i.e. predict the output of cond_info_to_logreward
                     pred_reward = [i['reward_pred'].cpu().item() for i in trajs[num_offline:]]
                     flat_rewards += pred_reward
                 else:
@@ -177,7 +181,7 @@ class SamplingIterator(IterableDataset):
 
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
-            log_rewards = self.task.cond_info_to_reward(cond_info, flat_rewards)
+            log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
             log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)
@@ -185,22 +189,28 @@ class SamplingIterator(IterableDataset):
             batch.num_online = num_online
             batch.flat_rewards = flat_rewards
             batch.objs = objs
+            batch.preferences = cond_info.get('preferences', None)
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
-            batch.preferences = cond_info.get('preferences', None)
+
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
                     i['data_idx'] = j
 
+            # Converts back into natural rewards for logging purposes
+            # (allows to take averages and plot in objective space)
+            # TODO: implement that per-task (in case they don't apply the same beta and log transformations)
+            rewards = torch.exp(log_rewards / cond_info['beta'])
+
             if num_online > 0 and self.log_dir is not None:
-                self.log_generated(trajs[num_offline:], log_rewards[num_offline:], flat_rewards[num_offline:],
+                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
             if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
-                        hook(trajs[num_offline:], log_rewards[num_offline:], flat_rewards[num_offline:],
+                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                              {k: v[num_offline:] for k, v in cond_info.items()}))
                 batch.extra_info = extra_info
             yield batch
@@ -249,6 +259,7 @@ class SQLiteLog:
         cur.close()
 
     def insert_many(self, rows, column_names):
+        assert all([type(x) is str or not isinstance(x, Iterable) for x in rows[0]]), "rows must only contain scalars"
         if not self._has_results_table:
             self._make_results_table([type(i) for i in rows[0]], column_names)
         cur = self.db.cursor()

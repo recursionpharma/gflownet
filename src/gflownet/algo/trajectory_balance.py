@@ -38,7 +38,6 @@ class TrajectoryBalance:
         https://arxiv.org/abs/2201.13259
 
         Hyperparameters used:
-        random_action_prob: float, probability of taking a uniform random action when sampling
         illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
         bootstrap_own_reward: bool, if True, uses the .reward batch data to predict rewards for sampled data
         tb_epsilon: float, if not None, adds this epsilon in the numerator and denominator of the log-ratio
@@ -83,13 +82,13 @@ class TrajectoryBalance:
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp,
                                           correct_idempotent=self.correct_idempotent,
                                           pad_with_terminal_state=self.p_b_is_parameterized)
-        self.graph_sampler.random_action_prob = hps['random_action_prob']
         if self.is_doing_subTB:
             self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 2 if max_len is not None else 128)
             self._init_subtb(torch.device('cuda') if torch.cuda.is_available() else
                              torch.device('cpu'))  # TODO: where are we getting device info?
 
-    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor):
+    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor,
+                                              random_action_prob: float):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -100,6 +99,8 @@ class TrajectoryBalance:
             List of N Graph endpoints
         cond_info: torch.tensor
             Conditional information, shape (N, n_info)
+        random_action_prob: float
+            Probability of taking a random action
         Returns
         -------
         data: List[Dict]
@@ -114,7 +115,7 @@ class TrajectoryBalance:
         """
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
         for i in range(n):
             data[i]['logZ'] = logZ_pred[i].item()
@@ -141,7 +142,7 @@ class TrajectoryBalance:
             traj['result'] = traj['traj'][-1][0]
         return trajs
 
-    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
+    def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction, return_aidx: bool = True):
         """Returns the list of idempotent actions for a given transition.
 
         Note, this is slow! Correcting for idempotency is needed to estimate p(x) correctly, but
@@ -158,22 +159,24 @@ class TrajectoryBalance:
             The next state's graph
         action: GraphAction
             Action leading from g to gp
+        return_aidx: bool
+            If true returns of list of action indices, else a list of GraphAction
 
         Returns
         -------
-        actions: List[Tuple[int,int,int]]
+        actions: Union[List[Tuple[int,int,int]], List[GraphAction]]
             The list of idempotent actions that all lead from g to gp.
 
         """
         iaction = self.ctx.GraphAction_to_aidx(gd, action)
         if action.action == GraphActionType.Stop:
-            return [iaction]
+            return [iaction if return_aidx else action]
         # Here we're looking for potential idempotent actions by looking at legal actions of the
         # same type. This assumes that this is the only way to get to a similar parent. Perhaps
         # there are edges cases where this is not true...?
         lmask = getattr(gd, action.action.mask_name)
         nz = lmask.nonzero()  # Legal actions are those with a nonzero mask value
-        actions = [iaction]
+        actions = [iaction if return_aidx else action]
         for i in nz:
             aidx = (iaction[0], i[0].item(), i[1].item())
             if aidx == iaction:
@@ -181,7 +184,7 @@ class TrajectoryBalance:
             ga = self.ctx.aidx_to_GraphAction(gd, aidx, fwd=not action.action.is_backward)
             child = self.env.step(g, ga)
             if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
-                actions.append(aidx)
+                actions.append(aidx if return_aidx else ga)
         return actions
 
     def construct_batch(self, trajs, cond_info, log_rewards):
@@ -194,13 +197,12 @@ class TrajectoryBalance:
         cond_info: Tensor
             The conditional info that is considered for each trajectory. Shape (N, n_info)
         log_rewards: Tensor
-            The transformed reward (e.g. log(R(x) ** beta)) for each trajectory. Shape (N,)
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
         Returns
         -------
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        self._last_trajs = trajs
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
         actions = [
             self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
@@ -272,10 +274,11 @@ class TrajectoryBalance:
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
+        # Forward pass of the model, returns a GraphActionCategorical representing the forward
+        # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
         if self.p_b_is_parameterized:
             fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
         else:
-            # Forward pass of the model, returns a GraphActionCategorical and the optional bootstrap predictions
             fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
 
         # Retreive the reward predictions for the full graphs,
@@ -319,6 +322,7 @@ class TrajectoryBalance:
             # zero-out the logP_F of those states
             log_p_F[final_graph_idx] = 0
             if self.is_doing_subTB:
+                # Force the pad states' F(s) prediction to be R
                 per_graph_out[final_graph_idx, 0] = clip_log_R
 
             # To get the correct P_B we need to shift all predictions by 1 state, and ignore the
@@ -341,7 +345,7 @@ class TrajectoryBalance:
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
 
         if self.is_doing_subTB:
-            # SubTB interprets the per_mol_out predictions to predict the state flow F(s)
+            # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
             # The position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
@@ -482,8 +486,9 @@ class TrajectoryBalance:
         for ep in range(traj_lengths.shape[0]):
             offset = cumul_lens[ep]
             T = int(traj_lengths[ep])
-            #if self.p_b_is_parameterized:
-            #    T -= 1
+            if self.p_b_is_parameterized:
+                # The length of the trajectory is the padded length, reduce by 1
+                T -= 1
             idces, dests = self._precomp[T - 1]
             fidces = torch.cat(
                 [torch.cat([ar[i + 1:T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)])

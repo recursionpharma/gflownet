@@ -21,7 +21,7 @@ def random_walk_probs(g: Data, k: int, skip_odd=False):
     else:
         Pmult = P
     Pk = Pmult
-    for k in range(k):
+    for _ in range(k):
         diags.append(torch.diagonal(Pk, dim1=-2, dim2=-1))
         Pk = Pk @ Pmult
     p = torch.cat(diags, dim=0).transpose(0, 1)  # (num nodes, k)
