@@ -210,14 +210,16 @@ class SamplingIterator(IterableDataset):
             #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
             rewards = torch.exp(log_rewards / cond_info['beta'])
             if num_online > 0 and self.log_dir is not None:
-                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                                   {k: v[num_offline:] for k, v in cond_info.items()})
+                self.log_generated(deepcopy(trajs[num_offline:]), deepcopy(rewards[num_offline:]),
+                                   deepcopy(flat_rewards[num_offline:]),
+                                   {k: v[num_offline:] for k, v in deepcopy(cond_info).items()})
             if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
-                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                             {k: v[num_offline:] for k, v in cond_info.items()}))
+                        hook(deepcopy(trajs[num_offline:]), deepcopy(rewards[num_offline:]),
+                             deepcopy(flat_rewards[num_offline:]),
+                             {k: v[num_offline:] for k, v in deepcopy(cond_info).items()}))
 
             if self.replay_buffer is not None:
                 # If we have a replay buffer, we push the online trajectories in it
