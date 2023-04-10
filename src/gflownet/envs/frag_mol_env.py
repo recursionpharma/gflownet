@@ -60,14 +60,16 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_node_attrs = 1
         self.num_node_attr_logits = 0
         self.num_node_dim = len(self.frags_smi) + 1
+
         # The semantics of the SetEdgeAttr indices is that, for edge (u, v), we use the first half
         # for u and the second half for v. Each logit i in the first half for a given edge
         # corresponds to setting the stem atom of fragment u used to attach between u and v to be i
         # (named f'{u}_attach') and vice versa for the second half and v, u.
-        self.num_edge_attr_logits = (most_stems + 1) * 2
+        self.num_edge_attr_logits = most_stems * 2
         # There are thus up to 2 edge attributes, the stem of u and the stem of v.
         self.num_edge_attrs = 2
-        self.num_edge_dim = most_stems * 2
+        # The + 1 is for an extra dimension to indicate when the attribute isn't yet set
+        self.num_edge_dim = (most_stems + 1) * 2
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
         self.edges_are_unordered = False
@@ -227,15 +229,14 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # atoms.
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
-            a, b = e
-            for n, offset in zip(e, [0, self.num_stem_acts]):
+            for j, n in enumerate(e):
                 idx = ad.get(f'{int(n)}_attach', -1) + 1
-                edge_attr[i * 2, idx] = 1
-                edge_attr[i * 2 + 1, idx] = 1
+                edge_attr[i * 2, idx + (self.num_stem_acts + 1) * j] = 1
+                edge_attr[i * 2 + 1, idx + (self.num_stem_acts + 1) * (1 - j)] = 1
                 if f'{int(n)}_attach' not in ad:
                     for attach_point in range(max_degrees[n]):
                         if attach_point not in attached[n]:
-                            set_edge_attr_mask[i, offset + attach_point] = 1
+                            set_edge_attr_mask[i, attach_point + self.num_stem_acts * j] = 1
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
             (-1, 2)).T
         if x.shape[0] == self.max_frags:
