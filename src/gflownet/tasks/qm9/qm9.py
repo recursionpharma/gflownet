@@ -71,7 +71,7 @@ class QM9GapTask(GFNTask):
         state_dict = torch.load('/data/chem/qm9/mxmnet_gap_model.pt')
         gap_model.load_state_dict(state_dict)
         gap_model.cuda()
-        gap_model, self.device = self._wrap_model(gap_model)
+        gap_model, self.device = self._wrap_model(gap_model, send_to_device=True)
         return {'mxmnet_gap': gap_model}
 
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
@@ -178,7 +178,7 @@ class QM9GapTrainer(GFNTrainer):
 
         self.task = QM9GapTask(dataset=self.training_data, temperature_distribution=hps['temperature_sample_dist'],
                                temperature_parameters=hps['temperature_dist_params'],
-                               num_thermometer_dim=hps['num_thermometer_dim'], wrap_model=self._wrap_model_mp)
+                               num_thermometer_dim=hps['num_thermometer_dim'], wrap_model=self._wrap_for_mp)
         self.mb_size = hps['global_batch_size']
         self.clip_grad_param = hps['clip_grad_param']
         self.clip_grad_callback = {

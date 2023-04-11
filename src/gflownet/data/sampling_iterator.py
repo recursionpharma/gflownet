@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from copy import deepcopy
 import os
 import sqlite3
 from typing import Callable, List
@@ -12,6 +13,8 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.utils.data import IterableDataset
 
+from gflownet.data.replay_buffer import ReplayBuffer
+
 
 class SamplingIterator(IterableDataset):
     """This class allows us to parallelise and train faster.
@@ -22,8 +25,9 @@ class SamplingIterator(IterableDataset):
     is CPU-bound.
 
     """
-    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio=0.5,
-                 stream=True, log_dir: str = None, sample_cond_info=True, random_action_prob=0.):
+    def __init__(self, dataset: Dataset, model: nn.Module, batch_size: int, ctx, algo, task, device, ratio: float = 0.5,
+                 stream=True, replay_buffer: ReplayBuffer = None, log_dir: str = None, sample_cond_info: bool = True,
+                 random_action_prob: float = 0., hindsight_ratio: float = 0.):
         """Parameters
         ----------
         dataset: Dataset
@@ -31,6 +35,8 @@ class SamplingIterator(IterableDataset):
         model: nn.Module
             The model we sample from (must be on CUDA already or share_memory() must be called so that
             parameters are synchronized between each worker)
+        replay_buffer: ReplayBuffer
+            The replay buffer for training on past data
         batch_size: int
             The number of trajectories, each trajectory will be comprised of many graphs, so this is
             _not_ the batch size in terms of the number of graphs (that will depend on the task)
@@ -51,6 +57,7 @@ class SamplingIterator(IterableDataset):
         """
         self.data = dataset
         self.model = model
+        self.replay_buffer = replay_buffer
         self.batch_size = batch_size
         self.offline_batch_size = int(np.ceil(batch_size * ratio))
         self.online_batch_size = int(np.floor(batch_size * (1 - ratio)))
@@ -63,17 +70,20 @@ class SamplingIterator(IterableDataset):
         self.sample_online_once = True  # TODO: deprecate this, disallow len(data) == 0 entirely
         self.sample_cond_info = sample_cond_info
         self.random_action_prob = random_action_prob
+        self.hindsight_ratio = hindsight_ratio
         self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
+
+        # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
+        # then "offline" now refers to cond info and online to x, so no duplication and we don't end
+        # up with 2*batch_size accidentally
         if not sample_cond_info:
-            # Slightly weird semantics, but if we're sampling x given some fixed (data) cond info
-            # then "offline" refers to cond info and online to x, so no duplication and we don't end
-            # up with 2*batch_size accidentally
             self.offline_batch_size = self.online_batch_size = batch_size
-        self.log_dir = log_dir
+
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
         # has been copied into a new python process.
+        self.log_dir = log_dir
         self.log = SQLiteLog()
         self.log_hooks: List[Callable] = []
 
@@ -93,9 +103,9 @@ class SamplingIterator(IterableDataset):
             if n == 0:
                 yield np.arange(0, 0)
                 return
-            if worker_info is None:
+            if worker_info is None:  # no multi-processing
                 start, end, wid = 0, n, -1
-            else:
+            else:  # split the data into chunks (per-worker)
                 nw = worker_info.num_workers
                 wid = worker_info.id
                 start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
@@ -131,14 +141,16 @@ class SamplingIterator(IterableDataset):
             # Sample conditional info such as temperature, trade-off weights, etc.
 
             if self.sample_cond_info:
+                num_online = self.online_batch_size
                 cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
+
                 # Sample some dataset data
                 mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
                 flat_rewards = list(self.task.flat_reward_transform(
                     torch.stack(flat_rewards))) if len(flat_rewards) else []
                 graphs = [self.ctx.mol_to_graph(m) for m in mols]
                 trajs = self.algo.create_training_data_from_graphs(graphs)
-                num_online = self.online_batch_size
+
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
                 num_offline = 0
@@ -146,8 +158,8 @@ class SamplingIterator(IterableDataset):
                     cond_info=torch.stack([self.data[i] for i in idcs]))
                 trajs, flat_rewards = [], []
 
-            is_valid = torch.ones(num_offline + num_online).bool()
             # Sample some on-policy data
+            is_valid = torch.ones(num_offline + num_online).bool()
             if num_online > 0:
                 with torch.no_grad():
                     trajs += self.algo.create_training_data_from_own_samples(self.model, num_online,
@@ -165,17 +177,14 @@ class SamplingIterator(IterableDataset):
                     # fetch the valid trajectories endpoints
                     mols = [self.ctx.graph_to_mol(trajs[i]['result']) for i in valid_idcs]
                     # ask the task to compute their reward
-                    preds, m_is_valid = self.task.compute_flat_rewards(mols)
-                    assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
+                    online_flat_rew, m_is_valid = self.task.compute_flat_rewards(mols)
+                    assert online_flat_rew.ndim == 2, \
+                        "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
                     valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
-                    pred_reward = torch.zeros((num_online, preds.shape[1]))
-                    pred_reward[valid_idcs - num_offline] = preds
-                    # TODO: reintegrate bootstrapped reward predictions
-                    # if preds.shape[0] > 0:
-                    #     for i in range(self.number_of_objectives):
-                    #         pred_reward[valid_idcs - num_offline, i] = preds[range(preds.shape[0]), i]
+                    pred_reward = torch.zeros((num_online, online_flat_rew.shape[1]))
+                    pred_reward[valid_idcs - num_offline] = online_flat_rew
                     is_valid[num_offline:] = False
                     is_valid[valid_idcs] = True
                     flat_rewards += list(pred_reward)
@@ -201,14 +210,53 @@ class SamplingIterator(IterableDataset):
             #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
             rewards = torch.exp(log_rewards / cond_info['beta'])
             if num_online > 0 and self.log_dir is not None:
-                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                                   {k: v[num_offline:] for k, v in cond_info.items()})
+                self.log_generated(deepcopy(trajs[num_offline:]), deepcopy(rewards[num_offline:]),
+                                   deepcopy(flat_rewards[num_offline:]),
+                                   {k: v[num_offline:] for k, v in deepcopy(cond_info).items()})
             if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
-                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                             {k: v[num_offline:] for k, v in cond_info.items()}))
+                        hook(deepcopy(trajs[num_offline:]), deepcopy(rewards[num_offline:]),
+                             deepcopy(flat_rewards[num_offline:]),
+                             {k: v[num_offline:] for k, v in deepcopy(cond_info).items()}))
+
+            if self.replay_buffer is not None:
+                # If we have a replay buffer, we push the online trajectories in it
+                # and resample immediately such that the "online" data in the batch
+                # comes from a more stable distribution (try to avoid forgetting)
+                # Important: note that the 'online' metrics now will be describing the data
+                # in the replay buffer and not purely the data from the last generated batch
+
+                # cond_info is a dict, so we need to convert it to a list of dicts
+                cond_info = [{k: v[i] for k, v in cond_info.items()} for i in range(num_offline + num_online)]
+
+                # push the online trajectories in the replay buffer and sample a new 'online' batch
+                for i in range(num_offline, len(trajs)):
+                    self.replay_buffer.push(deepcopy(trajs[i]), deepcopy(log_rewards[i]), deepcopy(flat_rewards[i]),
+                                            deepcopy(cond_info[i]), deepcopy(is_valid[i]))
+                replay_trajs, replay_logr, replay_fr, replay_condinfo, replay_valid = \
+                    self.replay_buffer.sample(num_online)
+
+                # append the online trajectories to the offline ones
+                trajs[num_offline:] = replay_trajs
+                log_rewards[num_offline:] = replay_logr
+                flat_rewards[num_offline:] = replay_fr
+                cond_info[num_offline:] = replay_condinfo
+                is_valid[num_offline:] = replay_valid
+
+                # convert cond_info back to a dict
+                cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
+
+            if self.hindsight_ratio > 0.:
+                # Relabels some of the online trajectories with hindsight
+                assert hasattr(self.task, 'relabel_condinfo_and_logrewards'), \
+                    "Hindsight requires the task to implement relabel_condinfo_and_logrewards"
+                # samples indexes of trajectories without repeats
+                hindsight_idxs = torch.randperm(num_online)[:int(num_online * self.hindsight_ratio)] + num_offline
+                cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(cond_info, log_rewards, flat_rewards,
+                                                                                   hindsight_idxs)
+                log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
 
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info['encoding'], log_rewards)

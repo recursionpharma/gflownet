@@ -1,7 +1,9 @@
 import os
 import pathlib
+import time
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
+import psutil
 from rdkit.Chem.rdchem import Mol as RDMol
 import torch
 from torch import Tensor
@@ -11,12 +13,13 @@ from torch.utils.data import Dataset
 import torch.utils.tensorboard
 import torch_geometric.data as gd
 
+from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import create_logger
-from gflownet.utils.multiprocessing_proxy import wrap_model_mp
+from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 # This type represents an unprocessed list of reward signals/conditioning information
 FlatRewards = NewType('FlatRewards', Tensor)  # type: ignore
@@ -100,6 +103,7 @@ class GFNTrainer:
         self.model: nn.Module
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
+        self.replay_buffer: ReplayBuffer
         self.sampling_model: nn.Module
         self.mb_size: int
         self.env: GraphBuildingEnv
@@ -117,13 +121,15 @@ class GFNTrainer:
         self.offline_ratio = self.hps.get('offline_ratio', 0.5)
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
-        # If True, print messages during training
-        self.verbose = False
+        # Print the loss every `self.print_every` iterations
+        self.print_every = 1000
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
+        # Pickle messages to reduce load on shared memory (conversely, increases load on CPU)
+        self.pickle_messages = hps.get('mp_pickle_messages', False)
 
         self.setup()
 
@@ -136,29 +142,42 @@ class GFNTrainer:
     def step(self, loss: Tensor):
         raise NotImplementedError()
 
-    def _wrap_model_mp(self, model):
-        """Wraps a nn.Module instance so that it can be shared to `DataLoader` workers.  """
-        model.to(self.device)
-        if self.num_workers > 0:
-            placeholder = wrap_model_mp(model, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical))
+    def _wrap_for_mp(self, obj, send_to_device=False):
+        """Wraps an object in a placeholder whose reference can be sent to a
+        data worker process (only if the number of workers is non-zero)."""
+        if send_to_device:
+            obj.to(self.device)
+        if self.num_workers > 0 and obj is not None:
+            placeholder = mp_object_wrapper(obj, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical),
+                                            pickle_messages=self.pickle_messages)
             return placeholder, torch.device('cpu')
-        return model, self.device
+        else:
+            return obj, self.device
 
     def build_callbacks(self):
         return {}
 
     def build_training_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_model_mp(self.sampling_model)
+        model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
+        replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
         iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'train'),
-                                    random_action_prob=self.hps.get('random_action_prob', 0.0))
+                                    replay_buffer=replay_buffer, ratio=self.offline_ratio,
+                                    log_dir=os.path.join(self.hps['log_dir'], 'train'),
+                                    random_action_prob=self.hps.get('random_action_prob', 0.0),
+                                    hindsight_ratio=self.hps.get('hindsight_ratio', 0.0))
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
-        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+        return torch.utils.data.DataLoader(
+            iterator,
+            batch_size=None,
+            num_workers=self.num_workers,
+            persistent_workers=self.num_workers > 0,
+            # The 2 here is an odd quirk of torch 1.10, it is fixed and
+            # replaced by None in torch 2.
+            prefetch_factor=1 if self.num_workers else 2)
 
     def build_validation_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_model_mp(self.model)
+        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
         iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
                                     ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
                                     sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
@@ -166,7 +185,8 @@ class GFNTrainer:
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0)
+                                           persistent_workers=self.num_workers > 0,
+                                           prefetch_factor=1 if self.num_workers else 2)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
         try:
@@ -207,12 +227,23 @@ class GFNTrainer:
         callbacks = self.build_callbacks()
         start = self.hps.get('start_at_step', 0) + 1
         logger.info("Starting training")
+        start_time = time.time()
         for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
+            mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.**3)
+            if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
+                logger.info(
+                    f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} "
+                    f"(main process memory usage: {mem_usage:.2f} GB)")
+                continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
+            info['mem_usage'] = mem_usage
+            info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
+            info['num_workers'] = self.num_workers
+            info['elapsed_time'] = time.time() - start_time
             self.log(info, it, 'train')
-            if self.verbose:
+            if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
 
             if it % self.hps['validate_every'] == 0:

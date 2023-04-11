@@ -73,7 +73,7 @@ class SEHMOOTask(SEHTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model)
+        model, self.device = self._wrap_model(model, send_to_device=True)
         return {'seh': model}
 
     def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
@@ -125,6 +125,20 @@ class SEHMOOTask(SEHTask):
             'preferences': preferences,
             'focus_dir': focus_dir,
         }
+
+    def relabel_condinfo_and_logrewards(self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: Tensor,
+                                        hindsight_idxs: np.ndarray):
+        if self.focus_type is None:
+            return cond_info, log_rewards
+        # only keep hindsight_idxs that actually correspond to a violated constraint
+        focus_mask = metrics.get_focus_mask(flat_rewards, cond_info['focus_dir'], self.focus_cosim)
+        hindsight_idxs = hindsight_idxs[focus_mask[hindsight_idxs]]
+        # relabels the focus_dirs and log_rewards
+        cond_info['focus_dir'][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
+        cond_info['encoding'] = torch.cat(
+            [cond_info['encoding'][:, :self.num_thermometer_dim + len(self.objectives)], cond_info['focus_dir']], 1)
+        log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
+        return cond_info, log_rewards
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -184,8 +198,7 @@ class SEHMOOTask(SEHTask):
 class SEHMOOFragTrainer(SEHFragTrainer):
     def default_hps(self) -> Dict[str, Any]:
         return {
-            **super().default_hps(),
-            'use_fixed_weight': False,
+            **super().default_hps(), 'use_fixed_weight': False,
             'objectives': ['seh', 'qed', 'sa', 'mw'],
             'sampling_tau': 0.95,
             'valid_sample_cond_info': False,
@@ -194,6 +207,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'preference_type': 'dirichlet',
             'focus_type': None,
             'focus_cosim': None,
+            'hindsight_ratio': 0.0
         }
 
     def setup_algo(self):
@@ -217,7 +231,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                preference_type=self.hps['preference_type'], focus_type=self.hps['focus_type'],
                                focus_cosim=self.hps['focus_cosim'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
-                               wrap_model=self._wrap_model_mp)
+                               wrap_model=self._wrap_for_mp)
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
@@ -348,7 +362,7 @@ def main():
         'seed': 0,
         'global_batch_size': 64,
         'num_training_steps': 20_000,
-        'validate_every': 1,
+        'validate_every': 5,
         'num_layers': 4,
         'algo': 'TB',
         'objectives': ['seh', 'qed'],
@@ -358,7 +372,7 @@ def main():
         'Z_lr_decay': 50000,
         'sampling_tau': 0.95,
         'random_action_prob': 0.1,
-        'num_data_loader_workers': 8,
+        'num_data_loader_workers': 2,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
@@ -367,6 +381,10 @@ def main():
         'focus_cosim': 0.99,
         'n_valid': 15,
         'n_valid_repeats': 8,
+        'use_replay_buffer': True,
+        'replay_buffer_warmup': 0,
+        'hindsight_ratio': 0.5,
+        'mp_pickle_messages': True
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:
@@ -376,7 +394,7 @@ def main():
     os.makedirs(hps['log_dir'])
 
     trial = SEHMOOFragTrainer(hps, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-    trial.verbose = True
+    trial.print_every = 1
     trial.run()
 
 
