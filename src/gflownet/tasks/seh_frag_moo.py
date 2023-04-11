@@ -45,9 +45,9 @@ class SEHMOOTask(SEHTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
-                 focus_type: Union[list, str] = None, focus_cosim: float = 0.,
-                 fixed_focus_dirs: torch.TensorType = None, illegal_action_logreward: float = None,
-                 rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 focus_type: Union[list, str] = None, focus_cosim: float = 0., fixed_focus_dirs: torch.Tensor = None,
+                 illegal_action_logreward: float = None, rng: np.random.Generator = None,
+                 wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
         self.models = self._load_task_models()
@@ -106,7 +106,7 @@ class SEHMOOTask(SEHTask):
         cond_info['focus_dir'] = focus_dir
         return cond_info
 
-    def encode_conditional_information(self, cond_info: torch.TensorType) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, cond_info: Tensor) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == 'constant':
             beta = torch.ones(len(cond_info)) * self.temperature_dist_params
             beta_enc = torch.zeros((len(cond_info), self.num_thermometer_dim))
@@ -126,8 +126,8 @@ class SEHMOOTask(SEHTask):
             'focus_dir': focus_dir,
         }
 
-    def relabel_condinfo_and_logrewards(self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: Tensor,
-                                        hindsight_idxs: np.ndarray):
+    def relabel_condinfo_and_logrewards(self, cond_info: Dict[str, Tensor], log_rewards: Tensor,
+                                        flat_rewards: FlatRewards, hindsight_idxs: np.ndarray):
         if self.focus_type is None:
             return cond_info, log_rewards
         # only keep hindsight_idxs that actually correspond to a violated constraint
@@ -163,13 +163,13 @@ class SEHMOOTask(SEHTask):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
 
         else:
-            flat_rewards = []
+            flat_r = []
             if 'seh' in self.objectives:
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
                 seh_preds = self.models['seh'](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
                 seh_preds[seh_preds.isnan()] = 0
-                flat_rewards.append(seh_preds)
+                flat_r.append(seh_preds)
 
             def safe(f, x, default):
                 try:
@@ -179,19 +179,19 @@ class SEHMOOTask(SEHTask):
 
             if "qed" in self.objectives:
                 qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
-                flat_rewards.append(qeds)
+                flat_r.append(qeds)
 
             if "sa" in self.objectives:
                 sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
                 sas = (10 - sas) / 9  # Turn into a [0-1] reward
-                flat_rewards.append(sas)
+                flat_r.append(sas)
 
             if "mw" in self.objectives:
                 molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
                 molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-                flat_rewards.append(molwts)
+                flat_r.append(molwts)
 
-            flat_rewards = torch.stack(flat_rewards, dim=1)
+            flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
 
