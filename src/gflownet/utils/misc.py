@@ -2,13 +2,14 @@ import logging
 import sys
 
 
-def create_logger(name="logger", loglevel=logging.INFO, logfile=None, streamHandle=True):
+def create_logger(name="gflownet_logger", loglevel=logging.INFO, logfile=None, streamHandle=True):
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
     formatter = logging.Formatter(
         fmt='%(asctime)s - %(levelname)s - {} - %(message)s'.format(name),
         datefmt='%d/%m/%Y %H:%M:%S',
     )
+    logger.propagate = False
 
     handlers = []
     if logfile is not None:

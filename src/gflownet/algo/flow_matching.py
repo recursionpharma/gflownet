@@ -108,8 +108,6 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
-        if self.correct_idempotent:
-            raise ValueError('Not implemented')
         return batch
 
     def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):

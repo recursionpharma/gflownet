@@ -206,13 +206,14 @@ class SamplingIterator(IterableDataset):
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                                    {k: v[num_offline:] for k, v in cond_info.items()})
+            extra_info = {}
             if num_online > 0:
-                extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
                         hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
                              {k: v[num_offline:] for k, v in cond_info.items()}))
-                batch.extra_info = extra_info
+            extra_info['num_graphs'] = batch.num_graphs
+            batch.extra_info = extra_info
             yield batch
 
     def log_generated(self, trajs, log_rewards, flat_rewards, cond_info):

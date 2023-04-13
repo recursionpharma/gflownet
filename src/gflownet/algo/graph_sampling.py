@@ -12,7 +12,7 @@ from gflownet.envs.graph_building_env import GraphActionType
 class GraphSampler:
     """A helper class to sample from GraphActionCategorical-producing models"""
     def __init__(self, ctx, env, max_len, max_nodes, rng, sample_temp=1, correct_idempotent=False,
-                 pad_with_terminal_state=False):
+                 pad_with_terminal_state=False, force_stop_on_max_len=True):
         """
         Parameters
         ----------
@@ -43,6 +43,7 @@ class GraphSampler:
         self.sanitize_samples = True
         self.correct_idempotent = correct_idempotent
         self.pad_with_terminal_state = pad_with_terminal_state
+        self.force_stop_on_max_len = force_stop_on_max_len
 
     def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device,
                           random_action_prob: float = 0.):
@@ -114,7 +115,10 @@ class GraphSampler:
                 actions = sample_cat.sample()
             else:
                 actions = fwd_cat.sample()
-            graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
+            if self.force_stop_on_max_len and t == self.max_len - 1:
+                graph_actions = [GraphAction(GraphActionType.Stop) for g in torch_graphs]
+            else:
+                graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
             log_probs = fwd_cat.log_prob(actions)
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
