@@ -136,9 +136,11 @@ class TrajectoryBalance:
         """
         trajs = [{'traj': generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
-            n_back = [self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
-                      for gp, _ in traj['traj'][1:]] + [1]
-            traj['bck_logprobs'] = (1 / torch.tensor(n_back).float()).log()
+            n_back = [
+                self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
+                for gp, _ in traj['traj'][1:]
+            ] + [1]
+            traj['bck_logprobs'] = (1 / torch.tensor(n_back).float()).log().to(self.ctx.device)
             traj['result'] = traj['traj'][-1][0]
         return trajs
 
