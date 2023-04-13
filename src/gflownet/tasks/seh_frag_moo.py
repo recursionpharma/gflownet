@@ -33,6 +33,7 @@ from gflownet.utils import metrics
 from gflownet.utils import sascore
 from gflownet.utils.focus_model import FocusModel
 from gflownet.utils.focus_model import TabularFocusModel
+from gflownet.utils.geometric_regions import GeometricRegion
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook
 from gflownet.utils.multiobjective_hooks import TopKHook
 
@@ -60,6 +61,7 @@ class SEHMOOTask(SEHTask):
         focus_limit_coef: float = 1.0,
         fixed_focus_dirs: torch.Tensor = None,
         illegal_action_logreward: float = None,
+        dead_regions: List[dict] = None,
         focus_model: FocusModel = None,
         focus_model_training_limits: Tuple[int, int] = None,
         max_train_it: int = None,
@@ -85,6 +87,15 @@ class SEHMOOTask(SEHTask):
         self.focus_model = focus_model
         self.focus_model_training_limits = focus_model_training_limits
         self.max_train_it = max_train_it
+        if dead_regions is None:
+            self.dead_regions = None
+        else:
+            self.dead_regions = [GeometricRegion.init_from_dict(region_init_dict) for region_init_dict in dead_regions]
+            for region in self.dead_regions:
+                assert (
+                    bool(region.get_sample_mask(torch.zeros(1, len(self.objectives)))) is False
+                ), "The origin of the objective space should be outside any dead regions."
+
         assert set(objectives) <= {"seh", "qed", "sa", "mw"} and len(objectives) == len(set(objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -237,6 +248,14 @@ class SEHMOOTask(SEHTask):
                 flat_r.append(molwts)
 
             flat_rewards = torch.stack(flat_r, dim=1)
+
+            # apply dead regions to objective space
+            # used to study the effect of different objectives landscapes on the sampling behavior of the model
+            if self.dead_regions is not None:
+                for region in self.dead_regions:
+                    dead_samples = region.get_sample_mask(flat_rewards)
+                    flat_rewards[dead_samples] = 0.0
+
             return FlatRewards(flat_rewards), is_valid
 
 
@@ -255,8 +274,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             "focus_cosim": None,
             "focus_limit_coef": 1.0,
             "hindsight_ratio": 0.0,
+            "dead_regions": None,
             "focus_model_training_limits": None,
             "focus_model_state_space_res": None,
+            "use_fixed_weight": False,
+            "objectives": ["seh", "qed", "sa", "mw"],
+            "sampling_tau": 0.95,
+            "valid_sample_cond_info": False,
+            "n_valid": 15,
+            "n_valid_repeats": 128,
+            "preference_type": "dirichlet",
+            "focus_type": None,
+            "focus_cosim": None,
+            "hindsight_ratio": 0.0,
+            "dead_regions": None,
         }
 
     def setup_algo(self):
@@ -297,6 +328,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             focus_cosim=self.hps["focus_cosim"],
             focus_limit_coef=self.hps["focus_limit_coef"],
             illegal_action_logreward=self.hps["illegal_action_logreward"],
+            dead_regions=self.hps["dead_regions"],
             focus_model=self.focus_model,
             focus_model_training_limits=self.hps["focus_model_training_limits"],
             max_train_it=self.hps["num_training_steps"],
@@ -496,6 +528,7 @@ def main():
         "mp_pickle_messages": True,
         "focus_model_training_limits": [0.0001, 0.75],
         "focus_model_state_space_res": 10,
+        "dead_regions": [{"type": "hypersphere", "center": (1.0, 1.0), "radius": 0.6}],
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:
