@@ -5,23 +5,30 @@ import pickle
 from typing import Any, Callable, Dict, List, Tuple
 
 import networkx as nx
+from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
 import scipy.stats as stats
 import torch
-import torch.nn as nn
-import torch_geometric.data as gd
-from networkx.algorithms.isomorphism import is_isomorphic
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+import torch_geometric.data as gd
 from torch_scatter import scatter_add
 from tqdm import tqdm
 
-from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.algo.flow_matching import FlowMatching
+from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.cliques_env import CliquesEnvContext
-from gflownet.envs.graph_building_env import GraphBuildingEnv, Graph, GraphActionType
-from gflownet.models.graph_transformer import GraphTransformerGFN, GraphTransformer
-from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
+from gflownet.envs.graph_building_env import Graph
+from gflownet.envs.graph_building_env import GraphActionType
+from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.models.graph_transformer import GraphTransformer
+from gflownet.models.graph_transformer import GraphTransformerGFN
+from gflownet.train import FlatRewards
+from gflownet.train import GFNTask
+from gflownet.train import GFNTrainer
+from gflownet.train import RewardScalar
 from gflownet.utils.transforms import thermometer
 
 
@@ -373,7 +380,8 @@ class CliquesTrainer(GFNTrainer):
             self.training_data.idcs = train_idcs
             self.test_data.idcs = test_idcs
         elif split_type == 'subtrees':
-            train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9))
+            train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9), 
+                                                                              hps.get('test_split_seed', 142857))
             self.training_data.idcs = train_idcs
             self.test_data.idcs = test_idcs
         if not self._do_supervised or hps.get('regress_to_Fsa', False):
