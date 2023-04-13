@@ -23,8 +23,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
     """
-    def __init__(self, atoms=['C', 'N', 'O', 'F', 'P', 'S'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
-                 charges=[0, 1, -1], expl_H_range=[0, 1], allow_explicitly_aromatic=False, num_rw_feat=8):
+    def __init__(self, atoms=['C', 'N', 'O', 'F', 'P',
+                              'S'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES, charges=[0, 1, -1],
+                 expl_H_range=[0, 1], allow_explicitly_aromatic=False, num_rw_feat=8, max_nodes=None, max_edges=None):
         """An env context for building molecules atom-by-atom and bond-by-bond.
 
         Parameters
@@ -56,6 +57,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             'fill_wildcard': [None] + atoms,  # default is, there is nothing
         }
         self.num_rw_feat = num_rw_feat
+        self.max_nodes = max_nodes
+        self.max_edges = max_edges
 
         self.default_wildcard_replacement = 'C'
         self.negative_attrs = ['fill_wildcard']
@@ -182,6 +185,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
         add_node_mask = torch.ones((x.shape[0], self.num_new_node_values))
+        if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
+            add_node_mask *= 0
         explicit_valence = {}
         max_valence = {}
         set_node_attr_mask = torch.ones((x.shape[0], self.num_node_attr_logits))
@@ -240,12 +245,16 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     set_edge_attr_mask[i, sl + ti] = float(is_ok)
         edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
             (-1, 2)).T
-        gc = nx.complement(g)
 
         def is_ok_non_edge(e):
             return all([explicit_valence[i] + 1 <= max_valence[i] for i in e])
 
-        non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape((2, -1))
+        if self.max_edges is not None and len(g.edges) >= self.max_edges:
+            non_edge_index = torch.zeros((2, 0), dtype=torch.long)
+        else:
+            gc = nx.complement(g)
+            non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape(
+                (2, -1))
         data = gd.Data(
             x,
             edge_index,
