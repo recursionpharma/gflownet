@@ -371,6 +371,7 @@ class CliquesTrainer(GFNTrainer):
 
         self.algo.task = self.task
         self.exact_prob_cb = ExactProbCompCallback(self, self.training_data.data, self.device,
+                                                   cache_root=hps['data_root'],
                                                    cache_path=hps['data_root'] + '/two_col_epc_cache.pkl')
         split_type = hps.get('test_split_type', 'random')
         if split_type == 'random':
@@ -380,7 +381,7 @@ class CliquesTrainer(GFNTrainer):
             self.training_data.idcs = train_idcs
             self.test_data.idcs = test_idcs
         elif split_type == 'subtrees':
-            train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9), 
+            train_idcs, test_idcs = self.exact_prob_cb.get_subtree_test_split(hps.get('train_ratio', 0.9),
                                                                               hps.get('test_split_seed', 142857))
             self.training_data.idcs = train_idcs
             self.test_data.idcs = test_idcs
@@ -422,7 +423,7 @@ def hashg(g):
 
 
 class ExactProbCompCallback:
-    def __init__(self, trial, states, dev, mbs=128, cache_path=None, do_save_px=True, log_rewards=None,
+    def __init__(self, trial, states, dev, mbs=128, cache_root=None, cache_path=None, do_save_px=True, log_rewards=None,
                  tqdm_disable=None, ctx=None, env=None):
         self.trial = trial
         self.ctx = trial.ctx if trial is not None else ctx
@@ -430,12 +431,11 @@ class ExactProbCompCallback:
         self.mbs = mbs
         self.dev = dev
         self.states = states
+        self.cache_root = cache_root
         self.cache_path = cache_path
         self.mdp_graph = None
         if self.cache_path is not None:
             self.load_cache(self.cache_path)
-        else:
-            pass
         if log_rewards is None:
             self.log_rewards = np.array(
                 [self.trial.training_data.reward(i) for i in tqdm(self.states, disable=tqdm_disable)])
@@ -648,12 +648,26 @@ class ExactProbCompCallback:
         return train_set, test_set
 
     def get_subtree_test_split(self, r, seed=142857):
+        cache_path = f'{self.cache_root}/subtree_split_{r}_{seed}.pkl'
+        if self.cache_root is not None:
+            if os.path.exists(cache_path):
+                return pickle.load(open(cache_path, 'rb'))
         test_set = set()
         n = int((1 - r) * len(self.states))
         np.random.seed(seed)
-        start_states = [s0 for s0 in self.states if len(s0.nodes) == 6 and len(s0.edges) >= 11]
+        start_states_idx, available_start_states, start_states = [], [], []
+        edge_limit = 11
         while len(test_set) < n:
-            s0 = start_states[np.random.randint(len(start_states))]
+            num_ss = len([i for i in start_states_idx if i not in test_set])
+            if num_ss == 0 or len(available_start_states) == 0:
+                start_states, start_states_idx = zip(*[(s0, i)
+                                                       for i, s0 in enumerate(self.states)
+                                                       if len(s0.nodes) == 6 and len(s0.edges) >= edge_limit])
+                available_start_states = list(range(len(start_states)))
+                edge_limit -= 1
+            assi = np.random.randint(len(available_start_states))
+            ssi = available_start_states.pop(assi)
+            s0 = start_states[ssi]
             i0 = self.get_graph_idx(s0)
             if i0 in test_set:
                 continue
@@ -676,6 +690,8 @@ class ExactProbCompCallback:
         train_set = list(set(range(len(self.states))).difference(test_set))
         test_set = list(test_set)
         np.random.shuffle(train_set)
+        if self.cache_root is not None:
+            pickle.dump((np.array(train_set), np.array(test_set)), open(cache_path, 'wb'))
         return train_set, test_set
 
 
