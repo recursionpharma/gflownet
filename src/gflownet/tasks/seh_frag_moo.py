@@ -370,7 +370,8 @@ def main():
         'global_batch_size': 64,
         'num_training_steps': 20_000,
         'validate_every': 5,
-        'num_layers': 4,
+        'num_layers': 2,
+        'num_emb': 256,
         'algo': 'TB',
         'objectives': ['seh', 'qed'],
         'learning_rate': 1e-4,
@@ -385,12 +386,12 @@ def main():
         'num_thermometer_dim': 32,
         'preference_type': 'dirichlet',
         'focus_type': "centered",
-        'focus_cosim': 0.99,
+        'focus_cosim': 0.98,
         'n_valid': 15,
         'n_valid_repeats': 8,
         'use_replay_buffer': True,
         'replay_buffer_warmup': 0,
-        'hindsight_ratio': 0.5,
+        'hindsight_ratio': 0.3,
         'mp_pickle_messages': True
     }
     if os.path.exists(hps['log_dir']):
