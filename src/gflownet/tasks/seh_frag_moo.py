@@ -130,20 +130,13 @@ class SEHMOOTask(SEHTask):
                                         flat_rewards: FlatRewards, hindsight_idxs: np.ndarray):
         if self.focus_type is None:
             return cond_info, log_rewards
-        # finds which samples were in-focus and which are out-of-focus
+        # only keep hindsight_idxs that actually correspond to a violated constraint
         focus_mask = metrics.get_focus_mask(flat_rewards, cond_info['focus_dir'], self.focus_cosim)
-        pos_hindsight_idxs = hindsight_idxs[focus_mask[hindsight_idxs]]
-        neg_hindsight_idxs = hindsight_idxs[~focus_mask[hindsight_idxs]]
-        # relabels the focus_dirs
-        # positive hindsight is applied to samples that were out-of-focus that we re-label as being in-focus
-        # negative hindsight is applied to samples that were in-focus that we re-label as being (probably) out-of-focus
-        cond_info['focus_dir'][pos_hindsight_idxs] = nn.functional.normalize(flat_rewards[pos_hindsight_idxs], dim=1)
-        cond_info['focus_dir'][neg_hindsight_idxs] = torch.tensor(
-            metrics.sample_positiveQuadrant_ndim_sphere(n=len(neg_hindsight_idxs), d=len(self.objectives),
-                                                        normalisation='l2')).float()
+        hindsight_idxs = hindsight_idxs[focus_mask[hindsight_idxs]]
+        # relabels the focus_dirs and log_rewards
+        cond_info['focus_dir'][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
         cond_info['encoding'] = torch.cat(
             [cond_info['encoding'][:, :self.num_thermometer_dim + len(self.objectives)], cond_info['focus_dir']], 1)
-        # relabels the log_rewards
         log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
         return cond_info, log_rewards
 
