@@ -442,7 +442,8 @@ class GraphActionCategorical:
             for k in keys
         ]
         self.logprobs = None
-
+        self._inf = None
+        
         if deduplicate_edge_index and 'edge_index' in keys:
             idx = keys.index('edge_index')
             self.batch[idx] = self.batch[idx][::2]
@@ -464,26 +465,36 @@ class GraphActionCategorical:
             self.logprobs = [i.to(device) for i in self.logprobs]
         if self.masks is not None:
             self.masks = [i.to(device) for i in self.masks]
+        self._inf = None
         return self
 
+    def inf(self):
+        """Store an `inf` on `self.dev`, needed for `torch.where`"""
+        if self._inf is None:
+            self._inf = torch.tensor(torch.inf, requires_grad=False, device=self.dev)
+        return self._inf
+    
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
-        maxl = torch.cat(
-            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
-            dim=1).max(1).values.detach()
+        maxl = torch.cat([scatter(torch.where(m == 1, i, -self.inf()), b, dim=0, dim_size=self.num_graphs, reduce='max') 
+                          for i, m, b in zip(self.logits, self.masks, self.batch)],
+                         dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
+        exp_logits = [m * (i - maxl[b, None]).exp().clamp(self._epsilon) 
+                      for i, m, b in zip(self.logits, self.masks, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         logZ = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) 
+            for i, b in zip(exp_logits, self.batch)
         ]).log()
         # log probabilities is log(exp(logit) / Z)
-        self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
+        self.logprobs = [torch.where(m == 1, i.log(), -self.inf()) - logZ[b, None] 
+                         for i, m, b in zip(exp_logits, self.masks, self.batch)]
         return self.logprobs
 
     def logsumexp(self, x=None):
@@ -492,14 +503,17 @@ class GraphActionCategorical:
             x = self.logits
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
-        maxl = torch.cat([scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(x, self.batch)],
+        maxl = torch.cat([scatter(torch.where(m == 1, i, -self.inf()), b, dim=0, dim_size=self.num_graphs, reduce='max') 
+                          for i, m, b in zip(x, self.masks, self.batch)],
                          dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
+        exp_vals = [m * (i - maxl[b, None]).exp().clamp(self._epsilon) 
+                    for i, m, b in zip(x, self.masks, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
         reduction = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_vals, self.batch)
+            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) 
+            for i, b in zip(exp_vals, self.batch)
         ]).log()
         # Add back max
         return reduction + maxl
@@ -522,7 +536,8 @@ class GraphActionCategorical:
         # Uniform noise
         u = [torch.rand(i.shape, device=self.dev) for i in self.logits]
         # Gumbel noise
-        gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
+        gumbel = [torch.where(mask == 1, logit - (-noise.log()).log(), -self.inf()) 
+                  for logit, mask, noise in zip(self.logits, self.masks, u)]
         # Take the argmax
         return self.argmax(x=gumbel)
 

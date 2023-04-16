@@ -188,7 +188,7 @@ class GraphTransformerGFN(nn.Module):
 
     def _action_type_to_mask(self, t, g):
         mask_name = self._action_type_to_mask_name[t] + '_mask'
-        return getattr(g, mask_name) if hasattr(g, mask_name) else 1
+        return getattr(g, mask_name, 1)
 
     def _action_type_to_logit(self, t, emb, g):
         return self._mask(self._emb_to_logits[t](emb), self._action_type_to_mask(t, g))
