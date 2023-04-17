@@ -96,6 +96,9 @@ class SEHMOOTask(SEHTask):
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
                 np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32))
+        elif self.focus_type == "dirichlet":
+            m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
+            focus_dir = m.sample([n])
         elif self.focus_type == "sampled":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
@@ -300,6 +303,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif self.hps['focus_type'] == 'partitioned':
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l2')
             self.task.fixed_focus_dirs = valid_focus_dirs
+        elif self.hps['focus_type'] == 'dirichlet':
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l1')
+            self.task.fixed_focus_dirs = None
         elif self.hps['focus_type'] == 'sampled':
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l2')
             self.task.fixed_focus_dirs = None
@@ -382,8 +388,8 @@ def main():
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
-        'preference_type': 'dirichlet',
-        'focus_type': "centered",
+        'preference_type': None,
+        'focus_type': "dirichlet",
         'focus_cosim': 0.98,
         'focus_limit_coef': 1e-1,
         'n_valid': 15,
