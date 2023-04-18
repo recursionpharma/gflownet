@@ -69,7 +69,7 @@ class TrajectoryBalance:
         self.reward_loss_multiplier = hps.get('reward_loss_multiplier', 1)
         # Experimental flags
         self.reward_loss_is_mae = True
-        self.tb_loss_is_mae = False
+        self.tb_loss_is_mae = hps.get('tb_loss_is_mae', False)
         self.tb_loss_is_huber = False
         self.mask_invalid_rewards = False
         self.length_normalize_losses = False
@@ -498,5 +498,8 @@ class TrajectoryBalance:
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
             F_start = F[offset:offset + T].repeat_interleave(T - ar[:T])
             F_end = F_and_R[fidces]
-            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+            if self.tb_loss_is_mae:
+                total_loss[ep] = abs(F_start - F_end + P_F_sums - P_B_sums).sum() / car[T]
+            else:
+                total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
         return total_loss

@@ -511,9 +511,11 @@ class GraphActionCategorical:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
+        min_val = torch.min(torch.stack([i.detach().min() for i in self.logits if i.numel()]))
+        outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in self.logits]
         maxl = torch.cat(
-            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
-            dim=1).max(1).values.detach()
+            [scatter(i.detach(), b, dim=0, out=out, reduce='max') for i, b, out in zip(self.logits, self.batch, outs)],
+            dim=1).max(1).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
@@ -531,7 +533,9 @@ class GraphActionCategorical:
             x = self.logits
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
-        maxl = torch.cat([scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(x, self.batch)],
+        min_val = torch.min(torch.stack([i.data.min() for i in x if i.numel()]))
+        outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in x]
+        maxl = torch.cat([scatter(i, b, dim=0, out=out, reduce='max') for i, b, out in zip(x, self.batch, outs)],
                          dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
