@@ -188,7 +188,7 @@ class GFNTrainer:
                                            persistent_workers=self.num_workers > 0,
                                            prefetch_factor=1 if self.num_workers else 2)
 
-    def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int) -> Dict[str, Any]:
+    def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         try:
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
@@ -237,7 +237,7 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} "
                     f"(main process memory usage: {mem_usage:.2f} GB)")
                 continue
-            info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx)
+            info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
             info['mem_usage'] = mem_usage
             info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
             info['num_workers'] = self.num_workers
