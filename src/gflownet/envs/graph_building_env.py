@@ -518,13 +518,14 @@ class GraphActionCategorical:
             dim=1).max(1).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
-        # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
+        corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
+        exp_logits = [i.exp().clamp(self._epsilon) for i, b in zip(corr_logits, self.batch)]
+        # sum corrected exponentiated logits, to get log(Z') = log(Z - max) = log(sum(exp(logits - max)))
         logZ = sum([
             scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
         ]).log()
-        # log probabilities is log(exp(logit) / Z)
-        self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
+        # log probabilities is log(exp(logit) / Z) = (logit - max) - log(Z')
+        self.logprobs = [i - logZ[b, None] for i, b in zip(corr_logits, self.batch)]
         return self.logprobs
 
     def logsumexp(self, x=None):
