@@ -45,9 +45,9 @@ class SEHMOOTask(SEHTask):
     """
     def __init__(self, objectives: List[str], dataset: Dataset, temperature_sample_dist: str,
                  temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
-                 focus_type: Union[list, str] = None, focus_cosim: float = 0., fixed_focus_dirs: torch.Tensor = None,
-                 illegal_action_logreward: float = None, rng: np.random.Generator = None,
-                 wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 focus_type: Union[list, str] = None, focus_cosim: float = 0., focus_limit_coef: float = 1.,
+                 fixed_focus_dirs: torch.Tensor = None, illegal_action_logreward: float = None,
+                 rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
         self.models = self._load_task_models()
@@ -61,6 +61,7 @@ class SEHMOOTask(SEHTask):
         self.experimental_dirichlet = False
         self.focus_type = focus_type
         self.focus_cosim = focus_cosim
+        self.focus_limit_coef = focus_limit_coef
         self.fixed_focus_dirs = fixed_focus_dirs
         self.illegal_action_logreward = illegal_action_logreward
         assert set(objectives) <= {'seh', 'qed', 'sa', 'mw'} and len(objectives) == len(set(objectives))
@@ -127,12 +128,13 @@ class SEHMOOTask(SEHTask):
         }
 
     def relabel_condinfo_and_logrewards(self, cond_info: Dict[str, Tensor], log_rewards: Tensor,
-                                        flat_rewards: FlatRewards, hindsight_idxs: np.ndarray):
+                                        flat_rewards: FlatRewards, hindsight_idxs: Tensor):
         if self.focus_type is None:
             return cond_info, log_rewards
         # only keep hindsight_idxs that actually correspond to a violated constraint
-        focus_mask = metrics.get_focus_mask(flat_rewards, cond_info['focus_dir'], self.focus_cosim)
-        hindsight_idxs = hindsight_idxs[focus_mask[hindsight_idxs]]
+        _, in_focus_mask = metrics.compute_focus_coef(flat_rewards, cond_info['focus_dir'], self.focus_cosim)
+        out_focus_mask = torch.logical_not(in_focus_mask)
+        hindsight_idxs = hindsight_idxs[out_focus_mask[hindsight_idxs]]
         # relabels the focus_dirs and log_rewards
         cond_info['focus_dir'][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
         cond_info['encoding'] = torch.cat(
@@ -151,8 +153,10 @@ class SEHMOOTask(SEHTask):
             f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
 
         if self.focus_type is not None:
-            focus_mask = metrics.get_focus_mask(flat_reward, cond_info['focus_dir'], self.focus_cosim)
-            scalar_logreward[focus_mask] = self.illegal_action_logreward
+            focus_coef, in_focus_mask = metrics.compute_focus_coef(flat_reward, cond_info['focus_dir'],
+                                                                   self.focus_cosim, self.focus_limit_coef)
+            scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
+            scalar_logreward[~in_focus_mask] = self.illegal_action_logreward
 
         return RewardScalar(scalar_logreward * cond_info['beta'])
 
@@ -207,6 +211,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'preference_type': 'dirichlet',
             'focus_type': None,
             'focus_cosim': None,
+            'focus_limit_coef': 1.,
             'hindsight_ratio': 0.0
         }
 
@@ -229,7 +234,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                temperature_parameters=self.hps['temperature_dist_params'],
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
                                preference_type=self.hps['preference_type'], focus_type=self.hps['focus_type'],
-                               focus_cosim=self.hps['focus_cosim'],
+                               focus_cosim=self.hps['focus_cosim'], focus_limit_coef=self.hps['focus_limit_coef'],
                                illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
                                wrap_model=self._wrap_for_mp)
 
@@ -380,6 +385,7 @@ def main():
         'preference_type': 'dirichlet',
         'focus_type': "centered",
         'focus_cosim': 0.98,
+        'focus_limit_coef': 1e-1,
         'n_valid': 15,
         'n_valid_repeats': 8,
         'use_replay_buffer': True,

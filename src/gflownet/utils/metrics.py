@@ -14,14 +14,35 @@ import torch
 import torch.nn as nn
 
 
-def get_focus_mask(flat_rewards, focus_dirs, focus_cosim):
+def compute_focus_coef(flat_rewards: torch.Tensor, focus_dirs: torch.Tensor, focus_cosim: float,
+                       focus_limit_coef: float = 1.):
+    """
+    The focus direction is defined as a hypercone in the objective space centered around an focus_dir.
+    The focus coefficient (between 0 and 1) scales the reward associated to a given sample.
+    It should be 1 when the sample is exactly at the focus direction, equal to the focus_limit_coef
+        when the sample is at on the limit of the focus region and 0 when it is outside the focus region
+        we can use an exponential decay of the focus coefficient between the center and the limit of the focus region
+        i.e. cosim(sample, focus_dir) ** focus_gamma_param = focus_limit_coef
+    Note that we work in the positive quadrant (each reward is positive) and thus the cosine similarity is in [0, 1]
+
+    :param focus_dirs: the focus directions, shape (batch_size, num_objectives)
+    :param flat_rewards: the flat rewards, shape (batch_size, num_objectives)
+    :param focus_cosim: the cosine similarity threshold to define the focus region
+    :param focus_limit_coef: the focus coefficient at the limit of the focus region
+    """
+    assert focus_cosim >= 0. and focus_cosim <= 1., f"focus_cosim must be in [0, 1], now {focus_cosim}"
+    assert focus_limit_coef > 0. and focus_limit_coef <= 1., \
+        f"focus_limit_coef must be in (0, 1], now {focus_limit_coef}"
+    focus_gamma_param = np.log(focus_limit_coef) / np.log(focus_cosim)
     cosim = nn.functional.cosine_similarity(flat_rewards, focus_dirs, dim=1)
-    return cosim < focus_cosim
+    in_focus_mask = cosim >= focus_cosim
+    focus_coef = torch.where(in_focus_mask, cosim**focus_gamma_param, 0.)
+    return focus_coef, in_focus_mask
 
 
 def get_focus_accuracy(flat_rewards, focus_dirs, focus_cosim):
-    focus_successes = 1. - get_focus_mask(flat_rewards, focus_dirs, focus_cosim).float()
-    return focus_successes.sum() / len(flat_rewards)
+    _, in_focus_mask = compute_focus_coef(focus_dirs, flat_rewards, focus_cosim, focus_limit_coef=1.)
+    return in_focus_mask.float().sum() / len(flat_rewards)
 
 
 def get_IGD(samples, ref_front: np.ndarray = None):
