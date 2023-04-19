@@ -104,7 +104,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         }
         pt = Chem.GetPeriodicTable()
         self._max_atom_valence = {
-            **{a: max(pt.GetValenceList(a)) for a in atoms},
+            **{
+                a: max(pt.GetValenceList(a)) for a in atoms
+            },
             'N': 5,  # allow nitro groups by allowing the 5-valent N (perhaps there's a better way?)
             '*': 0,  # wildcard atoms have 0 valence until filled in
         }
@@ -280,15 +282,16 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 # RDKit makes * atoms have no implicit Hs, but we don't want this to trickle down.
                 'no_impl': a.GetNoImplicit() and a.GetSymbol() != '*',
             }
-            g.add_node(a.GetIdx(), v=a.GetSymbol(),
-                       **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]},
-                       **({
-                           'fill_wildcard': None
-                       } if a.GetSymbol() == '*' else {}))
+            g.add_node(a.GetIdx(), v=a.GetSymbol(), **{
+                attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]
+            }, **({
+                'fill_wildcard': None
+            } if a.GetSymbol() == '*' else {}))
         for b in mol.GetBonds():
             attrs = {'type': b.GetBondType()}
-            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(),
-                       **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]})
+            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(), **{
+                attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]
+            })
         return g
 
     def graph_to_mol(self, g: Graph) -> Mol:
