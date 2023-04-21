@@ -3,13 +3,13 @@
 
 bandit[toml]
 black
-flake8
 isort
 mypy
 pip-compile-multi
 pre-commit
 pytest
 pytest-cov
+ruff
 safety
 typeguard
 types-pkg_resources

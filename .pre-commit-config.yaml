@@ -33,12 +33,6 @@ repos:
       - id: trailing-whitespace # This hook trims trailing whitespace.
   - repo: local
     hooks:
-      - id: flake8
-        name: flake8
-        entry: "flake8 --config=setup.cfg"
-        language: system # will not create a separate virtualenv for the hook and will run it in whatever environment you happen to be in when you run git commit or pre-commit run
-        types: [python] # trigger for commits changing Python files
-        require_serial: true # use require_serial so that script is only called once per commit
       - id: isort
         name: isort
         entry: "isort --settings-path=pyproject.toml"
@@ -71,3 +65,7 @@ repos:
       - id: python-check-mock-methods # Prevent common mistakes of assert mck.not_called(), assert mck.called_once_with(...) and mck.assert_called.
       - id: python-use-type-annotations # Enforce that python3.6+ type annotations are used instead of type comments
       - id: text-unicode-replacement-char # Forbid files which have a UTF-8 Unicode replacement character
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: 'v0.0.261'
+    hooks:
+    -   id: ruff

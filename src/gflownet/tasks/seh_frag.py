@@ -225,7 +225,6 @@ def main():
         "log_dir": "./logs/debug_run",
         "overwrite_existing_exp": True,
         "qm9_h5_path": "/data/chem/qm9/qm9.h5",
-        "log_dir": "./logs/debug_run",
         "num_training_steps": 10_000,
         "validate_every": 1,
         "lr_decay": 20000,

@@ -24,4 +24,4 @@ def _get_requirements(path: str = "requirements", ext: str = "in") -> Tuple[List
 
 
 install_requires, extras_require = _get_requirements()
-setup(install_requires=install_requires, extras_require=extras_require, version=roadie.infer_version("gflownet"))
+setup(install_requires=install_requires, extras_require=extras_require)

@@ -5,7 +5,6 @@ build-backend = "setuptools.build_meta"
 [tool.distutils.bdist_wheel]
 universal = "true"
 
-
 [tool.bandit]
 skips = ["B101"]
 exclude_dirs = ["tests", ".tox", ".venv"]
@@ -58,3 +57,6 @@ dynamic = ["version", "dependencies", "optional-dependencies"]
 [[project.authors]]
 name = "Recursion Pharmaceuticals"
 email = "devs@recursionpharma.com"
+
+[tool.ruff]
+line-length = 120
