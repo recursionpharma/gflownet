@@ -10,7 +10,6 @@ pre-commit
 pytest
 pytest-cov
 ruff
-safety
 typeguard
 types-pkg_resources
 
