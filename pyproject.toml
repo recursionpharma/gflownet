@@ -26,6 +26,22 @@ addopts = [
 testpaths = ["tests"]
 pythonpath = "src/"
 
+[tool.mypy]
+ignore_missing_imports = true
+show_error_codes = true
+show_error_context = true
+show_traceback = true
+strict = false
+strict_optional = false
+implicit_reexport = true
+allow_redefinition = true
+files = "src"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+allow_untyped_defs = true
+allow_incomplete_defs = true
+
 [tool.black]
 line-length = 120
 target-version = ["py311"]
