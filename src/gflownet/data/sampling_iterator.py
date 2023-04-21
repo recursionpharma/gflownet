@@ -209,14 +209,16 @@ class SamplingIterator(IterableDataset):
             rewards = torch.exp(log_rewards / cond_info['beta'])
 
             if num_online > 0 and self.log_dir is not None:
-                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                                   {k: v[num_offline:] for k, v in cond_info.items()})
+                self.log_generated(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:], {
+                    k: v[num_offline:] for k, v in cond_info.items()
+                })
             if num_online > 0:
                 extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
-                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:],
-                             {k: v[num_offline:] for k, v in cond_info.items()}))
+                        hook(trajs[num_offline:], rewards[num_offline:], flat_rewards[num_offline:], {
+                            k: v[num_offline:] for k, v in cond_info.items()
+                        }))
                 batch.extra_info = extra_info
             yield batch
 
