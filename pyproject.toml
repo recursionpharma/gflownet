@@ -15,6 +15,18 @@ line_length = 120
 skips = ["B101"]
 exclude_dirs = ["tests", ".tox", ".venv"]
 
+[tool.pytest.ini_options]
+addopts = [
+    "-v",
+    "-x",
+    "--color=yes",
+    "--cov-report=term-missing",
+    "--cov=gflownet",
+    "--typeguard-packages=ml_kit,tests"
+]
+testpaths = ["tests"]
+pythonpath = "src/"
+
 [tool.black]
 line-length = 120
 target-version = ["py311"]
