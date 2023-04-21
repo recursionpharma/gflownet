@@ -470,11 +470,16 @@ class GraphActionCategorical:
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:
             return self.logprobs
-        # Use the `subtract by max` trick to avoid precision errors:
-        # compute max
+        # Use the `subtract by max` trick to avoid precision errors.
+        # First we prefill `out` with the minimum values in case
+        # there are no corresponding logits (this can happen if e.g. a
+        # graph has no edges), we don't want to accidentally take the
+        # max of that type, since we'd get 0.
+        min_val = torch.min(torch.stack([i.detach().min() for i in self.logits if i.numel()]))
+        outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in self.logits]
         maxl = torch.cat(
-            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
-            dim=1).max(1).values.detach()
+            [scatter(i.detach(), b, dim=0, out=out, reduce='max') for i, b, out in zip(self.logits, self.batch, outs)],
+            dim=1).max(1).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
@@ -491,9 +496,14 @@ class GraphActionCategorical:
         """Reduces `x` (the logits by default) to one scalar per graph"""
         if x is None:
             x = self.logits
-        # Use the `subtract by max` trick to avoid precision errors:
-        # compute max
-        maxl = torch.cat([scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(x, self.batch)],
+        # Use the `subtract by max` trick to avoid precision errors.
+        # First we prefill `out` with the minimum values in case
+        # there are no corresponding logits (this can happen if e.g. a
+        # graph has no edges), we don't want to accidentally take the
+        # max of that type, since we'd get 0.
+        min_val = torch.min(torch.stack([i.data.min() for i in x if i.numel()]))
+        outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in x]
+        maxl = torch.cat([scatter(i, b, dim=0, out=out, reduce='max') for i, b, out in zip(x, self.batch, outs)],
                          dim=1).max(1).values.detach()
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
