@@ -2,15 +2,13 @@ from typing import Any, Dict
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
+from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.envs.graph_building_env import generate_forward_trajectory
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 
 
 class SoftQLearning:
