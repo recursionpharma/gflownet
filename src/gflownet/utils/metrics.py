@@ -30,9 +30,10 @@ def get_IGD(samples, ref_front: np.ndarray = None):
     Returns:
         float: The IGD value.
     """
+
     def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
         """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        linear_spaces = [np.linspace(0.0, 1.0, n_points_per_dim) for _ in range(n_dims)]
         grid = np.array(list(product(*linear_spaces)))
         extreme_points = grid[np.any(grid == 1, axis=1)]
         return extreme_points
@@ -72,9 +73,10 @@ def get_PC_entropy(samples, ref_front=None):
     Returns:
         float: The IGD value.
     """
+
     def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
         """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+        linear_spaces = [np.linspace(0.0, 1.0, n_points_per_dim) for _ in range(n_dims)]
         grid = np.array(list(product(*linear_spaces)))
         extreme_points = grid[np.any(grid == 1, axis=1)]
         return extreme_points
@@ -100,7 +102,7 @@ def get_PC_entropy(samples, ref_front=None):
     return float(pc_ent)
 
 
-def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = 'l2'):
+def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = "l2"):
     """
     Partition a hypersphere into k clusters.
     ----------
@@ -119,22 +121,23 @@ def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation:
         v: np.ndarray
             Array of shape (k, d) containing the cluster centers
     """
-    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation='l2'):
+
+    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation="l2"):
         points = np.random.randn(n, d)
         points = np.abs(points)  # positive quadrant
-        if normalisation == 'l2':
+        if normalisation == "l2":
             points /= np.linalg.norm(points, axis=1, keepdims=True)
-        elif normalisation == 'l1':
+        elif normalisation == "l1":
             points /= np.sum(points, axis=1, keepdims=True)
         else:
             raise ValueError(f"Unknown normalisation {normalisation}")
         return points
 
     points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
-    v = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(points).cluster_centers_
-    if normalisation == 'l2':
+    v = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(points).cluster_centers_
+    if normalisation == "l2":
         v /= np.linalg.norm(v, axis=1, keepdims=True)
-    elif normalisation == 'l1':
+    elif normalisation == "l1":
         v /= np.sum(v, 1, keepdims=True)
     else:
         raise ValueError(f"Unknown normalisation {normalisation}")
@@ -193,11 +196,11 @@ def is_pareto_efficient(costs, return_mask=True):
 
 def get_hypervolume(flat_rewards: torch.Tensor, zero_ref=True) -> float:
     """Compute the hypervolume of a set of trajectories.
-        Parameters
-        ----------
-        flat_rewards: torch.Tensor
-          A tensor of shape (num_trajs, num_of_objectives) containing the rewards of each trajectory.
-        """
+    Parameters
+    ----------
+    flat_rewards: torch.Tensor
+      A tensor of shape (num_trajs, num_of_objectives) containing the rewards of each trajectory.
+    """
     # Compute the reference point
     if zero_ref:
         reference_point = torch.zeros_like(flat_rewards[0])
@@ -213,6 +216,7 @@ def uniform_reference_points(nobj, p=4, scaling=None):
     each axis at 1. The scaling factor is used to combine multiple layers of
     reference points.
     """
+
     def gen_refs_recursive(ref, nobj, left, total, depth):
         points = []
         if depth == nobj - 1:
@@ -239,7 +243,7 @@ def r2_indicator_set(reference_points, solutions, utopian_point):
         :param solutions: the multi-objective solutions (fitness values).
         :param utopian_point: utopian point that represents best possible solution
         :returns: r2 value (float).
-        """
+    """
 
     min_list = []
     for v in reference_points:
@@ -256,7 +260,7 @@ def r2_indicator_set(reference_points, solutions, utopian_point):
 
 
 def sharpeRatio(p, Q, x, rf):
-    """ Compute the Sharpe ratio.
+    """Compute the Sharpe ratio.
     Returns the Sharpe ratio given the expected return vector, p,
     the covariance matrix, Q, the investment column vector, x, and
     the return of the riskless asset, rf.
@@ -279,18 +283,18 @@ def sharpeRatio(p, Q, x, rf):
 
 
 def _sharpeRatioQPMax(p, Q, rf):
-    """ Sharpe ratio maximization problem - QP formulation """
+    """Sharpe ratio maximization problem - QP formulation"""
 
     # intentional non-top-level imports to avoid
     # cvxopt dependency for M1 chip users
     from cvxopt import matrix
     from cvxopt import solvers
 
-    solvers.options['abstol'] = 1e-15
-    solvers.options['reltol'] = 1e-15
-    solvers.options['feastol'] = 1e-15
-    solvers.options['maxiters'] = 1000
-    solvers.options['show_progress'] = False
+    solvers.options["abstol"] = 1e-15
+    solvers.options["reltol"] = 1e-15
+    solvers.options["feastol"] = 1e-15
+    solvers.options["maxiters"] = 1000
+    solvers.options["show_progress"] = False
     n = len(p)
 
     # inequality constraints (investment in assets is higher or equal to 0)
@@ -304,17 +308,23 @@ def _sharpeRatioQPMax(p, Q, rf):
     b[0, 0] = 1
 
     # convert numpy matrix to cvxopt matrix
-    G, c, A, b, C, d = matrix(Q, tc='d'), matrix(np.zeros(n), tc='d'), matrix(A, tc='d'), matrix(b, tc='d'), matrix(
-        C, tc='d'), matrix(d, tc='d')
+    G, c, A, b, C, d = (
+        matrix(Q, tc="d"),
+        matrix(np.zeros(n), tc="d"),
+        matrix(A, tc="d"),
+        matrix(b, tc="d"),
+        matrix(C, tc="d"),
+        matrix(d, tc="d"),
+    )
 
-    sol = solvers.coneqp(G, c, -C, -d, None, A, b, kktsolver='ldl')  # , initvals=self.initGuess)
-    y = np.array(sol['x'])
+    sol = solvers.coneqp(G, c, -C, -d, None, A, b, kktsolver="ldl")  # , initvals=self.initGuess)
+    y = np.array(sol["x"])
 
     return y
 
 
 def sharpeRatioMax(p, Q, rf):
-    """ Compute the Sharpe ratio and investment of an optimal portfolio.
+    """Compute the Sharpe ratio and investment of an optimal portfolio.
     Parameters
     ----------
     p : ndarray
@@ -349,7 +359,7 @@ def _expectedReturn(A, low, up):
 
 
 def _covariance(A, low, up, p=None):
-    """  Returns the covariance matrix (computed as defined by the HSR indicator). """
+    """Returns the covariance matrix (computed as defined by the HSR indicator)."""
     p = _expectedReturn(A, low, up) if p is None else p
     Pmax = np.maximum(A[:, np.newaxis, :], A[np.newaxis, ...])
     P = _expectedReturn(Pmax, low, up)
@@ -359,7 +369,7 @@ def _covariance(A, low, up, p=None):
 
 
 def _argunique(pts):
-    """ Find the unique points of a matrix. Returns their indexes. """
+    """Find the unique points of a matrix. Returns their indexes."""
     ix = np.lexsort(pts.T)
     diff = (pts[ix][1:] != pts[ix][:-1]).any(axis=1)
     un = np.ones(len(pts), dtype=bool)
@@ -428,7 +438,7 @@ def HSRindicator(A, low, up, managedup=False):
 
 class HSR_Calculator:
     def __init__(self, lower_bound, upper_bound, max_obj_bool=None):
-        '''
+        """
         Class to calculate HSR Indicator with assumption that assumes a maximization on all objectives.
          Parameters
         ----------
@@ -438,7 +448,7 @@ class HSR_Calculator:
             Upper reference point.
         max_obj_bool : bool, optional
             Details of the objectives for which dimension maximization is not the case.
-        '''
+        """
 
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
@@ -454,7 +464,6 @@ class HSR_Calculator:
         self.upper_bound = upper_bound
 
     def make_max_problem(self, matrix):
-
         if self.max_obj_bool is None:
             return matrix
 
@@ -466,7 +475,6 @@ class HSR_Calculator:
         return max_matrix
 
     def calculate_hsr(self, solutions):
-
         max_solutions = self.make_max_problem(solutions)
 
         hsr_indicator, hsr_invest = HSRindicator(A=max_solutions, low=self.lower_bound, up=self.upper_bound)
@@ -475,9 +483,9 @@ class HSR_Calculator:
 
 
 class Normalizer(object):
-    def __init__(self, loc=0., scale=1.):
+    def __init__(self, loc=0.0, scale=1.0):
         self.loc = loc
-        self.scale = np.where(scale != 0, scale, 1.)
+        self.scale = np.where(scale != 0, scale, 1.0)
 
     def __call__(self, arr):
         min_val = self.loc - 4 * self.scale
@@ -513,7 +521,7 @@ def compute_diverse_top_k(smiles, rewards, k, thresh=0.7):
 
 
 def get_topk(rewards, k):
-    '''
+    """
      Parameters
     ----------
     rewards : array_like
@@ -525,7 +533,7 @@ def get_topk(rewards, k):
     Returns
     ----------
     avergae Topk rewards across all preferences
-    '''
+    """
     if len(rewards.shape) < 2:
         rewards = torch.unsqueeze(rewards, -1)
     sorted_rewards = torch.sort(rewards, 1).values
@@ -535,7 +543,6 @@ def get_topk(rewards, k):
 
 
 if __name__ == "__main__":
-
     # Example for 2 dimensions
     # Point set: {(1,3), (2,2), (3,1)},  l = (0,0), u = (4,4)
     A = np.array([[1, 3], [2, 2], [3, 1]])  # matrix with dimensions n x d (n points, d dimensions)
