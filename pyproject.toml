@@ -12,7 +12,8 @@ py_version = "auto"
 line_length = 120
 
 [tool.bandit]
-exclude = "tests"
+skips = ["B101"]
+exclude_dirs = ["tests", ".tox", ".venv"]
 
 [tool.black]
 line-length = 120
