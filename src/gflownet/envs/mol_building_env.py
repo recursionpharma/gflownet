@@ -107,8 +107,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         }
         pt = Chem.GetPeriodicTable()
         self._max_atom_valence = {
-            **{a: max(pt.GetValenceList(a)) for a in atoms},
-            'N': 5,  # allow nitro groups by allowing the 5-valent N (perhaps there's a better way?)
+            **{
+                a: max(pt.GetValenceList(a)) for a in atoms
+            },
+            'N': 3,  # We'll handle nitrogen valence later explicitly in graph_to_Data
             '*': 0,  # wildcard atoms have 0 valence until filled in
         }
 
@@ -210,6 +212,12 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     set_node_attr_mask[i, s:e] = 0
             # Account for charge and explicit Hs in atom as limiting the total valence
             max_atom_valence = self._max_atom_valence[ad.get('fill_wildcard', None) or ad['v']]
+            # Special rule for Nitrogen
+            if ad['v'] == 'N' and ad.get('charge', 0) == 1:
+                # This is definitely a heuristic, but to keep things simple we'll limit Nitrogen's valence to 3 (as
+                # per self._max_atom_valence) unless it is charged, then we make it 5.
+                # This keeps RDKit happy (and is probably a good idea anyway).
+                max_atom_valence = 5
             max_valence[n] = max_atom_valence - abs(ad.get('charge', 0)) - ad.get('expl_H', 0)
             # Compute explicitly defined valence:
             explicit_valence[n] = 0
@@ -291,15 +299,16 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 # RDKit makes * atoms have no implicit Hs, but we don't want this to trickle down.
                 'no_impl': a.GetNoImplicit() and a.GetSymbol() != '*',
             }
-            g.add_node(a.GetIdx(), v=a.GetSymbol(),
-                       **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]},
-                       **({
-                           'fill_wildcard': None
-                       } if a.GetSymbol() == '*' else {}))
+            g.add_node(a.GetIdx(), v=a.GetSymbol(), **{
+                attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]
+            }, **({
+                'fill_wildcard': None
+            } if a.GetSymbol() == '*' else {}))
         for b in mol.GetBonds():
             attrs = {'type': b.GetBondType()}
-            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(),
-                       **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]})
+            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(), **{
+                attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]
+            })
         return g
 
     def graph_to_obj(self, g: Graph) -> Mol:
