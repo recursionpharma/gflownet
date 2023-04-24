@@ -8,21 +8,14 @@ from setuptools import setup
 def _parse_requirement_file(req_file: Path) -> List[str]:
     lines = req_file.read_text().replace("\\\n", "").split("\n")
     lines = list(map(lambda x: x.split("#", 1)[0].strip(), lines))
-<<<<<<< HEAD
     lines = [line for line in lines if len(line) and not line.startswith("-")]
-=======
-    lines = [line for line in lines if len(line) and (not line.startswith("-"))]
->>>>>>> trunk
     return lines
 
 
 def _get_requirements(path: str = "requirements", ext: str = "in") -> Tuple[List[str], Dict[str, List[str]]]:
     ext = ext[1:] if ext.startswith(".") else ext
-<<<<<<< HEAD
 
     # Supports an arbitrary number of 'extra' packages
-=======
->>>>>>> trunk
     install_requires = []
     extras_require = {}
     for req_file in Path(path).glob(f"*.{ext}"):
