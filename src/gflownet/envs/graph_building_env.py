@@ -1,16 +1,15 @@
-from collections import defaultdict
 import copy
 import enum
+from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
 import networkx as nx
-from networkx.algorithms.isomorphism import is_isomorphic
 import numpy as np
-from rdkit.Chem import Mol
 import torch
 import torch_geometric.data as gd
-from torch_scatter import scatter
-from torch_scatter import scatter_max
+from networkx.algorithms.isomorphism import is_isomorphic
+from rdkit.Chem import Mol
+from torch_scatter import scatter, scatter_max
 
 
 class Graph(nx.Graph):
@@ -87,7 +86,7 @@ class GraphAction:
         self.relabel = relabel  # TODO: deprecate this?
 
     def __repr__(self):
-        attrs = ', '.join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
+        attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
         return f"<{self.action}, {attrs}>"
 
 
@@ -105,6 +104,7 @@ class GraphBuildingEnv:
           if it is still default-valued (DAG property preserved)
         - we can generate a legal action for any attribute that isn't a default one.
     """
+
     def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
         """A graph building environment instance
 
@@ -163,7 +163,7 @@ class GraphBuildingEnv:
                 assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
                 if action.relabel is not None:
-                    raise ValueError('deprecated')
+                    raise ValueError("deprecated")
                 # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
                 assert not g.has_edge(*e)
@@ -186,7 +186,7 @@ class GraphBuildingEnv:
             gp.edges[(action.source, action.target)][action.attr] = action.value
         else:
             # TODO: backward actions if we want to support MCMC-GFN style algorithms
-            raise ValueError(f'Unknown action type {action.action}', action.action)
+            raise ValueError(f"Unknown action type {action.action}", action.action)
 
         return gp
 
@@ -230,27 +230,31 @@ class GraphBuildingEnv:
             for k in g.edges[(a, b)]:
                 add_parent(
                     GraphAction(GraphActionType.SetEdgeAttr, source=a, target=b, attr=k, value=g.edges[(a, b)][k]),
-                    graph_without_edge_attr(g, (a, b), k))
+                    graph_without_edge_attr(g, (a, b), k),
+                )
 
         for i in g.nodes:
             # Can only remove leaf nodes and without attrs (except 'v'),
             # and without edges with attrs.
-            if (degree[i] == 1 and len(g.nodes[i]) == 1):
+            if degree[i] == 1 and len(g.nodes[i]) == 1:
                 edge = list(g.edges(i))[0]  # There should only be one since deg == 1
                 if len(g.edges[edge]) == 0:
                     anchor = edge[0] if edge[1] == i else edge[1]
                     new_g = graph_without_node(g, i)
-                    add_parent(GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]['v']), new_g)
+                    add_parent(GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]), new_g)
             if len(g.nodes) == 1:
                 # The final node is degree 0, need this special case to remove it
                 # and end up with S0, the empty graph root
-                add_parent(GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]['v']),
-                           graph_without_node(g, i))
+                add_parent(
+                    GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]), graph_without_node(g, i)
+                )
             for k in g.nodes[i]:
-                if k == 'v':
+                if k == "v":
                     continue
-                add_parent(GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
-                           graph_without_node_attr(g, i, k))
+                add_parent(
+                    GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
+                    graph_without_node_attr(g, i, k),
+                )
         return parents
 
     def count_backward_transitions(self, g: Graph, check_idempotent: bool = False):
@@ -308,8 +312,9 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                     continue  # If nodes are in cycles edges leading to them get stack multiple times, disregard
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.edges[e][attr] = g.edges[i][attr]
-                act = GraphAction(GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr,
-                                  value=g.edges[i][attr])
+                act = GraphAction(
+                    GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr, value=g.edges[i][attr]
+                )
             else:
                 # i doesn't exist, add the edge
                 if e[1] not in gn.nodes:
@@ -317,13 +322,13 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                     assert e[1] is None  # normally we shouldn't have relabeled i[1] yet
                     relabeling_map[i[1]] = len(relabeling_map)
                     e = e[0], relabeling_map[i[1]]
-                    gn.add_node(e[1], v=g.nodes[i[1]]['v'])
+                    gn.add_node(e[1], v=g.nodes[i[1]]["v"])
                     gn.add_edge(*e)
                     for j in g[i[1]]:  # stack unadded edges/neighbours
                         jp = relabeling_map.get(j, None)
                         if jp not in gn or (e[1], jp) not in gn.edges:
                             stack.append((i[1], j))
-                    act = GraphAction(GraphActionType.AddNode, source=e[0], value=g.nodes[i[1]]['v'])
+                    act = GraphAction(GraphActionType.AddNode, source=e[0], value=g.nodes[i[1]]["v"])
                     if len(gn.nodes[e[1]]) < len(g.nodes[i[1]]):
                         stack.append((i[1],))  # we still have attributes to add to node i[1]
                 else:
@@ -340,9 +345,9 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
             if n not in gn.nodes:
                 # u doesn't exist yet, this should only happen for the first node
                 assert len(gn.nodes) == 0
-                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[u]['v'])
+                act = GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[u]["v"])
                 n = relabeling_map[u] = len(relabeling_map)
-                gn.add_node(0, v=g.nodes[u]['v'])
+                gn.add_node(0, v=g.nodes[u]["v"])
                 for j in g[u]:  # For every neighbour of node u
                     if relabeling_map.get(j, None) not in gn:
                         stack.append((u, j))  # push the (u,j) edge onto the stack
@@ -360,8 +365,15 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
 
 
 class GraphActionCategorical:
-    def __init__(self, graphs: gd.Batch, logits: List[torch.Tensor], keys: List[str], types: List[GraphActionType],
-                 deduplicate_edge_index=True, masks: List[torch.Tensor] = None):
+    def __init__(
+        self,
+        graphs: gd.Batch,
+        logits: List[torch.Tensor],
+        keys: List[str],
+        types: List[GraphActionType],
+        deduplicate_edge_index=True,
+        masks: List[torch.Tensor] = None,
+    ):
         """A multi-type Categorical compatible with generating structured actions.
 
         What is meant by type here is that there are multiple types of
@@ -432,9 +444,10 @@ class GraphActionCategorical:
         # This generalizes to edges and non-edges.
         # Append '_batch' to keys except for 'x', since TG has a special case (done by default for 'x')
         self.batch = [
-            getattr(graphs, f'{k}_batch' if k != 'x' else 'batch') if k is not None
+            getattr(graphs, f"{k}_batch" if k != "x" else "batch") if k is not None
             # None signals a global logit rather than a per-instance logit
-            else torch.arange(graphs.num_graphs, device=dev) for k in keys
+            else torch.arange(graphs.num_graphs, device=dev)
+            for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
         self.slice = [
@@ -443,10 +456,10 @@ class GraphActionCategorical:
         ]
         self.logprobs = None
 
-        if deduplicate_edge_index and 'edge_index' in keys:
-            idx = keys.index('edge_index')
+        if deduplicate_edge_index and "edge_index" in keys:
+            idx = keys.index("edge_index")
             self.batch[idx] = self.batch[idx][::2]
-            self.slice[idx] = self.slice[idx].div(2, rounding_mode='floor')
+            self.slice[idx] = self.slice[idx].div(2, rounding_mode="floor")
 
     def detach(self):
         new = copy.copy(self)
@@ -472,16 +485,24 @@ class GraphActionCategorical:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
-        maxl = torch.cat(
-            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(self.logits, self.batch)],
-            dim=1).max(1).values.detach()
+        maxl = (
+            torch.cat(
+                [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="max") for i, b in zip(self.logits, self.batch)],
+                dim=1,
+            )
+            .max(1)
+            .values.detach()
+        )
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
-        logZ = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_logits, self.batch)
-        ]).log()
+        logZ = sum(
+            [
+                scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
+                for i, b in zip(exp_logits, self.batch)
+            ]
+        ).log()
         # log probabilities is log(exp(logit) / Z)
         self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
         return self.logprobs
@@ -492,15 +513,20 @@ class GraphActionCategorical:
             x = self.logits
         # Use the `subtract by max` trick to avoid precision errors:
         # compute max
-        maxl = torch.cat([scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='max') for i, b in zip(x, self.batch)],
-                         dim=1).max(1).values.detach()
+        maxl = (
+            torch.cat(
+                [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="max") for i, b in zip(x, self.batch)], dim=1
+            )
+            .max(1)
+            .values.detach()
+        )
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
         # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
-        reduction = sum([
-            scatter(i, b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1) for i, b in zip(exp_vals, self.batch)
-        ]).log()
+        reduction = sum(
+            [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1) for i, b in zip(exp_vals, self.batch)]
+        ).log()
         # Add back max
         return reduction + maxl
 
@@ -526,8 +552,9 @@ class GraphActionCategorical:
         # Take the argmax
         return self.argmax(x=gumbel)
 
-    def argmax(self, x: List[torch.Tensor], batch: List[torch.Tensor] = None,
-               dim_size: int = None) -> List[Tuple[int, int, int]]:
+    def argmax(
+        self, x: List[torch.Tensor], batch: List[torch.Tensor] = None, dim_size: int = None
+    ) -> List[Tuple[int, int, int]]:
         """Takes the argmax, i.e. if x are the logits, returns the most likely action.
 
         Parameters
@@ -567,7 +594,7 @@ class GraphActionCategorical:
         # Now we need to check which type of logit has the actual max
         type_max_val, type_max_idx = torch.stack(maxs).max(0)
         if torch.isfinite(type_max_val).logical_not_().any():
-            raise ValueError('Non finite max value in sample', (type_max_val, x))
+            raise ValueError("Non finite max value in sample", (type_max_val, x))
 
         # Now we can return the indices of where the actions occured
         # in the form List[(type, row, column)]
@@ -654,15 +681,18 @@ class GraphActionCategorical:
         """
         if logprobs is None:
             logprobs = self.logsoftmax()
-        entropy = -sum([
-            scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce='sum').sum(1)
-            for i, b in zip(logprobs, self.batch)
-        ])
+        entropy = -sum(
+            [
+                scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
+                for i, b in zip(logprobs, self.batch)
+            ]
+        )
         return entropy
 
 
 class GraphBuildingEnvContext:
     """A context class defines what the graphs are, how they map to and from data"""
+
     device: torch.device
     action_mask_names: List[str]
 
