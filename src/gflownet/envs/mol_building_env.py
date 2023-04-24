@@ -23,8 +23,17 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     This context specifies how to create molecules atom-by-atom (and attribute-by-attribute).
     """
-    def __init__(self, atoms=['C', 'N', 'O', 'F', 'P', 'S'], num_cond_dim=0, chiral_types=DEFAULT_CHIRAL_TYPES,
-                 charges=[0, 1, -1], expl_H_range=[0, 1], allow_explicitly_aromatic=False, num_rw_feat=8):
+
+    def __init__(
+        self,
+        atoms=["C", "N", "O", "F", "P", "S"],
+        num_cond_dim=0,
+        chiral_types=DEFAULT_CHIRAL_TYPES,
+        charges=[0, 1, -1],
+        expl_H_range=[0, 1],
+        allow_explicitly_aromatic=False,
+        num_rw_feat=8,
+    ):
         """An env context for building molecules atom-by-atom and bond-by-bond.
 
         Parameters
@@ -48,17 +57,17 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         """
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
-            'v': atoms + ['*'],
-            'chi': chiral_types,
-            'charge': charges,
-            'expl_H': expl_H_range,
-            'no_impl': [False, True],
-            'fill_wildcard': [None] + atoms,  # default is, there is nothing
+            "v": atoms + ["*"],
+            "chi": chiral_types,
+            "charge": charges,
+            "expl_H": expl_H_range,
+            "no_impl": [False, True],
+            "fill_wildcard": [None] + atoms,  # default is, there is nothing
         }
         self.num_rw_feat = num_rw_feat
 
-        self.default_wildcard_replacement = 'C'
-        self.negative_attrs = ['fill_wildcard']
+        self.default_wildcard_replacement = "C"
+        self.negative_attrs = ["fill_wildcard"]
         self.atom_attr_defaults = {k: self.atom_attr_values[k][0] for k in self.atom_attr_values}
         # The size of the input vector for each atom
         self.atom_attr_size = sum(len(i) for i in self.atom_attr_values.values())
@@ -73,7 +82,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         }
         # The attribute and value each logit dimension maps back to
         self.atom_attr_logit_map = [
-            (k, v) for k in self.atom_attrs if k != 'v'
+            (k, v)
+            for k in self.atom_attrs
+            if k != "v"
             # index 0 is skipped because it is the default value
             for v in self.atom_attr_values[k][1:]
         ]
@@ -84,7 +95,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.allow_explicitly_aromatic = allow_explicitly_aromatic
         aromatic_optional = [BondType.AROMATIC] if allow_explicitly_aromatic else []
         self.bond_attr_values = {
-            'type': [BondType.SINGLE, BondType.DOUBLE, BondType.TRIPLE] + aromatic_optional,
+            "type": [BondType.SINGLE, BondType.DOUBLE, BondType.TRIPLE] + aromatic_optional,
         }
         self.bond_attr_defaults = {k: self.bond_attr_values[k][0] for k in self.bond_attr_values}
         self.bond_attr_size = sum(len(i) for i in self.bond_attr_values.values())
@@ -105,8 +116,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         pt = Chem.GetPeriodicTable()
         self._max_atom_valence = {
             **{a: max(pt.GetValenceList(a)) for a in atoms},
-            'N': 5,  # allow nitro groups by allowing the 5-valent N (perhaps there's a better way?)
-            '*': 0,  # wildcard atoms have 0 valence until filled in
+            "N": 5,  # allow nitro groups by allowing the 5-valent N (perhaps there's a better way?)
+            "*": 0,  # wildcard atoms have 0 valence until filled in
         }
 
         # These values are used by Models to know how many inputs/logits to produce
@@ -123,10 +134,13 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
         # Order in which models have to output logits
         self.action_type_order = [
-            GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetNodeAttr, GraphActionType.AddEdge,
-            GraphActionType.SetEdgeAttr
+            GraphActionType.Stop,
+            GraphActionType.AddNode,
+            GraphActionType.SetNodeAttr,
+            GraphActionType.AddEdge,
+            GraphActionType.SetEdgeAttr,
         ]
-        self.device = torch.device('cpu')
+        self.device = torch.device("cpu")
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
@@ -135,7 +149,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
-            return GraphAction(t, source=act_row, value=self.atom_attr_values['v'][act_col])
+            return GraphAction(t, source=act_row, value=self.atom_attr_values["v"][act_col])
         elif t is GraphActionType.SetNodeAttr:
             attr, val = self.atom_attr_logit_map[act_col]
             return GraphAction(t, source=act_row, attr=attr, value=val)
@@ -153,18 +167,21 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             row = col = 0
         elif action.action is GraphActionType.AddNode:
             row = action.source
-            col = self.atom_attr_values['v'].index(action.value)
+            col = self.atom_attr_values["v"].index(action.value)
         elif action.action is GraphActionType.SetNodeAttr:
             row = action.source
             # - 1 because the default is index 0
-            col = self.atom_attr_values[action.attr].index(
-                action.value) - 1 + self.atom_attr_logit_slice[action.attr][0]
+            col = (
+                self.atom_attr_values[action.attr].index(action.value) - 1 + self.atom_attr_logit_slice[action.attr][0]
+            )
         elif action.action is GraphActionType.AddEdge:
             # Here we have to retrieve the index in non_edge_index of an edge (s,t)
             # that's also possibly in the reverse order (t,s).
             # That's definitely not too efficient, can we do better?
-            row = ((g.non_edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
-                   (g.non_edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            row = (
+                (g.non_edge_index.T == torch.tensor([(action.source, action.target)])).prod(1)
+                + (g.non_edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)
+            ).argmax()
             col = 0
         elif action.action is GraphActionType.SetEdgeAttr:
             # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
@@ -173,9 +190,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
             # Because edges are duplicated but logits aren't, divide by two
-            row = row.div(2, rounding_mode='floor')  # type: ignore
-            col = self.bond_attr_values[action.attr].index(
-                action.value) - 1 + self.bond_attr_logit_slice[action.attr][0]
+            row = row.div(2, rounding_mode="floor")  # type: ignore
+            col = (
+                self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr][0]
+            )
         type_idx = self.action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
@@ -204,22 +222,22 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     s, e = self.atom_attr_logit_slice[k]
                     set_node_attr_mask[i, s:e] = 0
             # Account for charge and explicit Hs in atom as limiting the total valence
-            max_atom_valence = self._max_atom_valence[ad.get('fill_wildcard', None) or ad['v']]
-            max_valence[n] = max_atom_valence - abs(ad.get('charge', 0)) - ad.get('expl_H', 0)
+            max_atom_valence = self._max_atom_valence[ad.get("fill_wildcard", None) or ad["v"]]
+            max_valence[n] = max_atom_valence - abs(ad.get("charge", 0)) - ad.get("expl_H", 0)
             # Compute explicitly defined valence:
             explicit_valence[n] = 0
             for ne in g[n]:
-                explicit_valence[n] += self._bond_valence[g.edges[(n, ne)].get('type', self.bond_attr_defaults['type'])]
+                explicit_valence[n] += self._bond_valence[g.edges[(n, ne)].get("type", self.bond_attr_defaults["type"])]
             # If the valence is maxed out, mask out logits that would add a new atom + single bond to this node
             if explicit_valence[n] >= max_valence[n]:
                 add_node_mask[i, :] = 0
             # If charge is not yet defined make sure there is room in the valence
-            if 'charge' not in ad and explicit_valence[n] + 1 > max_valence[n]:
-                s, e = self.atom_attr_logit_slice['charge']
+            if "charge" not in ad and explicit_valence[n] + 1 > max_valence[n]:
+                s, e = self.atom_attr_logit_slice["charge"]
                 set_node_attr_mask[i, s:e] = 0
             # idem for explicit hydrogens
-            if 'expl_H' not in ad and explicit_valence[n] + 1 > max_valence[n]:
-                s, e = self.atom_attr_logit_slice['expl_H']
+            if "expl_H" not in ad and explicit_valence[n] + 1 > max_valence[n]:
+                s, e = self.atom_attr_logit_slice["expl_H"]
                 set_node_attr_mask[i, s:e] = 0
 
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
@@ -234,14 +252,15 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     s, e = self.bond_attr_logit_slice[k]
                     set_edge_attr_mask[i, s:e] = 0
             # Check which bonds don't bust the valence of their atoms
-            if 'type' not in ad:  # Only if type isn't already set
-                sl, _ = self.bond_attr_logit_slice['type']
-                for ti, bond_type in enumerate(self.bond_attr_values['type'][1:]):  # [1:] because 0th is default
+            if "type" not in ad:  # Only if type isn't already set
+                sl, _ = self.bond_attr_logit_slice["type"]
+                for ti, bond_type in enumerate(self.bond_attr_values["type"][1:]):  # [1:] because 0th is default
                     # -1 because we'd be removing the single bond and replacing it with a double/triple/aromatic bond
                     is_ok = all([explicit_valence[n] + self._bond_valence[bond_type] - 1 <= max_valence[n] for n in e])
                     set_edge_attr_mask[i, sl + ti] = float(is_ok)
-        edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
-            (-1, 2)).T
+        edge_index = (
+            torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
+        )
         gc = nx.complement(g)
 
         def is_ok_non_edge(e):
@@ -264,7 +283,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
-        return gd.Batch.from_data_list(graphs, follow_batch=['edge_index', 'non_edge_index'])
+        return gd.Batch.from_data_list(graphs, follow_batch=["edge_index", "non_edge_index"])
 
     def mol_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
@@ -276,21 +295,25 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         # Only set an attribute tag if it is not the default attribute
         for a in mol.GetAtoms():
             attrs = {
-                'chi': a.GetChiralTag(),
-                'charge': a.GetFormalCharge(),
-                'expl_H': a.GetNumExplicitHs(),
+                "chi": a.GetChiralTag(),
+                "charge": a.GetFormalCharge(),
+                "expl_H": a.GetNumExplicitHs(),
                 # RDKit makes * atoms have no implicit Hs, but we don't want this to trickle down.
-                'no_impl': a.GetNoImplicit() and a.GetSymbol() != '*',
+                "no_impl": a.GetNoImplicit() and a.GetSymbol() != "*",
             }
-            g.add_node(a.GetIdx(), v=a.GetSymbol(),
-                       **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]},
-                       **({
-                           'fill_wildcard': None
-                       } if a.GetSymbol() == '*' else {}))
+            g.add_node(
+                a.GetIdx(),
+                v=a.GetSymbol(),
+                **{attr: val for attr, val in attrs.items() if val != self.atom_attr_defaults[attr]},
+                **({"fill_wildcard": None} if a.GetSymbol() == "*" else {}),
+            )
         for b in mol.GetBonds():
-            attrs = {'type': b.GetBondType()}
-            g.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx(),
-                       **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]})
+            attrs = {"type": b.GetBondType()}
+            g.add_edge(
+                b.GetBeginAtomIdx(),
+                b.GetEndAtomIdx(),
+                **{attr: val for attr, val in attrs.items() if val != self.bond_attr_defaults[attr]},
+            )
         return g
 
     def graph_to_mol(self, g: Graph) -> Mol:
@@ -298,20 +321,20 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         mp.BeginBatchEdit()
         for i in range(len(g.nodes)):
             d = g.nodes[i]
-            s = d.get('fill_wildcard', d['v'])
+            s = d.get("fill_wildcard", d["v"])
             a = Chem.Atom(s if s is not None else self.default_wildcard_replacement)
-            if 'chi' in d:
-                a.SetChiralTag(d['chi'])
-            if 'charge' in d:
-                a.SetFormalCharge(d['charge'])
-            if 'expl_H' in d:
-                a.SetNumExplicitHs(d['expl_H'])
-            if 'no_impl' in d:
-                a.SetNoImplicit(d['no_impl'])
+            if "chi" in d:
+                a.SetChiralTag(d["chi"])
+            if "charge" in d:
+                a.SetFormalCharge(d["charge"])
+            if "expl_H" in d:
+                a.SetNumExplicitHs(d["expl_H"])
+            if "no_impl" in d:
+                a.SetNoImplicit(d["no_impl"])
             mp.AddAtom(a)
         for e in g.edges:
             d = g.edges[e]
-            mp.AddBond(e[0], e[1], d.get('type', BondType.SINGLE))
+            mp.AddBond(e[0], e[1], d.get("type", BondType.SINGLE))
         mp.CommitBatchEdit()
         Chem.SanitizeMol(mp)
         return mp

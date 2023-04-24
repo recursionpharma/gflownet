@@ -8,9 +8,10 @@ import torch.multiprocessing as mp
 class MPModelPlaceholder:
     """This class can be used as a Model in a worker process, and
     translates calls to queries to the main process"""
+
     def __init__(self, in_queues, out_queues):
         self.qs = in_queues, out_queues
-        self.device = torch.device('cpu')
+        self.device = torch.device("cpu")
         self._is_init = False
 
     def _check_init(self):
@@ -24,12 +25,12 @@ class MPModelPlaceholder:
     # TODO: make a generic method for this based on __getattr__
     def logZ(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('logZ', a, kw))
+        self.in_queue.put(("logZ", a, kw))
         return self.out_queue.get()
 
     def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(('__call__', a, kw))
+        self.in_queue.put(("__call__", a, kw))
         return self.out_queue.get()
 
 
@@ -46,6 +47,7 @@ class MPModelProxy:
     processes.
 
     """
+
     def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple):
         """Construct a multiprocessing model proxy for torch DataLoaders.
 
@@ -73,7 +75,7 @@ class MPModelProxy:
         self.stop.set()
 
     def to_msg(self, i):
-        return i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i
+        return i.detach().to(torch.device("cpu")) if isinstance(i, self.cuda_types) else i
 
     def run(self):
         while not self.stop.is_set():

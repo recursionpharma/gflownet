@@ -28,10 +28,17 @@ class TrajectoryBalanceModel(nn.Module):
 
 
 class TrajectoryBalance:
-    """
-    """
-    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
-                 hps: Dict[str, Any], max_len=None, max_nodes=None):
+    """ """
+
+    def __init__(
+        self,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
+        rng: np.random.RandomState,
+        hps: Dict[str, Any],
+        max_len=None,
+        max_nodes=None,
+    ):
         """TB implementation, see
         "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
         Emmanuel Bengio, Chen Sun, Yoshua Bengio"
@@ -63,10 +70,10 @@ class TrajectoryBalance:
         self.rng = rng
         self.max_len = max_len
         self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps['illegal_action_logreward']
-        self.bootstrap_own_reward = hps['bootstrap_own_reward']
-        self.epsilon = hps['tb_epsilon']
-        self.reward_loss_multiplier = hps.get('reward_loss_multiplier', 1)
+        self.illegal_action_logreward = hps["illegal_action_logreward"]
+        self.bootstrap_own_reward = hps["bootstrap_own_reward"]
+        self.epsilon = hps["tb_epsilon"]
+        self.reward_loss_multiplier = hps.get("reward_loss_multiplier", 1)
         # Experimental flags
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = False
@@ -75,19 +82,27 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
-        self.is_doing_subTB = hps.get('tb_do_subtb', False)
-        self.correct_idempotent = hps.get('tb_correct_idempotent', False)
-        self.p_b_is_parameterized = hps.get('tb_p_b_is_parameterized', False)
+        self.is_doing_subTB = hps.get("tb_do_subtb", False)
+        self.correct_idempotent = hps.get("tb_correct_idempotent", False)
+        self.p_b_is_parameterized = hps.get("tb_p_b_is_parameterized", False)
 
-        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp,
-                                          correct_idempotent=self.correct_idempotent,
-                                          pad_with_terminal_state=self.p_b_is_parameterized)
+        self.graph_sampler = GraphSampler(
+            ctx,
+            env,
+            max_len,
+            max_nodes,
+            rng,
+            self.sample_temp,
+            correct_idempotent=self.correct_idempotent,
+            pad_with_terminal_state=self.p_b_is_parameterized,
+        )
         if self.is_doing_subTB:
-            self._subtb_max_len = hps.get('tb_subtb_max_len', max_len + 2 if max_len is not None else 128)
-            self._init_subtb(torch.device('cuda'))  # TODO: where are we getting device info?
+            self._subtb_max_len = hps.get("tb_subtb_max_len", max_len + 2 if max_len is not None else 128)
+            self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
 
-    def create_training_data_from_own_samples(self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor,
-                                              random_action_prob: float):
+    def create_training_data_from_own_samples(
+        self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
+    ):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -117,7 +132,7 @@ class TrajectoryBalance:
         data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
         for i in range(n):
-            data[i]['logZ'] = logZ_pred[i].item()
+            data[i]["logZ"] = logZ_pred[i].item()
         return data
 
     def create_training_data_from_graphs(self, graphs):
@@ -133,7 +148,7 @@ class TrajectoryBalance:
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
-        return [{'traj': generate_forward_trajectory(i)} for i in graphs]
+        return [{"traj": generate_forward_trajectory(i)} for i in graphs]
 
     def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
         """Returns the list of idempotent actions for a given transition.
@@ -194,29 +209,31 @@ class TrajectoryBalance:
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
+        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
         actions = [
-            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
+            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
         ]
         batch = self.ctx.collate(torch_graphs)
-        batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
-        batch.log_p_B = torch.cat([i['bck_logprobs'] for i in trajs], 0)
+        batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
+        batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
         batch.actions = torch.tensor(actions)
         if self.p_b_is_parameterized:
-            batch.bck_actions = torch.tensor([
-                self.ctx.GraphAction_to_aidx(g, a)
-                for g, a in zip(torch_graphs, [i for tj in trajs for i in tj['bck_a']])
-            ])
-            batch.is_sink = torch.tensor(sum([i['is_sink'] for i in trajs], []))
+            batch.bck_actions = torch.tensor(
+                [
+                    self.ctx.GraphAction_to_aidx(g, a)
+                    for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
+                ]
+            )
+            batch.is_sink = torch.tensor(sum([i["is_sink"] for i in trajs], []))
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
-        batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
+        batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
         if self.correct_idempotent:
             # Every timestep is a (graph_a, action, graph_b) triple
-            agraphs = [i[0] for tj in trajs for i in tj['traj']]
+            agraphs = [i[0] for tj in trajs for i in tj["traj"]]
             # Here we start at the 1th timestep and append the result
-            bgraphs = sum([[i[0] for i in tj['traj'][1:]] + [tj['result']] for tj in trajs], [])
-            gactions = [i[1] for tj in trajs for i in tj['traj']]
+            bgraphs = sum([[i[0] for i in tj["traj"][1:]] + [tj["result"]] for tj in trajs], [])
+            gactions = [i[1] for tj in trajs for i in tj["traj"]]
             ipa = [
                 self.get_idempotent_actions(g, gd, gp, a)
                 for g, gd, gp, a in zip(agraphs, torch_graphs, bgraphs, gactions)
@@ -225,8 +242,8 @@ class TrajectoryBalance:
             batch.ip_lens = torch.tensor([len(i) for i in ipa])
             if self.p_b_is_parameterized:
                 # Here we start at the 0th timestep and prepend None (it will be unused)
-                bgraphs = sum([[None] + [i[0] for i in tj['traj'][:-1]] for tj in trajs], [])
-                gactions = [i for tj in trajs for i in tj['bck_a']]
+                bgraphs = sum([[None] + [i[0] for i in tj["traj"][:-1]] for tj in trajs], [])
+                gactions = [i for tj in trajs for i in tj["bck_a"]]
                 bck_ipa = [
                     self.get_idempotent_actions(g, gd, gp, a)
                     for g, gd, gp, a in zip(agraphs, torch_graphs, bgraphs, gactions)
@@ -289,18 +306,20 @@ class TrajectoryBalance:
             ip_log_prob = fwd_cat.log_prob(batch.ip_actions, batch=ip_batch_idces)
             # take the logsumexp (because we want to sum probabilities, not log probabilities)
             # TODO: numerically stable version:
-            p = scatter(ip_log_prob.exp(), ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce='sum')
+            p = scatter(ip_log_prob.exp(), ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce="sum")
             # As a (reasonable) band-aid, ignore p < 1e-30, this will prevent underflows due to
             # scatter(small number) = 0 on CUDA
             log_p_F = p.clamp(1e-30).log()
 
             if self.p_b_is_parameterized:
                 # Now we repeat this but for the backward policy
-                bck_ip_batch_idces = torch.arange(batch.bck_ip_lens.shape[0],
-                                                  device=dev).repeat_interleave(batch.bck_ip_lens)
+                bck_ip_batch_idces = torch.arange(batch.bck_ip_lens.shape[0], device=dev).repeat_interleave(
+                    batch.bck_ip_lens
+                )
                 bck_ip_log_prob = bck_cat.log_prob(batch.bck_ip_actions, batch=bck_ip_batch_idces)
-                bck_p = scatter(bck_ip_log_prob.exp(), bck_ip_batch_idces, dim=0, dim_size=batch_idx.shape[0],
-                                reduce='sum')
+                bck_p = scatter(
+                    bck_ip_log_prob.exp(), bck_ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce="sum"
+                )
                 log_p_B = bck_p.clamp(1e-30).log()
         else:
             # Else just naively take the logprob of the actions we took
@@ -332,8 +351,8 @@ class TrajectoryBalance:
         assert log_p_F.shape == log_p_B.shape
 
         # This is the log probability of each trajectory
-        traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
-        traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
+        traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
         if self.is_doing_subTB:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
@@ -391,23 +410,23 @@ class TrajectoryBalance:
 
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
         info = {
-            'offline_loss': traj_losses[:batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
-            'reward_loss': reward_loss,
-            'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
-            'invalid_logprob': (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
-            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
-            'logZ': log_Z.mean(),
-            'loss': loss.item(),
+            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+            "reward_loss": reward_loss,
+            "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
+            "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
+            "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            "logZ": log_Z.mean(),
+            "loss": loss.item(),
         }
 
         return loss, info
 
     def _init_subtb(self, dev):
         r"""Precompute all possible subtrajectory indices that we will use for computing the loss:
-            \sum_{m=1}^{T-1} \sum_{n=m+1}^T
-                \log( \frac{F(s_m) \prod_{i=m}^{n-1} P_F(s_{i+1}|s_i)}
-                           {F(s_n) \prod_{i=m}^{n-1} P_B(s_i|s_{i+1})} )^2
+        \sum_{m=1}^{T-1} \sum_{n=m+1}^T
+            \log( \frac{F(s_m) \prod_{i=m}^{n-1} P_F(s_{i+1}|s_i)}
+                       {F(s_n) \prod_{i=m}^{n-1} P_B(s_i|s_{i+1})} )^2
         """
         ar = torch.arange(self._subtb_max_len, device=dev)
         # This will contain a sequence of repeated ranges, e.g.
@@ -428,10 +447,12 @@ class TrajectoryBalance:
         # of that subtrajectory gets computed as result[2] = P_F[0] + P_F[1] + P_F[2].
 
         self._precomp = [
-            (torch.cat([i + tidx[T - i]
-                        for i in range(T)]),
-             torch.cat([ar[:T - i].repeat_interleave(ar[:T - i] + 1) + ar[T - i + 1:T + 1].sum()
-                        for i in range(T)]))
+            (
+                torch.cat([i + tidx[T - i] for i in range(T)]),
+                torch.cat(
+                    [ar[: T - i].repeat_interleave(ar[: T - i] + 1) + ar[T - i + 1 : T + 1].sum() for i in range(T)]
+                ),
+            )
             for T in range(1, self._subtb_max_len)
         ]
 
@@ -482,10 +503,11 @@ class TrajectoryBalance:
                 T -= 1
             idces, dests = self._precomp[T - 1]
             fidces = torch.cat(
-                [torch.cat([ar[i + 1:T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)])
+                [torch.cat([ar[i + 1 : T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)]
+            )
             P_F_sums = scatter_sum(P_F[idces + offset], dests)
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
-            F_start = F[offset:offset + T].repeat_interleave(T - ar[:T])
+            F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
             F_end = F_and_R[fidces]
             total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
         return total_loss

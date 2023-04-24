@@ -11,8 +11,10 @@ from gflownet.envs.graph_building_env import GraphActionType
 
 class GraphSampler:
     """A helper class to sample from GraphActionCategorical-producing models"""
-    def __init__(self, ctx, env, max_len, max_nodes, rng, sample_temp=1, correct_idempotent=False,
-                 pad_with_terminal_state=False):
+
+    def __init__(
+        self, ctx, env, max_len, max_nodes, rng, sample_temp=1, correct_idempotent=False, pad_with_terminal_state=False
+    ):
         """
         Parameters
         ----------
@@ -44,8 +46,9 @@ class GraphSampler:
         self.correct_idempotent = correct_idempotent
         self.pad_with_terminal_state = pad_with_terminal_state
 
-    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device,
-                          random_action_prob: float = 0.):
+    def sample_from_model(
+        self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.0
+    ):
         """Samples a model in a minibatch
 
         Parameters
@@ -69,7 +72,7 @@ class GraphSampler:
            - is_valid: is the generated graph valid according to the env & ctx
         """
         # This will be returned
-        data = [{'traj': [], 'reward_pred': None, 'is_valid': True, 'is_sink': []} for i in range(n)]
+        data = [{"traj": [], "reward_pred": None, "is_valid": True, "is_sink": []} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
         fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
         bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
@@ -98,7 +101,8 @@ class GraphSampler:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(
-                    self.rng.uniform(size=len(torch_graphs)) < random_action_prob, device=dev).float()
+                    self.rng.uniform(size=len(torch_graphs)) < random_action_prob, device=dev
+                ).float()
                 # Set the logits to some large value if they're not masked, this way the masked
                 # actions have no probability of getting sampled, and there is a uniform
                 # distribution over the rest
@@ -119,13 +123,13 @@ class GraphSampler:
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
-                data[i]['traj'].append((graphs[i], graph_actions[j]))
+                data[i]["traj"].append((graphs[i], graph_actions[j]))
                 bck_a[i].append(self.env.reverse(graphs[i], graph_actions[j]))
                 # Check if we're done
                 if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
                     bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
-                    data[i]['is_sink'].append(1)
+                    data[i]["is_sink"].append(1)
                 else:  # If not done, try to step the self.environment
                     gp = graphs[i]
                     try:
@@ -134,9 +138,9 @@ class GraphSampler:
                         assert len(gp.nodes) <= self.max_nodes
                     except AssertionError:
                         done[i] = True
-                        data[i]['is_valid'] = False
+                        data[i]["is_valid"] = False
                         bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
-                        data[i]['is_sink'].append(1)
+                        data[i]["is_sink"].append(1)
                         continue
                     if t == self.max_len - 1:
                         done[i] = True
@@ -144,13 +148,13 @@ class GraphSampler:
                     # P_B = uniform backward
                     n_back = self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
                     bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
-                    data[i]['is_sink'].append(0)
+                    data[i]["is_sink"].append(0)
                     graphs[i] = gp
                 if done[i] and self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
                     # check if the graph is sane (e.g. RDKit can
                     # construct a molecule from it) otherwise
                     # treat the done action as illegal
-                    data[i]['is_valid'] = False
+                    data[i]["is_valid"] = False
             if all(done):
                 break
 
@@ -171,14 +175,14 @@ class GraphSampler:
             # If we're not bootstrapping, we could query the reward
             # model here, but this is expensive/impractical.  Instead
             # just report forward and backward logprobs
-            data[i]['fwd_logprob'] = sum(fwd_logprob[i])
-            data[i]['bck_logprob'] = sum(bck_logprob[i])
-            data[i]['bck_logprobs'] = torch.stack(bck_logprob[i]).reshape(-1)
-            data[i]['result'] = graphs[i]
-            data[i]['bck_a'] = bck_a[i]
+            data[i]["fwd_logprob"] = sum(fwd_logprob[i])
+            data[i]["bck_logprob"] = sum(bck_logprob[i])
+            data[i]["bck_logprobs"] = torch.stack(bck_logprob[i]).reshape(-1)
+            data[i]["result"] = graphs[i]
+            data[i]["bck_a"] = bck_a[i]
             if self.pad_with_terminal_state:
                 # TODO: instead of padding with Stop, we could have a virtual action whose
                 # probability always evaluates to 1.
-                data[i]['traj'].append((graphs[i], GraphAction(GraphActionType.Stop)))
-                data[i]['is_sink'].append(1)
+                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
+                data[i]["is_sink"].append(1)
         return data
