@@ -2,17 +2,13 @@ from typing import List, Tuple
 
 import networkx as nx
 import numpy as np
-from rdkit.Chem import Mol
 import rdkit.Chem as Chem
-from rdkit.Chem.rdchem import BondType
-from rdkit.Chem.rdchem import ChiralType
 import torch
 import torch_geometric.data as gd
+from rdkit.Chem import Mol
+from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionType
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]

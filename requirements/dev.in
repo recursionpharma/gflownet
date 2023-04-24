@@ -2,17 +2,16 @@
 -r main.in
 
 bandit[toml]
-flake8
+black
 isort
 mypy
 pip-compile-multi
 pre-commit
 pytest
 pytest-cov
-safety
+ruff
 typeguard
 types-pkg_resources
-yapf
 
 # Security pin
 gitpython>=3.1.30

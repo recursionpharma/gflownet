@@ -6,33 +6,27 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 
 import git
 import numpy as np
-from rdkit.Chem import Descriptors
-from rdkit.Chem import QED
-from rdkit.Chem.rdchem import Mol as RDMol
 import torch
+import torch.nn as nn
+import torch_geometric.data as gd
+from rdkit.Chem import QED, Descriptors
+from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
-import torch.nn as nn
 from torch.utils.data import Dataset
-import torch_geometric.data as gd
 
 from gflownet.algo.advantage_actor_critic import A2C
-from gflownet.algo.envelope_q_learning import EnvelopeQLearning
-from gflownet.algo.envelope_q_learning import GraphTransformerFragEnvelopeQL
+from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.tasks.seh_frag import SEHFragTrainer
-from gflownet.tasks.seh_frag import SEHTask
-from gflownet.train import FlatRewards
-from gflownet.train import RewardScalar
-from gflownet.utils import metrics
-from gflownet.utils import sascore
-from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook
-from gflownet.utils.multiobjective_hooks import TopKHook
+from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
+from gflownet.train import FlatRewards, RewardScalar
+from gflownet.utils import metrics, sascore
+from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 
 
 class SEHMOOTask(SEHTask):
@@ -95,7 +89,7 @@ class SEHMOOTask(SEHTask):
         cond_info["preferences"] = preferences
         return cond_info
 
-    def encode_conditional_information(self, preferences: Tensor) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, preferences: torch.TensorType) -> Dict[str, Tensor]:
         if self.temperature_sample_dist == "constant":
             beta = torch.ones(len(preferences)) * self.temperature_dist_params
             beta_enc = torch.zeros((len(preferences), self.num_thermometer_dim))
