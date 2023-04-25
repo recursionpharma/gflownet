@@ -112,7 +112,7 @@ class SamplingIterator(IterableDataset):
                 wid = worker_info.id
                 start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
             bs = self.offline_batch_size
-            if end - start < bs:
+            if end - start <= bs:
                 yield np.arange(start, end)
                 return
             for i in range(start, end - bs, bs):

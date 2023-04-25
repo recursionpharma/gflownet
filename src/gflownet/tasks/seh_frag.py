@@ -121,6 +121,7 @@ class SEHFragTrainer(GFNTrainer):
             "num_emb": 128,
             "num_layers": 4,
             "tb_epsilon": None,
+            "tb_p_b_is_parameterized": False,
             "illegal_action_logreward": -75,
             "reward_loss_multiplier": 1,
             "temperature_sample_dist": "uniform",
@@ -136,11 +137,12 @@ class SEHFragTrainer(GFNTrainer):
             "random_action_prob": 0.0,
             "valid_random_action_prob": 0.0,
             "sampling_tau": 0.0,
+            "max_nodes": 9,
             "num_thermometer_dim": 32,
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
 
     def setup_task(self):
         self.task = SEHTask(
@@ -155,7 +157,9 @@ class SEHFragTrainer(GFNTrainer):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps["num_emb"], num_layers=self.hps["num_layers"])
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=self.hps["num_thermometer_dim"])
+        self.ctx = FragMolBuildingEnvContext(
+            max_frags=self.hps["max_nodes"], num_cond_dim=self.hps["num_thermometer_dim"]
+        )
 
     def setup(self):
         hps = self.hps
