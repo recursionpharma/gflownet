@@ -2,40 +2,12 @@
 requires = ["setuptools", "setuptools-scm", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# [project] not yet supported
-# name = "gflownet"
-# description = "GFlowNet related training and environment code"
-# url = "https://github.com/recursionpharma/gflownet"
-# author = "Recursion Pharmaceuticals"
-# author_email = "devs@recursionpharma.com"
-# classifiers = [
-# 	"Operating System :: OS Independent",
-# 	"Programming Language :: Python",
-# 	"Programming Language :: Python :: 3"
-# ]
-# keywords = ["gflownet"]
-# requires-python = ">=3.6"
-# readme = "README.md"
+[tool.distutils.bdist_wheel]
+universal = "true"
 
 [tool.bandit]
-# B101 detects the use of asserts
-# B301 and B403 detect the use of pickle
-skips = ["B101", "B301", "B403"]
+skips = ["B101"]
 exclude_dirs = ["tests", ".tox", ".venv"]
-
-# [tool.flake8] not yet supported
-# max-line-length = 120
-# exclude = ".github,doc,.git,.nox,.tox,doc"
-# max_complexity = 20
-
-[tool.yapf]
-based_on_style = "google"
-allow_multiline_dictionary_keys = true
-allow_split_before_dict_value = false
-blank_line_before_nested_class_or_def = false
-coalesce_brackets = true
-column_limit = 120
-split_before_named_assigns = false
 
 [tool.pytest.ini_options]
 addopts = [
@@ -66,6 +38,25 @@ allow_untyped_defs = true
 allow_incomplete_defs = true
 
 [tool.isort]
-profile = "google"
-line_length = 120
+profile = "black"
 py_version = "auto"
+line_length = 120
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[project]
+name = "gflownet"
+readme = "README.md"
+classifiers = ["Operating System :: OS Independent", "Programming Language :: Python", "Programming Language :: Python :: 3"]
+keywords = ["gflownet"]
+requires-python = ">=3.8"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+
+[[project.authors]]
+name = "Recursion Pharmaceuticals"
+email = "devs@recursionpharma.com"
+
+[tool.ruff]
+line-length = 120
