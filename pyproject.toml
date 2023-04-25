@@ -100,4 +100,3 @@ email = "devs@recursionpharma.com"
 line-length = 120
 
 [tool.setuptools_scm]
-
