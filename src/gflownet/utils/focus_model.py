@@ -89,12 +89,14 @@ class TabularFocusModel(FocusModel):
         s_coef = self.success_to_population_weight
         p_coef = 1. - self.success_to_population_weight
 
-        success_based_likelihoods = self.focus_dir_success_count / self.focus_dir_count
-        success_based_likelihoods[torch.isnan(success_based_likelihoods)] = 1
+        success_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
+        success_based_likelihoods[self.focus_dir_success_count > 0] = 1.  # has been succesful
+        success_based_likelihoods[self.focus_dir_count == 0] = 1.  # has never been sampled
+        success_based_likelihoods[torch.logical_and(self.focus_dir_success_count == 0, self.focus_dir_count > 0)] = 0.1
 
-        population_based_likelihoods = self.focus_dir_population_count / self.total_population_count
-        assert not any(torch.isnan(population_based_likelihoods)), \
-            "FocusModel should not be sampled from before having been updated at least once."
+        population_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
+        population_based_likelihoods[self.focus_dir_population_count > 0] = 1.  # something landed there
+        population_based_likelihoods[self.focus_dir_population_count == 0] = 0.1  # nothing ever landed there
 
         sampling_likelihoods = s_coef * success_based_likelihoods + p_coef * population_based_likelihoods
         focus_dir_indices = torch.multinomial(sampling_likelihoods, n, replacement=True)
