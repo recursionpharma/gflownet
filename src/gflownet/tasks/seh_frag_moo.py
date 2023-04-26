@@ -110,7 +110,7 @@ class SEHMOOTask(SEHTask):
         elif self.focus_type == "hyperspherical":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
-        elif 'learned-tabular' in self.focus_type:
+        elif self.focus_type is not None and 'learned' in self.focus_type:
             if self.focus_model is not None and \
                     train_it >= self.focus_model_training_limits[0] * self.max_train_it and \
                     train_it <= self.focus_model_training_limits[1] * self.max_train_it:
@@ -250,13 +250,15 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif hps['algo'] == 'MOQL':
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
-        if 'learned' in hps['focus_type']:
+        if hps['focus_type'] is not None and 'learned' in hps['focus_type']:
             if hps['focus_type'] == 'learned-tabular':
                 self.focus_model = TabularFocusModel(
                     device=self.device, n_objectives=len(hps['objectives']),
                     state_space_res=hps['focus_model_state_space_res'], focus_cosim=hps['focus_cosim'])
             else:
                 raise NotImplementedError('Unknown focus model type {self.focus_type}')
+        else:
+            self.focus_model = None
 
     def setup_task(self):
         self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
@@ -390,7 +392,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         return super().train_batch(batch, epoch_idx, batch_idx, train_it)
 
     def _save_state(self, it):
-        self.focus_model.save(pathlib.Path(self.hps['log_dir']))
+        if self.focus_model is not None:
+            self.focus_model.save(pathlib.Path(self.hps['log_dir']))
         return super()._save_state(it)
 
 
