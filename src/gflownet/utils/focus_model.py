@@ -47,8 +47,7 @@ class TabularFocusModel(FocusModel):
         device,
         n_objectives: int,
         state_space_res: int,
-        focus_cosim: float,
-        success_to_population_weight: float,
+        focus_cosim: float
     ) -> None:
         super().__init__(device, n_objectives, state_space_res, focus_cosim)
         self.n_objectives = n_objectives
@@ -56,10 +55,7 @@ class TabularFocusModel(FocusModel):
         self.focus_dir_dataset = nn.functional.normalize(
             torch.tensor(get_limits_of_hypercube(n_objectives, state_space_res)), dim=1).float().to(self.device)
         self.focus_dir_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
-        self.focus_dir_success_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
         self.focus_dir_population_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
-        self.total_population_count = 0
-        self.success_to_population_weight = success_to_population_weight
 
     def update_belief(self, focus_dirs: torch.Tensor, flat_rewards: torch.Tensor):
         """
@@ -68,37 +64,25 @@ class TabularFocusModel(FocusModel):
         """
         focus_dirs = nn.functional.normalize(focus_dirs, dim=1)
         flat_rewards = nn.functional.normalize(flat_rewards, dim=1)
-        _, in_focus_mask = compute_focus_coef(flat_rewards, focus_dirs, self.focus_cosim, focus_limit_coef=1.)
 
         focus_dirs_indices = torch.argmin(torch.cdist(focus_dirs, self.focus_dir_dataset), dim=1)
-        success_indices = torch.argmin(torch.cdist(focus_dirs[in_focus_mask], self.focus_dir_dataset), dim=1)
         flat_rewards_indices = torch.argmin(torch.cdist(flat_rewards, self.focus_dir_dataset), dim=1)
 
         for idxs, count in zip(
-            [focus_dirs_indices, success_indices, flat_rewards_indices],
-            [self.focus_dir_count, self.focus_dir_success_count, self.focus_dir_population_count],
+            [focus_dirs_indices, flat_rewards_indices],
+            [self.focus_dir_count, self.focus_dir_population_count],
         ):
             idx_increments = torch.bincount(idxs, minlength=len(count))
             count += idx_increments
-        self.total_population_count += len(flat_rewards)
 
     def sample_focus_directions(self, n):
         """
         Samples n focus directions from the focus model.
         """
-        s_coef = self.success_to_population_weight
-        p_coef = 1. - self.success_to_population_weight
-
-        success_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
-        success_based_likelihoods[self.focus_dir_success_count > 0] = 1.  # has been succesful
-        success_based_likelihoods[self.focus_dir_count == 0] = 1.  # has never been sampled
-        success_based_likelihoods[torch.logical_and(self.focus_dir_success_count == 0, self.focus_dir_count > 0)] = 0.1
-
-        population_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
-        population_based_likelihoods[self.focus_dir_population_count > 0] = 1.  # something landed there
-        population_based_likelihoods[self.focus_dir_population_count == 0] = 0.1  # nothing ever landed there
-
-        sampling_likelihoods = s_coef * success_based_likelihoods + p_coef * population_based_likelihoods
+        sampling_likelihoods = torch.zeros_like(self.focus_dir_count).float().to(self.device)
+        sampling_likelihoods[self.focus_dir_count == 0] = 1.
+        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count > 0)] = 1.
+        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count == 0)] = 0.1
         focus_dir_indices = torch.multinomial(sampling_likelihoods, n, replacement=True)
         return self.focus_dir_dataset[focus_dir_indices].to("cpu")
 
@@ -107,11 +91,8 @@ class TabularFocusModel(FocusModel):
             "n_objectives": self.n_objectives,
             "state_space_res": self.state_space_res,
             "focus_dir_dataset": self.focus_dir_dataset.to("cpu"),
-            "focus_dir_sampling_count": self.focus_dir_count.to("cpu"),
-            "focus_dir_success_count": self.focus_dir_success_count.to("cpu"),
+            "focus_dir_count": self.focus_dir_count.to("cpu"),
             "focus_dir_population_count": self.focus_dir_population_count.to("cpu"),
-            "total_population_count": self.total_population_count,
-            "success_to_population_weight": self.success_to_population_weight,
         }
         torch.save(params, open(path / 'tabular_focus_model.pt', 'wb'))
 
@@ -120,8 +101,5 @@ class TabularFocusModel(FocusModel):
         self.n_objectives = params["n_objectives"]
         self.state_space_res = params["state_space_res"]
         self.focus_dir_dataset = params["focus_dir_dataset"].to(device)
-        self.focus_dir_count = params["focus_dir_sampling_count"].to(device)
-        self.focus_dir_success_count = params["focus_dir_success_count"].to(device)
+        self.focus_dir_count = params["focus_dir_count"].to(device)
         self.focus_dir_population_count = params["focus_dir_population_count"].to(device)
-        self.total_population_count = params["total_population_count"]
-        self.success_to_population_weight = params["success_to_population_weight"]

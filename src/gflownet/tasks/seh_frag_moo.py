@@ -234,7 +234,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'focus_limit_coef': 1.,
             'hindsight_ratio': 0.0,
             'focus_model_training_limits': None,
-            'focus_model_success_to_population_weight': None,
             'focus_model_state_space_res': None,
         }
 
@@ -255,8 +254,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             if hps['focus_type'] == 'learned-tabular':
                 self.focus_model = TabularFocusModel(
                     device=self.device, n_objectives=len(hps['objectives']),
-                    state_space_res=hps['focus_model_state_space_res'], focus_cosim=hps['focus_cosim'],
-                    success_to_population_weight=hps['focus_model_success_to_population_weight'])
+                    state_space_res=hps['focus_model_state_space_res'], focus_cosim=hps['focus_cosim'])
             else:
                 raise NotImplementedError('Unknown focus model type {self.focus_type}')
 
@@ -443,7 +441,6 @@ def main():
         'hindsight_ratio': 0.3,
         'mp_pickle_messages': True,
         'focus_model_training_limits': [0.0001, 0.75],
-        'focus_model_success_to_population_weight': 0.5,
         'focus_model_state_space_res': 10,
     }
     if os.path.exists(hps['log_dir']):
