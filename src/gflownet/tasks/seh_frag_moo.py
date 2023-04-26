@@ -96,7 +96,7 @@ class SEHMOOTask(SEHTask):
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
                 np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32))
-        elif self.focus_type == "sampled":
+        elif self.focus_type == "hyperspherical":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
         else:
