@@ -107,7 +107,7 @@ class SEHMOOTask(SEHTask):
         elif self.focus_type == "dirichlet":
             m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
             focus_dir = m.sample([n])
-        elif self.focus_type == "sampled":
+        elif self.focus_type == "hyperspherical":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
         elif 'learned-tabular' in self.focus_type:
