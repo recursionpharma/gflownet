@@ -1,3 +1,4 @@
+from copy import deepcopy
 import json
 import os
 import pathlib
@@ -30,6 +31,8 @@ from gflownet.train import FlatRewards
 from gflownet.train import RewardScalar
 from gflownet.utils import metrics
 from gflownet.utils import sascore
+from gflownet.utils.focus_model import FocusModel
+from gflownet.utils.focus_model import TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook
 from gflownet.utils.multiobjective_hooks import TopKHook
 
@@ -47,7 +50,9 @@ class SEHMOOTask(SEHTask):
                  temperature_parameters: Tuple[float, float], num_thermometer_dim: int, preference_type: str = None,
                  focus_type: Union[list, str] = None, focus_cosim: float = 0., focus_limit_coef: float = 1.,
                  fixed_focus_dirs: torch.Tensor = None, illegal_action_logreward: float = None,
-                 rng: np.random.Generator = None, wrap_model: Callable[[nn.Module], nn.Module] = None):
+                 focus_model: FocusModel = None, focus_model_training_limits: Tuple[int, int] = None,
+                 max_train_it: int = None, rng: np.random.Generator = None, wrap_model: Callable[[nn.Module],
+                                                                                                 nn.Module] = None):
         self._wrap_model = wrap_model
         self.rng = rng
         self.models = self._load_task_models()
@@ -64,6 +69,9 @@ class SEHMOOTask(SEHTask):
         self.focus_limit_coef = focus_limit_coef
         self.fixed_focus_dirs = fixed_focus_dirs
         self.illegal_action_logreward = illegal_action_logreward
+        self.focus_model = focus_model
+        self.focus_model_training_limits = focus_model_training_limits
+        self.max_train_it = max_train_it
         assert set(objectives) <= {'seh', 'qed', 'sa', 'mw'} and len(objectives) == len(set(objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -77,7 +85,7 @@ class SEHMOOTask(SEHTask):
         model, self.device = self._wrap_model(model, send_to_device=True)
         return {'seh': model}
 
-    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n)
 
         if self.preference_type is None:
@@ -96,9 +104,20 @@ class SEHMOOTask(SEHTask):
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
                 np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32))
+        elif self.focus_type == "dirichlet":
+            m = Dirichlet(torch.FloatTensor([1.] * len(self.objectives)))
+            focus_dir = m.sample([n])
         elif self.focus_type == "hyperspherical":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
+        elif 'learned-tabular' in self.focus_type:
+            if self.focus_model is not None and \
+                    train_it >= self.focus_model_training_limits[0] * self.max_train_it and \
+                    train_it <= self.focus_model_training_limits[1] * self.max_train_it:
+                focus_dir = self.focus_model.sample_focus_directions(n)
+            else:
+                focus_dir = torch.tensor(
+                    metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation='l2')).float()
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
 
@@ -202,7 +221,8 @@ class SEHMOOTask(SEHTask):
 class SEHMOOFragTrainer(SEHFragTrainer):
     def default_hps(self) -> Dict[str, Any]:
         return {
-            **super().default_hps(), 'use_fixed_weight': False,
+            **super().default_hps(),
+            'use_fixed_weight': False,
             'objectives': ['seh', 'qed', 'sa', 'mw'],
             'sampling_tau': 0.95,
             'valid_sample_cond_info': False,
@@ -212,7 +232,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             'focus_type': None,
             'focus_cosim': None,
             'focus_limit_coef': 1.,
-            'hindsight_ratio': 0.0
+            'hindsight_ratio': 0.0,
+            'focus_model_training_limits': None,
+            'focus_model_success_to_population_weight': None,
+            'focus_model_state_space_res': None,
         }
 
     def setup_algo(self):
@@ -228,6 +251,15 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif hps['algo'] == 'MOQL':
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
 
+        if 'learned' in hps['focus_type']:
+            if hps['focus_type'] == 'learned-tabular':
+                self.focus_model = TabularFocusModel(
+                    device=self.device, n_objectives=len(hps['objectives']),
+                    state_space_res=hps['focus_model_state_space_res'], focus_cosim=hps['focus_cosim'],
+                    success_to_population_weight=hps['focus_model_success_to_population_weight'])
+            else:
+                raise NotImplementedError('Unknown focus model type {self.focus_type}')
+
     def setup_task(self):
         self.task = SEHMOOTask(objectives=self.hps['objectives'], dataset=self.training_data,
                                temperature_sample_dist=self.hps['temperature_sample_dist'],
@@ -235,8 +267,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                                num_thermometer_dim=self.hps['num_thermometer_dim'],
                                preference_type=self.hps['preference_type'], focus_type=self.hps['focus_type'],
                                focus_cosim=self.hps['focus_cosim'], focus_limit_coef=self.hps['focus_limit_coef'],
-                               illegal_action_logreward=self.hps['illegal_action_logreward'], rng=self.rng,
-                               wrap_model=self._wrap_for_mp)
+                               illegal_action_logreward=self.hps['illegal_action_logreward'],
+                               focus_model=self.focus_model,
+                               focus_model_training_limits=self.hps['focus_model_training_limits'],
+                               max_train_it=self.hps['num_training_steps'], rng=self.rng, wrap_model=self._wrap_for_mp)
 
     def setup_model(self):
         if self.hps['algo'] == 'MOQL':
@@ -300,7 +334,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif self.hps['focus_type'] == 'partitioned':
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l2')
             self.task.fixed_focus_dirs = valid_focus_dirs
-        elif self.hps['focus_type'] == 'sampled':
+        elif self.hps['focus_type'] in ['dirichlet', 'learned-gfn']:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l1')
+            self.task.fixed_focus_dirs = None
+        elif self.hps['focus_type'] in ['sampled', 'learned-tabular']:
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation='l2')
             self.task.fixed_focus_dirs = None
         elif type(self.hps['focus_type']) is list:
@@ -345,6 +382,19 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         return {'topk': TopKMetricCB()}
 
+    def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
+        focus_model_training_limits = self.hps['focus_model_training_limits']
+        max_train_it = self.hps['num_training_steps']
+        if self.focus_model is not None and \
+                train_it >= focus_model_training_limits[0] * max_train_it and \
+                train_it <= focus_model_training_limits[1] * max_train_it:
+            self.focus_model.update_belief(deepcopy(batch.focus_dir), deepcopy(batch.flat_rewards))
+        return super().train_batch(batch, epoch_idx, batch_idx, train_it)
+
+    def _save_state(self, it):
+        self.focus_model.save(pathlib.Path(self.hps['log_dir']))
+        return super()._save_state(it)
+
 
 class RepeatedCondInfoDataset:
     def __init__(self, cond_info_vectors, repeat):
@@ -378,12 +428,12 @@ def main():
         'Z_lr_decay': 50000,
         'sampling_tau': 0.95,
         'random_action_prob': 0.1,
-        'num_data_loader_workers': 2,
+        'num_data_loader_workers': 0,
         'temperature_sample_dist': 'constant',
         'temperature_dist_params': 60.,
         'num_thermometer_dim': 32,
-        'preference_type': 'dirichlet',
-        'focus_type': "centered",
+        'preference_type': None,
+        'focus_type': "learned-tabular",
         'focus_cosim': 0.98,
         'focus_limit_coef': 1e-1,
         'n_valid': 15,
@@ -391,7 +441,10 @@ def main():
         'use_replay_buffer': True,
         'replay_buffer_warmup': 0,
         'hindsight_ratio': 0.3,
-        'mp_pickle_messages': True
+        'mp_pickle_messages': True,
+        'focus_model_training_limits': [0.0001, 0.75],
+        'focus_model_success_to_population_weight': 0.5,
+        'focus_model_state_space_res': 10,
     }
     if os.path.exists(hps['log_dir']):
         if hps['overwrite_existing_exp']:

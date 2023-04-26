@@ -71,6 +71,7 @@ class SamplingIterator(IterableDataset):
         self.sample_cond_info = sample_cond_info
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
+        self.train_it = 0
         self.log_molecule_smis = not hasattr(self.ctx, 'not_a_molecule_env')  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
@@ -142,7 +143,8 @@ class SamplingIterator(IterableDataset):
 
             if self.sample_cond_info:
                 num_online = self.online_batch_size
-                cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size)
+                cond_info = self.task.sample_conditional_information(num_offline + self.online_batch_size,
+                                                                     self.train_it)
 
                 # Sample some dataset data
                 mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
@@ -269,6 +271,7 @@ class SamplingIterator(IterableDataset):
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
 
+            self.train_it += worker_info.num_workers if worker_info is not None else 1
             yield batch
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):

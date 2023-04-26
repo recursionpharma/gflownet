@@ -45,6 +45,14 @@ def get_focus_accuracy(flat_rewards, focus_dirs, focus_cosim):
     return in_focus_mask.float().sum() / len(flat_rewards)
 
 
+def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+    """Discretise the faces that are at the extremity of a unit hypercube"""
+    linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
+    grid = np.array(list(product(*linear_spaces)))
+    extreme_points = grid[np.any(grid == 1, axis=1)]
+    return extreme_points
+
+
 def get_IGD(samples, ref_front: np.ndarray = None):
     """
     Computes the Inverse Generational Distance of a set of samples w.r.t a reference pareto front.
@@ -62,13 +70,6 @@ def get_IGD(samples, ref_front: np.ndarray = None):
     Returns:
         float: The IGD value.
     """
-    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
-        """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
-        grid = np.array(list(product(*linear_spaces)))
-        extreme_points = grid[np.any(grid == 1, axis=1)]
-        return extreme_points
-
     n_objectives = samples.shape[1]
     if ref_front is None:
         ref_front = get_limits_of_hypercube(n_dims=n_objectives)
@@ -104,13 +105,6 @@ def get_PC_entropy(samples, ref_front=None):
     Returns:
         float: The IGD value.
     """
-    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
-        """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0., 1., n_points_per_dim) for _ in range(n_dims)]
-        grid = np.array(list(product(*linear_spaces)))
-        extreme_points = grid[np.any(grid == 1, axis=1)]
-        return extreme_points
-
     n_objectives = samples.shape[1]
     if ref_front is None:
         ref_front = get_limits_of_hypercube(n_dims=n_objectives)

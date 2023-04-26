@@ -1,0 +1,127 @@
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+
+from gflownet.utils.metrics import compute_focus_coef
+from gflownet.utils.metrics import get_limits_of_hypercube
+
+
+class FocusModel:
+    """
+    Abstract class for a belief model over focus directions for goal-conditioned GFNs.
+    Goal-conditioned GFNs allow for more control over the objective-space region from which
+        we wish to sample. However due to the growing number of emtpy regions in the objective space,
+        if we naively sample focus-directions from the entire objective space, we will condition
+        our GFN with a lot of infeasible directions which significantly harms its sample efficiency
+        compared to a more simple preference-conditioned model.
+    To alleviate this problem, we introduce a focus belief model which is used to sample
+        focus directions from a subset of the objective space. The belief model is
+        trained to predict the probability of a focus direction being feasible. The likelihood
+        to sample a focus direction is then proportional to its population. Directions that have never
+        been sampled should be given the maximum likelihood.
+    """
+    def __init__(self, device, n_objectives: int, state_space_res: int, focus_cosim: float) -> None:
+        self.device = device
+        self.n_objectives = n_objectives
+        self.state_space_res = state_space_res
+        self.focus_cosim = focus_cosim
+
+    def update_belief(self, focus_dirs: torch.Tensor, flat_rewards: torch.Tensor):
+        raise NotImplementedError
+
+    def sample_focus_directions(self, n):
+        raise NotImplementedError
+
+
+class TabularFocusModel(FocusModel):
+    """
+    Tabular model of the feasibility of focus directions for goal-condtioning.
+    We keep a count of the number of times each focus direction has been sampled and whether
+    this direction succesfully lead to a sample in this region of the objective space. The (unormalized) likelihood
+    of a focus direction being feasible is then given by the ratio of these numbers.
+    If a focus direction has not been sampled yet it obtains the maximum likelihood of one.
+    """
+    def __init__(
+        self,
+        device,
+        n_objectives: int,
+        state_space_res: int,
+        focus_cosim: float,
+        success_to_population_weight: float,
+    ) -> None:
+        super().__init__(device, n_objectives, state_space_res, focus_cosim)
+        self.n_objectives = n_objectives
+        self.state_space_res = state_space_res
+        self.focus_dir_dataset = nn.functional.normalize(
+            torch.tensor(get_limits_of_hypercube(n_objectives, state_space_res)), dim=1).float().to(self.device)
+        self.focus_dir_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
+        self.focus_dir_success_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
+        self.focus_dir_population_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
+        self.total_population_count = 0
+        self.success_to_population_weight = success_to_population_weight
+
+    def update_belief(self, focus_dirs: torch.Tensor, flat_rewards: torch.Tensor):
+        """
+        Updates the focus model with the focus directions and rewards
+        of the last batch.
+        """
+        focus_dirs = nn.functional.normalize(focus_dirs, dim=1)
+        flat_rewards = nn.functional.normalize(flat_rewards, dim=1)
+        _, in_focus_mask = compute_focus_coef(flat_rewards, focus_dirs, self.focus_cosim, focus_limit_coef=1.)
+
+        focus_dirs_indices = torch.argmin(torch.cdist(focus_dirs, self.focus_dir_dataset), dim=1)
+        success_indices = torch.argmin(torch.cdist(focus_dirs[in_focus_mask], self.focus_dir_dataset), dim=1)
+        flat_rewards_indices = torch.argmin(torch.cdist(flat_rewards, self.focus_dir_dataset), dim=1)
+
+        for idxs, count in zip(
+            [focus_dirs_indices, success_indices, flat_rewards_indices],
+            [self.focus_dir_count, self.focus_dir_success_count, self.focus_dir_population_count],
+        ):
+            idx_increments = torch.bincount(idxs, minlength=len(count))
+            count += idx_increments
+        self.total_population_count += len(flat_rewards)
+
+    def sample_focus_directions(self, n):
+        """
+        Samples n focus directions from the focus model.
+        """
+        s_coef = self.success_to_population_weight
+        p_coef = 1. - self.success_to_population_weight
+
+        success_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
+        success_based_likelihoods[self.focus_dir_success_count > 0] = 1.  # has been succesful
+        success_based_likelihoods[self.focus_dir_count == 0] = 1.  # has never been sampled
+        success_based_likelihoods[torch.logical_and(self.focus_dir_success_count == 0, self.focus_dir_count > 0)] = 0.1
+
+        population_based_likelihoods = torch.zeros_like(self.focus_dir_success_count).float().to(self.device)
+        population_based_likelihoods[self.focus_dir_population_count > 0] = 1.  # something landed there
+        population_based_likelihoods[self.focus_dir_population_count == 0] = 0.1  # nothing ever landed there
+
+        sampling_likelihoods = s_coef * success_based_likelihoods + p_coef * population_based_likelihoods
+        focus_dir_indices = torch.multinomial(sampling_likelihoods, n, replacement=True)
+        return self.focus_dir_dataset[focus_dir_indices].to("cpu")
+
+    def save(self, path: Path):
+        params = {
+            "n_objectives": self.n_objectives,
+            "state_space_res": self.state_space_res,
+            "focus_dir_dataset": self.focus_dir_dataset.to("cpu"),
+            "focus_dir_sampling_count": self.focus_dir_count.to("cpu"),
+            "focus_dir_success_count": self.focus_dir_success_count.to("cpu"),
+            "focus_dir_population_count": self.focus_dir_population_count.to("cpu"),
+            "total_population_count": self.total_population_count,
+            "success_to_population_weight": self.success_to_population_weight,
+        }
+        torch.save(params, open(path / 'tabular_focus_model.pt', 'wb'))
+
+    def load(self, device, path: Path):
+        params = torch.load(open(path / 'tabular_focus_model.pt', 'rb'))
+        self.n_objectives = params["n_objectives"]
+        self.state_space_res = params["state_space_res"]
+        self.focus_dir_dataset = params["focus_dir_dataset"].to(device)
+        self.focus_dir_count = params["focus_dir_sampling_count"].to(device)
+        self.focus_dir_success_count = params["focus_dir_success_count"].to(device)
+        self.focus_dir_population_count = params["focus_dir_population_count"].to(device)
+        self.total_population_count = params["total_population_count"]
+        self.success_to_population_weight = params["success_to_population_weight"]
