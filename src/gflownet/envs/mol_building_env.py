@@ -2,17 +2,13 @@ from typing import List, Tuple
 
 import networkx as nx
 import numpy as np
-from rdkit.Chem import Mol
 import rdkit.Chem as Chem
-from rdkit.Chem.rdchem import BondType
-from rdkit.Chem.rdchem import ChiralType
 import torch
 import torch_geometric.data as gd
+from rdkit.Chem import Mol
+from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionType
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
@@ -126,6 +122,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_node_dim = self.atom_attr_size + 1 + self.num_rw_feat
         self.num_edge_attr_logits = len(self.bond_attr_logit_map)
         self.num_edge_dim = self.bond_attr_size
+        self.num_node_attrs = len(self.atom_attrs)
+        self.num_edge_attrs = len(self.bond_attrs)
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
         self.edges_are_unordered = True
@@ -140,7 +138,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         ]
         self.device = torch.device("cpu")
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]):
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
         act_type, act_row, act_col = [int(i) for i in action_idx]
         t = self.action_type_order[act_type]

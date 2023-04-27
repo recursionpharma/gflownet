@@ -1,3 +1,4 @@
+from ast import literal_eval
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -23,12 +24,15 @@ def _get_requirements(path: str = "requirements", ext: str = "in") -> Tuple[List
             install_requires = lines
         else:
             extras_require[req_file.stem] = lines
-    return install_requires, extras_require
+    return (install_requires, extras_require)
+
+
+def _read_version():
+    with open("VERSION", "r") as f:
+        lines = f.read().splitlines()
+        versions = {k: literal_eval(v) for k, v in map(lambda x: x.split("="), lines)}
+        return ".".join(versions[i] for i in ["MAJOR", "MINOR", "PATCH"])
 
 
 install_requires, extras_require = _get_requirements()
-
-setup(
-    install_requires=install_requires,
-    extras_require=extras_require,
-)
+setup(name="gflownet", install_requires=install_requires, extras_require=extras_require, version=_read_version())
