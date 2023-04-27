@@ -87,6 +87,7 @@ class TrajectoryBalance:
         self.correct_idempotent = hps.get("tb_correct_idempotent", False)
         self.p_b_is_parameterized = hps.get("tb_p_b_is_parameterized", False)
         self.do_fl_with_db = hps.get("tb_do_fl_with_db", False)
+        self.implicit_log_Z = hps.get("tb_implicit_log_Z", False)
         self.compute_intermediate_rewards = hps.get("compute_intermediate_rewards", False) or self.do_fl_with_db
 
         self.graph_sampler = GraphSampler(
@@ -309,8 +310,19 @@ class TrajectoryBalance:
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]
-        # Compute trajectory balance objective
-        log_Z = model.logZ(cond_info)[:, 0]
+        # Compute log Z
+        if self.implicit_log_Z or self.is_doing_subTB:
+            # What we call the "implicit" log Z is really just F(s_0|cond), and s_0 can be anything the user wants.
+            # First position of the first graph of each trajectory
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            # Fill the 1: position with the cumulative sum of the trajectory lengths
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            # F(s) is per-graph output of the model
+            log_Z = per_graph_out[first_graph_idx, 0]
+        else:
+            # Otherwise explicitly use the parameterized logZ(cond) model
+            log_Z = model.logZ(cond_info)[:, 0]
+
         # Compute the log prob of each action in the trajectory
         if self.correct_idempotent:
             # If we want to correct for idempotent actions, we need to sum probabilities
@@ -374,10 +386,6 @@ class TrajectoryBalance:
         if self.is_doing_subTB:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
-            # The position of the first graph of each trajectory
-            first_graph_idx = torch.zeros_like(batch.traj_lens)
-            first_graph_idx = torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
-            log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective
             numerator = log_Z + traj_log_p_F
@@ -425,7 +433,6 @@ class TrajectoryBalance:
         else:
             reward_loss = 0
 
-
         loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
         info = {
             "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
@@ -453,7 +460,7 @@ class TrajectoryBalance:
             fl_db_loss = (stop_flow - clip_int_log_R).pow(2).mean()
             loss = loss + fl_db_loss
             info["fl_db_loss"] = fl_db_loss.item()
-            info['loss'] = loss.item()  # Update the info loss
+            info["loss"] = loss.item()  # Update the info loss
 
         return loss, info
 
