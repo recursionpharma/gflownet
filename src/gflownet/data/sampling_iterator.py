@@ -130,6 +130,17 @@ class SamplingIterator(IterableDataset):
         return len(self.data)
 
     def __iter__(self):
+        try:
+            for i in self.__iter__A():
+                yield i
+        except Exception as e:
+            print(f"Exception in SamplingIterator: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise e
+
+    def __iter__A(self):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = worker_info.id if worker_info is not None else 0
         # Now that we know we are in a worker instance, we can initialize per-worker things
@@ -204,9 +215,7 @@ class SamplingIterator(IterableDataset):
                 # Compute intermediate rewards
                 for tidx, traj in enumerate(trajs):
                     int_log_rewards = torch.zeros(len(traj["traj"])) + self.algo.illegal_action_logreward
-                    int_objs = [
-                        try_or_None(self.ctx.graph_to_obj, g) for g, ga in traj["traj"][1:] + [(traj["result"], None)]
-                    ]
+                    int_objs = [try_or_None(self.ctx.graph_to_obj, g) for g, ga in traj["traj"]]
                     valid_idcs = [i for i, o in enumerate(int_objs) if o is not None and self.ctx.is_sane(o)]
                     if len(valid_idcs) > 0:
                         int_flat_rewards, int_valid = self.task.compute_flat_rewards([int_objs[i] for i in valid_idcs])

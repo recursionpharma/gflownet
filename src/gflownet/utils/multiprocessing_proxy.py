@@ -1,7 +1,9 @@
 import pickle
 import queue
 import threading
+import traceback
 
+import dill
 import torch
 import torch.multiprocessing as mp
 
@@ -9,9 +11,10 @@ import torch.multiprocessing as mp
 class MPModelPlaceholder:
     """This class can be used as a Model in a worker process, and
     translates calls to queries to the main process"""
+
     def __init__(self, in_queues, out_queues, pickle_messages=False):
         self.qs = in_queues, out_queues
-        self.device = torch.device('cpu')
+        self.device = torch.device("cpu")
         self.pickle_messages = pickle_messages
         self._is_init = False
 
@@ -30,18 +33,21 @@ class MPModelPlaceholder:
 
     def decode(self, m):
         if self.pickle_messages:
-            return pickle.loads(m)
+            m = pickle.loads(m)
+        if isinstance(m, Exception):
+            print("Received exception from main process, reraising.")
+            raise m
         return m
 
     # TODO: make a generic method for this based on __getattr__
     def logZ(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(self.encode(('logZ', a, kw)))
+        self.in_queue.put(self.encode(("logZ", a, kw)))
         return self.decode(self.out_queue.get())
 
     def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(self.encode(('__call__', a, kw)))
+        self.in_queue.put(self.encode(("__call__", a, kw)))
         return self.decode(self.out_queue.get())
 
 
@@ -58,6 +64,7 @@ class MPModelProxy:
     processes.
 
     """
+
     def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
         """Construct a multiprocessing model proxy for torch DataLoaders.
 
@@ -100,7 +107,7 @@ class MPModelProxy:
         return m
 
     def to_cpu(self, i):
-        return i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i
+        return i.detach().to(torch.device("cpu")) if isinstance(i, self.cuda_types) else i
 
     def run(self):
         while not self.stop.is_set():
@@ -115,7 +122,20 @@ class MPModelProxy:
                 f = getattr(self.model, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
-                result = f(*args, **kwargs)
+                try:
+                    # There's no need to compute gradients, since we can't transfer them back to the worker
+                    with torch.no_grad():
+                        result = f(*args, **kwargs)
+                except Exception as e:
+                    print("Exception in MPModelProxy:", e)
+                    # Print the full stack trace
+                    traceback.print_exc()
+                    if dill.pickles(e):
+                        result = e
+                    else:
+                        result = RuntimeError(
+                            "Exception raised in MPModelProxy, but it cannot be pickled.\n" + traceback.format_exc()
+                        )
                 if isinstance(result, (list, tuple)):
                     msg = [self.to_cpu(i) for i in result]
                     self.out_queues[qi].put(self.encode(msg))
