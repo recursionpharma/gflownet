@@ -21,6 +21,7 @@ class FocusModel:
         to sample a focus direction is then proportional to its population. Directions that have never
         been sampled should be given the maximum likelihood.
     """
+
     def __init__(self, device, n_objectives: int, state_space_res: int, focus_cosim: float) -> None:
         self.device = device
         self.n_objectives = n_objectives
@@ -42,18 +43,16 @@ class TabularFocusModel(FocusModel):
     of a focus direction being feasible is then given by the ratio of these numbers.
     If a focus direction has not been sampled yet it obtains the maximum likelihood of one.
     """
-    def __init__(
-        self,
-        device,
-        n_objectives: int,
-        state_space_res: int,
-        focus_cosim: float
-    ) -> None:
+
+    def __init__(self, device, n_objectives: int, state_space_res: int, focus_cosim: float) -> None:
         super().__init__(device, n_objectives, state_space_res, focus_cosim)
         self.n_objectives = n_objectives
         self.state_space_res = state_space_res
-        self.focus_dir_dataset = nn.functional.normalize(
-            torch.tensor(get_limits_of_hypercube(n_objectives, state_space_res)), dim=1).float().to(self.device)
+        self.focus_dir_dataset = (
+            nn.functional.normalize(torch.tensor(get_limits_of_hypercube(n_objectives, state_space_res)), dim=1)
+            .float()
+            .to(self.device)
+        )
         self.focus_dir_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
         self.focus_dir_population_count = torch.zeros(self.focus_dir_dataset.shape[0]).to(self.device)
 
@@ -80,8 +79,8 @@ class TabularFocusModel(FocusModel):
         Samples n focus directions from the focus model.
         """
         sampling_likelihoods = torch.zeros_like(self.focus_dir_count).float().to(self.device)
-        sampling_likelihoods[self.focus_dir_count == 0] = 1.
-        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count > 0)] = 1.
+        sampling_likelihoods[self.focus_dir_count == 0] = 1.0
+        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count > 0)] = 1.0
         sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count == 0)] = 0.1
         focus_dir_indices = torch.multinomial(sampling_likelihoods, n, replacement=True)
         return self.focus_dir_dataset[focus_dir_indices].to("cpu")
@@ -94,10 +93,10 @@ class TabularFocusModel(FocusModel):
             "focus_dir_count": self.focus_dir_count.to("cpu"),
             "focus_dir_population_count": self.focus_dir_population_count.to("cpu"),
         }
-        torch.save(params, open(path / 'tabular_focus_model.pt', 'wb'))
+        torch.save(params, open(path / "tabular_focus_model.pt", "wb"))
 
     def load(self, device, path: Path):
-        params = torch.load(open(path / 'tabular_focus_model.pt', 'rb'))
+        params = torch.load(open(path / "tabular_focus_model.pt", "rb"))
         self.n_objectives = params["n_objectives"]
         self.state_space_res = params["state_space_res"]
         self.focus_dir_dataset = params["focus_dir_dataset"].to(device)

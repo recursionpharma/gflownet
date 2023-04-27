@@ -22,16 +22,17 @@ from gflownet.utils.misc import create_logger
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 # This type represents an unprocessed list of reward signals/conditioning information
-FlatRewards = NewType('FlatRewards', Tensor)  # type: ignore
+FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
 
 # This type represents the outcome for a multi-objective task of
 # converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
-RewardScalar = NewType('RewardScalar', Tensor)  # type: ignore
+RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
 
 
 class GFNAlgorithm:
-    def compute_batch_losses(self, model: nn.Module, batch: gd.Batch,
-                             num_bootstrap: Optional[int] = 0) -> Tuple[Tensor, Dict[str, Tensor]]:
+    def compute_batch_losses(
+        self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
+    ) -> Tuple[Tensor, Dict[str, Tensor]]:
         """Computes the loss for a batch of data, and proves logging informations
         Parameters
         ----------
@@ -115,10 +116,10 @@ class GFNTrainer:
         self.hps = {**self.default_hps(), **hps}
         self.device = device
         # The number of processes spawned to sample object and do CPU work
-        self.num_workers: int = self.hps.get('num_data_loader_workers', 0)
+        self.num_workers: int = self.hps.get("num_data_loader_workers", 0)
         # The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
         # `self.sampling_model`.
-        self.offline_ratio = self.hps.get('offline_ratio', 0.5)
+        self.offline_ratio = self.hps.get("offline_ratio", 0.5)
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
         # Print the loss every `self.print_every` iterations
@@ -129,7 +130,7 @@ class GFNTrainer:
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
         # Pickle messages to reduce load on shared memory (conversely, increases load on CPU)
-        self.pickle_messages = hps.get('mp_pickle_messages', False)
+        self.pickle_messages = hps.get("mp_pickle_messages", False)
 
         self.setup()
 
@@ -148,9 +149,13 @@ class GFNTrainer:
         if send_to_device:
             obj.to(self.device)
         if self.num_workers > 0 and obj is not None:
-            placeholder = mp_object_wrapper(obj, self.num_workers, cast_types=(gd.Batch, GraphActionCategorical),
-                                            pickle_messages=self.pickle_messages)
-            return placeholder, torch.device('cpu')
+            placeholder = mp_object_wrapper(
+                obj,
+                self.num_workers,
+                cast_types=(gd.Batch, GraphActionCategorical),
+                pickle_messages=self.pickle_messages,
+            )
+            return placeholder, torch.device("cpu")
         else:
             return obj, self.device
 
@@ -160,11 +165,20 @@ class GFNTrainer:
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
-        iterator = SamplingIterator(self.training_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    replay_buffer=replay_buffer, ratio=self.offline_ratio,
-                                    log_dir=os.path.join(self.hps['log_dir'], 'train'),
-                                    random_action_prob=self.hps.get('random_action_prob', 0.0),
-                                    hindsight_ratio=self.hps.get('hindsight_ratio', 0.0))
+        iterator = SamplingIterator(
+            self.training_data,
+            model,
+            self.mb_size,
+            self.ctx,
+            self.algo,
+            self.task,
+            dev,
+            replay_buffer=replay_buffer,
+            ratio=self.offline_ratio,
+            log_dir=os.path.join(self.hps["log_dir"], "train"),
+            random_action_prob=self.hps.get("random_action_prob", 0.0),
+            hindsight_ratio=self.hps.get("hindsight_ratio", 0.0),
+        )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(
@@ -174,103 +188,122 @@ class GFNTrainer:
             persistent_workers=self.num_workers > 0,
             # The 2 here is an odd quirk of torch 1.10, it is fixed and
             # replaced by None in torch 2.
-            prefetch_factor=1 if self.num_workers else 2)
+            prefetch_factor=1 if self.num_workers else 2,
+        )
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
-        iterator = SamplingIterator(self.test_data, model, self.mb_size, self.ctx, self.algo, self.task, dev,
-                                    ratio=self.valid_offline_ratio, log_dir=os.path.join(self.hps['log_dir'], 'valid'),
-                                    sample_cond_info=self.hps.get('valid_sample_cond_info', True), stream=False,
-                                    random_action_prob=self.hps.get('valid_random_action_prob', 0.0))
+        iterator = SamplingIterator(
+            self.test_data,
+            model,
+            self.mb_size,
+            self.ctx,
+            self.algo,
+            self.task,
+            dev,
+            ratio=self.valid_offline_ratio,
+            log_dir=os.path.join(self.hps["log_dir"], "valid"),
+            sample_cond_info=self.hps.get("valid_sample_cond_info", True),
+            stream=False,
+            random_action_prob=self.hps.get("valid_random_action_prob", 0.0),
+        )
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
-        return torch.utils.data.DataLoader(iterator, batch_size=None, num_workers=self.num_workers,
-                                           persistent_workers=self.num_workers > 0,
-                                           prefetch_factor=1 if self.num_workers else 2)
+        return torch.utils.data.DataLoader(
+            iterator,
+            batch_size=None,
+            num_workers=self.num_workers,
+            persistent_workers=self.num_workers > 0,
+            prefetch_factor=1 if self.num_workers else 2,
+        )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         try:
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
-                raise ValueError('loss is not finite')
+                raise ValueError("loss is not finite")
             step_info = self.step(loss)
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
-                raise ValueError('parameters are not finite')
+                raise ValueError("parameters are not finite")
         except ValueError as e:
-            os.makedirs(self.hps['log_dir'], exist_ok=True)
-            torch.save([self.model.state_dict(), batch, loss, info], open(self.hps['log_dir'] + '/dump.pkl', 'wb'))
+            os.makedirs(self.hps["log_dir"], exist_ok=True)
+            torch.save([self.model.state_dict(), batch, loss, info], open(self.hps["log_dir"] + "/dump.pkl", "wb"))
             raise e
 
         if step_info is not None:
             info.update(step_info)
-        if hasattr(batch, 'extra_info'):
+        if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
-        return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
+        return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
         loss, info = self.algo.compute_batch_losses(self.model, batch)
-        if hasattr(batch, 'extra_info'):
+        if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
-        return {k: v.item() if hasattr(v, 'item') else v for k, v in info.items()}
+        return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
     def run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
         if logger is None:
-            logger = create_logger(logfile=self.hps['log_dir'] + '/train.log')
+            logger = create_logger(logfile=self.hps["log_dir"] + "/train.log")
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
         callbacks = self.build_callbacks()
-        start = self.hps.get('start_at_step', 0) + 1
+        start = self.hps.get("start_at_step", 0) + 1
         logger.info("Starting training")
         start_time = time.time()
-        for it, batch in zip(range(start, 1 + self.hps['num_training_steps']), cycle(train_dl)):
+        for it, batch in zip(range(start, 1 + self.hps["num_training_steps"]), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
-            mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.**3)
+            mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
                 logger.info(
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} "
-                    f"(main process memory usage: {mem_usage:.2f} GB)")
+                    f"(main process memory usage: {mem_usage:.2f} GB)"
+                )
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
-            info['mem_usage'] = mem_usage
-            info['buffer_len'] = len(self.replay_buffer) if self.replay_buffer is not None else -1
-            info['num_workers'] = self.num_workers
-            info['elapsed_time'] = time.time() - start_time
-            self.log(info, it, 'train')
+            info["mem_usage"] = mem_usage
+            info["buffer_len"] = len(self.replay_buffer) if self.replay_buffer is not None else -1
+            info["num_workers"] = self.num_workers
+            info["elapsed_time"] = time.time() - start_time
+            self.log(info, it, "train")
             if it % self.print_every == 0:
-                logger.info(f"iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
+                logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
 
-            if it % self.hps['validate_every'] == 0:
+            if it % self.hps["validate_every"] == 0:
                 for batch in valid_dl:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                    self.log(info, it, 'valid')
-                    logger.info(f"validation - iteration {it} : " + ' '.join(f'{k}:{v:.2f}' for k, v in info.items()))
+                    self.log(info, it, "valid")
+                    logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
                 end_metrics = {}
                 for c in callbacks.values():
-                    if hasattr(c, 'on_validation_end'):
+                    if hasattr(c, "on_validation_end"):
                         c.on_validation_end(end_metrics)
-                self.log(end_metrics, it, 'valid_end')
+                self.log(end_metrics, it, "valid_end")
                 self._save_state(it)
-        self._save_state(self.hps['num_training_steps'])
+        self._save_state(self.hps["num_training_steps"])
 
     def _save_state(self, it):
-        torch.save({
-            'models_state_dict': [self.model.state_dict()],
-            'hps': self.hps,
-            'step': it,
-        }, open(pathlib.Path(self.hps['log_dir']) / 'model_state.pt', 'wb'))
+        torch.save(
+            {
+                "models_state_dict": [self.model.state_dict()],
+                "hps": self.hps,
+                "step": it,
+            },
+            open(pathlib.Path(self.hps["log_dir"]) / "model_state.pt", "wb"),
+        )
 
     def log(self, info, index, key):
-        if not hasattr(self, '_summary_writer'):
-            self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.hps['log_dir'])
+        if not hasattr(self, "_summary_writer"):
+            self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.hps["log_dir"])
         for k, v in info.items():
-            self._summary_writer.add_scalar(f'{key}_{k}', v, index)
+            self._summary_writer.add_scalar(f"{key}_{k}", v, index)
 
 
 def cycle(it):

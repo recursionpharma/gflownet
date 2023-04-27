@@ -8,12 +8,14 @@ def get_version() -> str:
     """
     try:
         from importlib.metadata import version  # type: ignore
-        return version('gflownet')
+
+        return version("gflownet")
     except ImportError:
         try:
             import pkg_resources
-            return pkg_resources.get_distribution('gflownet').version
+
+            return pkg_resources.get_distribution("gflownet").version
         except pkg_resources.DistributionNotFound:
-            return 'set_version_placeholder'
+            return "set_version_placeholder"
     except ModuleNotFoundError:
-        return 'set_version_placeholder'
+        return "set_version_placeholder"

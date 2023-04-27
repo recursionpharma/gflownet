@@ -10,9 +10,10 @@ class MPObjectPlaceholder:
     """This class can be used for example as a model or dataset placeholder
     in a worker process, and translates calls to the object-placeholder to
     queries to the main process to execute on the real object."""
+
     def __init__(self, in_queues, out_queues, pickle_messages=False):
         self.qs = in_queues, out_queues
-        self.device = torch.device('cpu')
+        self.device = torch.device("cpu")
         self.pickle_messages = pickle_messages
         self._is_init = False
 
@@ -44,12 +45,12 @@ class MPObjectPlaceholder:
 
     def __call__(self, *a, **kw):
         self._check_init()
-        self.in_queue.put(self.encode(('__call__', a, kw)))
+        self.in_queue.put(self.encode(("__call__", a, kw)))
         return self.decode(self.out_queue.get())
 
     def __len__(self):
         self._check_init()
-        self.in_queue.put(('__len__', (), {}))
+        self.in_queue.put(("__len__", (), {}))
         return self.out_queue.get()
 
 
@@ -65,6 +66,7 @@ class MPObjectProxy:
     Starts its own (daemon) thread.
     Always passes CPU tensors between processes.
     """
+
     def __init__(self, obj, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
         """Construct a multiprocessing object proxy.
 
@@ -87,10 +89,10 @@ class MPObjectProxy:
         self.pickle_messages = pickle_messages
         self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages)
         self.obj = obj
-        if hasattr(obj, 'parameters'):
+        if hasattr(obj, "parameters"):
             self.device = next(obj.parameters()).device
         else:
-            self.device = torch.device('cpu')
+            self.device = torch.device("cpu")
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -110,7 +112,7 @@ class MPObjectProxy:
         return m
 
     def to_cpu(self, i):
-        return i.detach().to(torch.device('cpu')) if isinstance(i, self.cuda_types) else i
+        return i.detach().to(torch.device("cpu")) if isinstance(i, self.cuda_types) else i
 
     def run(self):
         while not self.stop.is_set():
