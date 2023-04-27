@@ -7,11 +7,14 @@ from gflownet.envs.graph_building_env import GraphActionType
 
 
 def make_test_cat():
-    batch = Batch.from_data_list([
-        Data(x=torch.ones((2, 8)), y=torch.ones((1, 8))),
-        Data(x=torch.ones((2, 8)), y=torch.ones((1, 8))),
-        Data(x=torch.ones((2, 8)), y=torch.ones((0, 8)))
-    ], follow_batch=['y'])
+    batch = Batch.from_data_list(
+        [
+            Data(x=torch.ones((2, 8)), y=torch.ones((1, 8))),
+            Data(x=torch.ones((2, 8)), y=torch.ones((1, 8))),
+            Data(x=torch.ones((2, 8)), y=torch.ones((0, 8))),
+        ],
+        follow_batch=["y"],
+    )
     cat = GraphActionCategorical(
         # Let's use arange to have different logit values
         batch,
@@ -21,7 +24,8 @@ def make_test_cat():
             torch.arange(2 * 3).reshape((2, 3)).float(),
         ],
         types=[GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.AddEdge],
-        keys=[None, 'x', 'y'])
+        keys=[None, "x", "y"],
+    )
     return cat
 
 
@@ -48,12 +52,14 @@ def test_logsoftmax():
 
 def test_logsumexp():
     cat = make_test_cat()
-    totals = torch.tensor([
-        # Plug in the arange values for each graph
-        torch.logsumexp(torch.tensor([0.0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2]), 0),
-        torch.logsumexp(torch.tensor([1.0, 8, 9, 10, 11, 12, 13, 14, 15, 3, 4, 5]), 0),
-        torch.logsumexp(torch.tensor([2.0, 16, 17, 18, 19, 20, 21, 22, 23]), 0)
-    ])
+    totals = torch.tensor(
+        [
+            # Plug in the arange values for each graph
+            torch.logsumexp(torch.tensor([0.0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2]), 0),
+            torch.logsumexp(torch.tensor([1.0, 8, 9, 10, 11, 12, 13, 14, 15, 3, 4, 5]), 0),
+            torch.logsumexp(torch.tensor([2.0, 16, 17, 18, 19, 20, 21, 22, 23]), 0),
+        ]
+    )
     assert torch.isclose(cat.logsumexp(), totals).all()
 
 

@@ -6,13 +6,13 @@ def create_logger(name="logger", loglevel=logging.INFO, logfile=None, streamHand
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
     formatter = logging.Formatter(
-        fmt='%(asctime)s - %(levelname)s - {} - %(message)s'.format(name),
-        datefmt='%d/%m/%Y %H:%M:%S',
+        fmt="%(asctime)s - %(levelname)s - {} - %(message)s".format(name),
+        datefmt="%d/%m/%Y %H:%M:%S",
     )
 
     handlers = []
     if logfile is not None:
-        handlers.append(logging.FileHandler(logfile, mode='a'))
+        handlers.append(logging.FileHandler(logfile, mode="a"))
     if streamHandle:
         handlers.append(logging.StreamHandler(stream=sys.stdout))
 
