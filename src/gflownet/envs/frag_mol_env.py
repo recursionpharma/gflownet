@@ -256,6 +256,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             set_edge_attr_mask=set_edge_attr_mask,
             remove_node_mask=remove_node_mask,
             remove_edge_attr_mask=remove_edge_attr_mask,
+        )
+
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
         Parameters
