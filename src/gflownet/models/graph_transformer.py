@@ -167,7 +167,9 @@ class GraphTransformerGFN(nn.Module):
             num_heads=num_heads,
             ln_type=ln_type,
         )
+        num_final = num_emb
         num_glob_final = num_emb * 2
+        num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
         self.action_type_order = env_ctx.action_type_order
