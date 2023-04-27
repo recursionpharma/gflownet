@@ -15,6 +15,9 @@ from torch.distributions.dirichlet import Dirichlet
 import torch.nn as nn
 from torch.utils.data import Dataset
 import torch_geometric.data as gd
+import rdkit.Chem.AllChem as Chem
+import gzip
+from pathlib import Path
 
 from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning
@@ -27,6 +30,7 @@ from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer
 from gflownet.tasks.seh_frag import SEHTask
+from gflownet.tasks.jnk3_gsk3b_predictor.train_jnk3_gsk3b_pic50_oracle import load_jnk3_gsk3b_model
 from gflownet.train import FlatRewards
 from gflownet.train import RewardScalar
 from gflownet.utils import metrics
@@ -85,7 +89,9 @@ class SEHMOOTask(SEHTask):
         self.focus_model = focus_model
         self.focus_model_training_limits = focus_model_training_limits
         self.max_train_it = max_train_it
-        assert set(objectives) <= {"seh", "qed", "sa", "mw"} and len(objectives) == len(set(objectives))
+        assert set(objectives) <= {"seh", "qed", "sa", "mw", "jnk3", "gsk3b"} and len(objectives) == len(
+            set(objectives)
+        )
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))
@@ -94,9 +100,12 @@ class SEHMOOTask(SEHTask):
         return rp
 
     def _load_task_models(self):
-        model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
-        return {"seh": model}
+        seh_model = bengio2021flow.load_original_model()
+        seh_model, self.device = self._wrap_model(seh_model, send_to_device=True)
+
+        jnk3_gsk3b_model = load_jnk3_gsk3b_model()
+        jnk3_gsk3b_model, self.device = self._wrap_model(jnk3_gsk3b_model, send_to_device=True)
+        return {"seh": seh_model, "jnk3_gsk3b": jnk3_gsk3b_model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n)
@@ -216,9 +225,9 @@ class SEHMOOTask(SEHTask):
                 seh_preds[seh_preds.isnan()] = 0
                 flat_r.append(seh_preds)
 
-            def safe(f, x, default):
+            def safe(f, x, default, **kwargs):
                 try:
-                    return f(x)
+                    return f(x, **kwargs)
                 except Exception:
                     return default
 
@@ -235,6 +244,26 @@ class SEHMOOTask(SEHTask):
                 molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
                 molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 flat_r.append(molwts)
+
+            if "jnk3" in self.objectives or "gsk3b" in self.objectives:
+                xs = torch.tensor(
+                    np.float32(
+                        [
+                            Chem.GetMorganFingerprintAsBitVect(i, radius=3, nBits=2048)
+                            for i, v in zip(mols, is_valid)
+                            if v.item()
+                        ]
+                    )
+                )
+                with torch.no_grad():
+                    low_bound, up_bound = -0.1, 11.0
+                    out = self.models["jnk3_gsk3b"](xs).data.cpu()
+                    assert out.min() >= low_bound and out.max() <= up_bound
+                    out = (out.clip(low_bound, up_bound) - low_bound) / (up_bound - low_bound)
+                if "jnk3" in self.objectives:
+                    flat_r.append(out[:, 0])
+                if "gsk3b" in self.objectives:
+                    flat_r.append(out[:, 1])
 
             flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
@@ -473,7 +502,7 @@ def main():
         "num_layers": 2,
         "num_emb": 256,
         "algo": "TB",
-        "objectives": ["seh", "qed"],
+        "objectives": ["seh", "qed", "jnk3", "gsk3b"],
         "learning_rate": 1e-4,
         "Z_learning_rate": 1e-3,
         "lr_decay": 20000,
