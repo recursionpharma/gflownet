@@ -382,7 +382,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif self.hps["focus_type"] in ["dirichlet", "learned-gfn"]:
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
             self.task.fixed_focus_dirs = None
-        elif self.hps["focus_type"] in ["sampled", "learned-tabular"]:
+        elif self.hps["focus_type"] in ["hyperspherical", "learned-tabular"]:
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
             self.task.fixed_focus_dirs = None
         elif type(self.hps["focus_type"]) is list:
