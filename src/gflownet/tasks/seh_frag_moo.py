@@ -138,7 +138,6 @@ class SEHMOOTask(SEHTask):
             if (
                 self.focus_model is not None
                 and train_it >= self.focus_model_training_limits[0] * self.max_train_it
-                and train_it <= self.focus_model_training_limits[1] * self.max_train_it
             ):
                 focus_dir = self.focus_model.sample_focus_directions(n)
             else:
@@ -498,6 +497,7 @@ def main():
         "seed": 0,
         "global_batch_size": 64,
         "num_training_steps": 20_000,
+        "num_final_gen_steps": 500,
         "validate_every": 5,
         "num_layers": 2,
         "num_emb": 256,
