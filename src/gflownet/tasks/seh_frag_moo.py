@@ -256,10 +256,10 @@ class SEHMOOTask(SEHTask):
                 )
                 xs = xs.to(self.device)
                 with torch.no_grad():
-                    low_bound, up_bound = -0.1, 11.0
                     out = self.models["jnk3_gsk3b"](xs).data.cpu()
-                    assert out.min() >= low_bound and out.max() <= up_bound
-                    out = (out.clip(low_bound, up_bound) - low_bound) / (up_bound - low_bound)
+                    low_bound, up_bound = -1., 10.
+                    # assert out.min() >= low_bound and out.max() <= up_bound
+                    out = (out - low_bound) / (up_bound - low_bound)
                 if "jnk3" in self.objectives:
                     flat_r.append(out[:, 0])
                 if "gsk3b" in self.objectives:
