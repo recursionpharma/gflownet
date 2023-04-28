@@ -254,6 +254,7 @@ class SEHMOOTask(SEHTask):
                         ]
                     )
                 )
+                xs = xs.to(self.device)
                 with torch.no_grad():
                     low_bound, up_bound = -0.1, 11.0
                     out = self.models["jnk3_gsk3b"](xs).data.cpu()
