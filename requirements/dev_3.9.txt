@@ -246,7 +246,7 @@ tomli==2.0.1
     #   pytest
 toposort==1.10
     # via pip-compile-multi
-torch==1.10.2
+torch==1.13.1
     # via
     #   botorch
     #   gflownet (pyproject.toml)

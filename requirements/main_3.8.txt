@@ -149,7 +149,7 @@ tensorboard-plugin-wit==1.8.1
     # via tensorboard
 threadpoolctl==3.1.0
     # via scikit-learn
-torch==1.10.2
+torch==1.13.1
     # via
     #   botorch
     #   gflownet (pyproject.toml)
