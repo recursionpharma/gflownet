@@ -51,7 +51,7 @@ name = "gflownet"
 readme = "README.md"
 classifiers = ["Operating System :: OS Independent", "Programming Language :: Python", "Programming Language :: Python :: 3"]
 keywords = ["gflownet"]
-requires-python = ">=3.8"
+requires-python = ">=3.8,<3.10"
 dynamic = ["version"]
 dependencies = [
     "torch==1.10.2",
