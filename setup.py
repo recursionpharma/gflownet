@@ -19,7 +19,7 @@ def _get_next_version():
     minor = int(version_parts["MINOR"])
     versions = check_output(["git", "tag", "--list"], encoding="utf-8").splitlines()  # nosec - command is hard-coded
     try:
-        latest_patch = max(int(v.rsplit('.', 1)[1]) for v in versions if v.startswith(f"v{major}.{minor}."))
+        latest_patch = max(int(v.rsplit(".", 1)[1]) for v in versions if v.startswith(f"v{major}.{minor}."))
     except ValueError:  # no tags for this major.minor exist yet
         latest_patch = -1
     return f"{major}.{minor}.{latest_patch+1}"
