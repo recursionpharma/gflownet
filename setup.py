@@ -1,38 +1,28 @@
 from ast import literal_eval
-from pathlib import Path
-from typing import Dict, List, Tuple
+import os
+from subprocess import check_output
 
 from setuptools import setup
 
 
-def _parse_requirement_file(req_file: Path) -> List[str]:
-    lines = req_file.read_text().replace("\\\n", "").split("\n")
-    lines = list(map(lambda x: x.split("#", 1)[0].strip(), lines))
-    lines = [line for line in lines if len(line) and not line.startswith("-")]
-    return lines
+def _get_next_version():
+    if "SEMVER" in os.environ:
+        return os.environ.get("SEMVER")
 
-
-def _get_requirements(path: str = "requirements", ext: str = "in") -> Tuple[List[str], Dict[str, List[str]]]:
-    ext = ext[1:] if ext.startswith(".") else ext
-
-    # Supports an arbitrary number of 'extra' packages
-    install_requires = []
-    extras_require = {}
-    for req_file in Path(path).glob(f"*.{ext}"):
-        lines = _parse_requirement_file(req_file)
-        if req_file.stem == "main":
-            install_requires = lines
-        else:
-            extras_require[req_file.stem] = lines
-    return (install_requires, extras_require)
-
-
-def _read_version():
+    # Note, this should only be used for development builds. Only robots can
+    # create releases on PyPI from trunk, and the robots should know have the
+    # `SEMVER` variable loaded at runtime.
     with open("VERSION", "r") as f:
         lines = f.read().splitlines()
-        versions = {k: literal_eval(v) for k, v in map(lambda x: x.split("="), lines)}
-        return ".".join(versions[i] for i in ["MAJOR", "MINOR", "PATCH"])
+    version_parts = {k: literal_eval(v) for k, v in map(lambda x: x.split("="), lines)}
+    major = int(version_parts["MAJOR"])
+    minor = int(version_parts["MINOR"])
+    versions = check_output(["git", "tag", "--list"], encoding="utf-8").splitlines()  # nosec - command is hard-coded
+    try:
+        latest_patch = max(int(v.rsplit('.', 1)[1]) for v in versions if v.startswith(f"v{major}.{minor}."))
+    except ValueError:  # no tags for this major.minor exist yet
+        latest_patch = -1
+    return f"{major}.{minor}.{latest_patch+1}"
 
 
-install_requires, extras_require = _get_requirements()
-setup(name="gflownet", install_requires=install_requires, extras_require=extras_require, version=_read_version())
+setup(name="gflownet", version=_get_next_version())
