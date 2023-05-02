@@ -87,8 +87,11 @@ class TrajectoryBalance:
         self.correct_idempotent = hps.get("tb_correct_idempotent", False)
         self.p_b_is_parameterized = hps.get("tb_p_b_is_parameterized", False)
         self.do_fl_with_db = hps.get("tb_do_fl_with_db", False)
+        self.do_fl_with_tb = hps.get("tb_do_fl_with_tb", False)
         self.implicit_log_Z = hps.get("tb_implicit_log_Z", False)
-        self.compute_intermediate_rewards = hps.get("compute_intermediate_rewards", False) or self.do_fl_with_db
+        self.compute_intermediate_rewards = (
+            hps.get("compute_intermediate_rewards", False) or self.do_fl_with_db or self.do_fl_with_tb
+        )
 
         self.graph_sampler = GraphSampler(
             ctx,
@@ -100,7 +103,7 @@ class TrajectoryBalance:
             correct_idempotent=self.correct_idempotent,
             pad_with_terminal_state=self.p_b_is_parameterized,
         )
-        if self.is_doing_subTB:
+        if self.is_doing_subTB or self.do_fl_with_tb:
             self._subtb_max_len = hps.get("tb_subtb_max_len", max_len + 2 if max_len is not None else 128)
             self._init_subtb(
                 torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -266,7 +269,7 @@ class TrajectoryBalance:
                 ]
                 batch.bck_ip_actions = torch.tensor(sum(bck_ipa, []))
                 batch.bck_ip_lens = torch.tensor([len(i) for i in bck_ipa])
-        if self.do_fl_with_db:
+        if self.compute_intermediate_rewards:
             batch.intermediate_log_rewards = torch.cat([i["intermediate_log_rewards"] for i in trajs], 0)
         return batch
 
@@ -311,14 +314,15 @@ class TrajectoryBalance:
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]
         # Compute log Z
-        if self.implicit_log_Z or self.is_doing_subTB:
+        if self.implicit_log_Z or self.is_doing_subTB or self.do_fl_with_tb:
             # What we call the "implicit" log Z is really just F(s_0|cond), and s_0 can be anything the user wants.
             # First position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
             # Fill the 1: position with the cumulative sum of the trajectory lengths
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             # F(s) is per-graph output of the model
-            log_Z = per_graph_out[first_graph_idx, 0]
+            if self.implicit_log_Z or self.is_doing_subTB:
+                log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Otherwise explicitly use the parameterized logZ(cond) model
             log_Z = model.logZ(cond_info)[:, 0]
@@ -460,6 +464,36 @@ class TrajectoryBalance:
             fl_db_loss = (stop_flow - clip_int_log_R).pow(2).mean()
             loss = loss + fl_db_loss
             info["fl_db_loss"] = fl_db_loss.item()
+            info["loss"] = loss.item()  # Update the info loss
+        elif self.do_fl_with_tb:
+            # Basically zip(traj_lens, first_graph_idx)
+            x = torch.stack([batch.traj_lens, first_graph_idx]).T
+            # This looks like [0, 0,1, 0,1,2,...]
+            # They are the indices of each state all the partial trajectories (up to length T)
+            # Note that we use T-1 because we don't want to include the last state, which is
+            # already using a terminating action
+            src_idces = torch.cat([self._precomp[T - 1][0][: T * (T - 1) // 2] + offset for T, offset in x])
+            # This looks like [0, 1,1, 2,2,2, ...]
+            # They are the indices of the identity of the partial trajectories (up to length T)
+            dst_idces = torch.cat([self._precomp[T - 1][1][: T * (T - 1) // 2] + offset for T, offset in x])
+            # We'll use these indices to compute the TB loss for all these partial trajectories, but we'll need
+            # to "replace" the last action with Stop.
+            # We do dst_indices + 1 because what we're asking is "what if you take actions a_0 ... a_T and then stop"
+            # so for example at t=0, we're asking "what if you immediately stop", so we don't want to count P_F(a_0),
+            # we only count P_F(a_0) at t=1, when we're asking "what if you take action a_0 and then stop".
+            subtrajs_p_F = (
+                scatter(log_p_F[src_idces], dst_idces + 1, dim_size=batch.traj_lens.sum(), reduce="sum")
+                + fwd_cat.logsoftmax()[self.ctx.action_type_order.index(GraphActionType.Stop)][:, 0]
+            )
+            subtrajs_p_B = scatter(log_p_B[src_idces], dst_idces + 1, dim_size=batch.traj_lens.sum(), reduce="sum")
+            # Clip the rewards
+            clip_int_log_R = torch.maximum(batch.intermediate_log_rewards, min_log_R)
+            subtrajs_log_Z = log_Z.repeat_interleave(batch.traj_lens)
+            fl_tb_loss = (subtrajs_p_F + subtrajs_log_Z - subtrajs_p_B - clip_int_log_R).pow(2)
+            # Normalize by the length of each trajectory so as to not penalize shorter trajectories
+            fl_tb_loss = (fl_tb_loss / batch.traj_lens.repeat_interleave(batch.traj_lens)).sum() / num_trajs
+            loss = loss + fl_tb_loss
+            info["fl_tb_loss"] = fl_tb_loss.item()
             info["loss"] = loss.item()  # Update the info loss
 
         return loss, info

@@ -215,15 +215,15 @@ class SamplingIterator(IterableDataset):
                 # Compute intermediate rewards
                 for tidx, traj in enumerate(trajs):
                     int_log_rewards = torch.zeros(len(traj["traj"])) + self.algo.illegal_action_logreward
-                    int_objs = [try_or_None(self.ctx.graph_to_obj, g) for g, ga in traj["traj"]]
-                    valid_idcs = [i for i, o in enumerate(int_objs) if o is not None and self.ctx.is_sane(o)]
+                    int_objs = [self.ctx.graph_to_obj(g) if self.ctx.is_sane(g) else None for g, ga in traj["traj"]]
+                    valid_idcs = torch.tensor([i for i, o in enumerate(int_objs) if o is not None])
                     if len(valid_idcs) > 0:
                         int_flat_rewards, int_valid = self.task.compute_flat_rewards([int_objs[i] for i in valid_idcs])
                         int_log_rewards[valid_idcs] = self.task.cond_info_to_logreward(
                             {k: v[tidx].repeat(len(valid_idcs), *([1] * (v.ndim - 1))) for k, v in cond_info.items()},
                             int_flat_rewards,
                         )
-                        int_log_rewards[torch.logical_not(int_valid)] = self.algo.illegal_action_logreward
+                        int_log_rewards[valid_idcs[torch.logical_not(int_valid)]] = self.algo.illegal_action_logreward
                     traj["intermediate_log_rewards"] = int_log_rewards
             flat_rewards = torch.stack(flat_rewards)
             # Compute scalar rewards from conditional information & flat rewards
