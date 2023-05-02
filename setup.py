@@ -1,6 +1,6 @@
 from ast import literal_eval
 import os
-from subprocess import check_output
+from subprocess import check_output  # nosec - command is hard-coded, no possibility of injection
 
 from setuptools import setup
 
