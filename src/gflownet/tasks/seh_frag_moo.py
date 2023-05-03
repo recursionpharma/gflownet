@@ -126,10 +126,7 @@ class SEHMOOTask(SEHTask):
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation="l2")
             ).float()
         elif self.focus_type is not None and "learned" in self.focus_type:
-            if (
-                self.focus_model is not None
-                and train_it >= self.focus_model_training_limits[0] * self.max_train_it
-            ):
+            if self.focus_model is not None and train_it >= self.focus_model_training_limits[0] * self.max_train_it:
                 focus_dir = self.focus_model.sample_focus_directions(n)
             else:
                 focus_dir = torch.tensor(
