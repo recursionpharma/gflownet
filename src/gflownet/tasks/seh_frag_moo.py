@@ -26,6 +26,7 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
+from gflownet.utils.transforms import thermometer
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 
 
@@ -46,6 +47,7 @@ class SEHMOOTask(SEHTask):
         temperature_sample_dist: str,
         temperature_parameters: Tuple[float, float],
         num_thermometer_dim: int,
+        use_pref_thermometer: bool,
         rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
@@ -57,6 +59,7 @@ class SEHMOOTask(SEHTask):
         self.temperature_sample_dist = temperature_sample_dist
         self.temperature_dist_params = temperature_parameters
         self.num_thermometer_dim = num_thermometer_dim
+        self.use_pref_thermometer = use_pref_thermometer
         self.seeded_preference = None
         self.experimental_dirichlet = False
         assert set(objectives) <= {"seh", "qed", "sa", "mw"} and len(objectives) == len(set(objectives))
@@ -85,20 +88,29 @@ class SEHMOOTask(SEHTask):
             m = Dirichlet(torch.FloatTensor([1.0] * len(self.objectives)))
             preferences = m.sample([n])
 
-        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences], 1)
+        preferences_enc = (
+            thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+            if self.use_pref_thermometer
+            else preferences
+        )
+        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences_enc], 1)
         cond_info["preferences"] = preferences
         return cond_info
 
-    def encode_conditional_information(self, preferences: torch.TensorType) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, preferences: Tensor) -> Dict[str, Tensor]:
+        n = len(preferences)
         if self.temperature_sample_dist == "constant":
-            beta = torch.ones(len(preferences)) * self.temperature_dist_params
-            beta_enc = torch.zeros((len(preferences), self.num_thermometer_dim))
+            beta = torch.ones(n) * self.temperature_dist_params
+            beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
-            beta = torch.ones(len(preferences)) * self.temperature_dist_params[-1]
-            beta_enc = torch.ones((len(preferences), self.num_thermometer_dim))
+            beta = torch.ones(n) * self.temperature_dist_params[-1]
+            beta_enc = torch.ones((n, self.num_thermometer_dim))
 
         assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
-        encoding = torch.cat([beta_enc, preferences], 1)
+        if self.use_pref_thermometer:
+            encoding = torch.cat([beta_enc, thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)], 1)
+        else:
+            encoding = torch.cat([beta_enc, preferences], 1)
         return {"beta": beta, "encoding": encoding.float(), "preferences": preferences.float()}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
@@ -163,6 +175,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             "n_valid_prefs": 15,
             "n_valid_repeats_per_pref": 128,
             "preference_type": "dirichlet",
+            "use_pref_thermometer": True,
         }
 
     def setup_algo(self):
@@ -186,6 +199,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             temperature_parameters=self.hps["temperature_dist_params"],
             num_thermometer_dim=self.hps["num_thermometer_dim"],
             wrap_model=self._wrap_model_mp,
+            use_pref_thermometer=self.hps["use_pref_thermometer"],
         )
 
     def setup_model(self):
@@ -209,20 +223,14 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.model = model
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(
-            max_frags=9, num_cond_dim=self.hps["num_thermometer_dim"] + len(self.hps["objectives"])
-        )
+        if self.hps.get("use_pref_thermometer", False):
+            ncd = self.hps["num_thermometer_dim"] * (1 + len(self.hps["objectives"]))
+        else:
+            ncd = self.hps["num_thermometer_dim"] + len(self.hps["objectives"])
+        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=ncd)
 
     def setup(self):
         super().setup()
-        self.task = SEHMOOTask(
-            objectives=self.hps["objectives"],
-            dataset=self.training_data,
-            temperature_sample_dist=self.hps["temperature_sample_dist"],
-            temperature_parameters=self.hps["temperature_dist_params"],
-            num_thermometer_dim=self.hps["num_thermometer_dim"],
-            wrap_model=self._wrap_model_mp,
-        )
         self.sampling_hooks.append(
             MultiObjectiveStatsHook(256, self.hps["log_dir"], compute_igd=True, compute_pc_entropy=True)
         )
