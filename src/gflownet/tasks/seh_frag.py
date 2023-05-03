@@ -6,24 +6,21 @@ import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
-from rdkit import RDLogger
-from rdkit.Chem.rdchem import Mol as RDMol
 import scipy.stats as stats
 import torch
-from torch import Tensor
 import torch.nn as nn
-from torch.utils.data import Dataset
 import torch_geometric.data as gd
+from rdkit import RDLogger
+from rdkit.Chem.rdchem import Mol as RDMol
+from torch import Tensor
+from torch.utils.data import Dataset
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import FlatRewards
-from gflownet.train import GFNTask
-from gflownet.train import GFNTrainer
-from gflownet.train import RewardScalar
+from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
 
 
@@ -124,6 +121,7 @@ class SEHFragTrainer(GFNTrainer):
             "num_emb": 128,
             "num_layers": 4,
             "tb_epsilon": None,
+            "tb_p_b_is_parameterized": False,
             "illegal_action_logreward": -75,
             "reward_loss_multiplier": 1,
             "temperature_sample_dist": "uniform",
@@ -139,11 +137,12 @@ class SEHFragTrainer(GFNTrainer):
             "random_action_prob": 0.0,
             "valid_random_action_prob": 0.0,
             "sampling_tau": 0.0,
+            "max_nodes": 9,
             "num_thermometer_dim": 32,
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=9)
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
 
     def setup_task(self):
         self.task = SEHTask(
@@ -158,7 +157,9 @@ class SEHFragTrainer(GFNTrainer):
         self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps["num_emb"], num_layers=self.hps["num_layers"])
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=self.hps["num_thermometer_dim"])
+        self.ctx = FragMolBuildingEnvContext(
+            max_frags=self.hps["max_nodes"], num_cond_dim=self.hps["num_thermometer_dim"]
+        )
 
     def setup(self):
         hps = self.hps
@@ -225,7 +226,6 @@ def main():
         "log_dir": "./logs/debug_run",
         "overwrite_existing_exp": True,
         "qm9_h5_path": "/data/chem/qm9/qm9.h5",
-        "log_dir": "./logs/debug_run",
         "num_training_steps": 10_000,
         "validate_every": 1,
         "lr_decay": 20000,

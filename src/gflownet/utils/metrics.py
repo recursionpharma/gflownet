@@ -1,16 +1,14 @@
+import math
 from copy import deepcopy
 from itertools import product
-import math
 
-from botorch.utils.multi_objective import infer_reference_point
-from botorch.utils.multi_objective import pareto
-from botorch.utils.multi_objective.hypervolume import Hypervolume
 import numpy as np
-from rdkit import Chem
-from rdkit import DataStructs
+import torch
+from botorch.utils.multi_objective import infer_reference_point, pareto
+from botorch.utils.multi_objective.hypervolume import Hypervolume
+from rdkit import Chem, DataStructs
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
-import torch
 
 
 def get_IGD(samples, ref_front: np.ndarray = None):
@@ -287,8 +285,7 @@ def _sharpeRatioQPMax(p, Q, rf):
 
     # intentional non-top-level imports to avoid
     # cvxopt dependency for M1 chip users
-    from cvxopt import matrix
-    from cvxopt import solvers
+    from cvxopt import matrix, solvers
 
     solvers.options["abstol"] = 1e-15
     solvers.options["reltol"] = 1e-15

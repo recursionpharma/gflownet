@@ -1,16 +1,14 @@
-from collections.abc import Iterable
 import os
 import sqlite3
+from collections.abc import Iterable
 from typing import Callable, List
 
 import networkx as nx
 import numpy as np
-from rdkit import Chem
-from rdkit import RDLogger
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.utils.data import IterableDataset
+from rdkit import Chem, RDLogger
+from torch.utils.data import Dataset, IterableDataset
 
 
 class SamplingIterator(IterableDataset):
@@ -114,7 +112,7 @@ class SamplingIterator(IterableDataset):
                 wid = worker_info.id
                 start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
             bs = self.offline_batch_size
-            if end - start < bs:
+            if end - start <= bs:
                 yield np.arange(start, end)
                 return
             for i in range(start, end - bs, bs):
