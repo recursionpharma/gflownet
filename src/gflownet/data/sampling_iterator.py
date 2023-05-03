@@ -197,7 +197,8 @@ class SamplingIterator(IterableDataset):
                     preds, m_is_valid = self.task.compute_flat_rewards(objs)
                     assert preds.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
                     # The task may decide some of the objs are invalid, we have to again filter those
-                    valid_idcs = valid_idcs[m_is_valid]
+                    # This is wrong and will fail, how did it not fail before???
+                    # >> valid_idcs = valid_idcs[m_is_valid]
                     pred_reward = torch.zeros((num_online, preds.shape[1]))
                     pred_reward[valid_idcs - num_offline] = preds
                     # TODO: reintegrate bootstrapped reward predictions
