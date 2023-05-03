@@ -260,7 +260,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
-
         Parameters
         ----------
         graphs: List[gd.Data]
