@@ -17,10 +17,8 @@ import math
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import global_add_pool
-from torch_geometric.nn import radius
-from torch_geometric.utils import add_self_loops
-from torch_geometric.utils import remove_self_loops
+from torch_geometric.nn import global_add_pool, radius
+from torch_geometric.utils import add_self_loops, remove_self_loops
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
 
@@ -159,34 +157,26 @@ class MXMNet(nn.Module):
         output = global_add_pool(node_sum, batch)
         return output.view(-1)
 
-from collections import OrderedDict
 import glob
 import inspect
-from math import pi as PI
-from math import sqrt
-from operator import itemgetter
 import os
 import os.path as osp
 import shutil
+from collections import OrderedDict
+from math import pi as PI
+from math import sqrt
+from operator import itemgetter
 
 import numpy as np
-from scipy import special as sp
-from scipy.optimize import brentq
 import torch
-from torch.nn import Linear
-from torch.nn import ModuleList
-from torch.nn import Parameter
-from torch.nn import Sequential
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import Data
-from torch_geometric.data import download_url
-from torch_geometric.data import extract_zip
-from torch_geometric.data import InMemoryDataset
+from scipy import special as sp
+from scipy.optimize import brentq
+from torch.nn import Linear, ModuleList, Parameter, Sequential
+from torch_geometric.data import Data, InMemoryDataset, download_url, extract_zip
 from torch_geometric.io import read_txt_array
-from torch_geometric.utils import add_self_loops
-from torch_geometric.utils import remove_self_loops
-from torch_geometric.utils import sort_edge_index
+from torch_geometric.utils import add_self_loops, remove_self_loops, sort_edge_index
 from torch_scatter import scatter
 from torch_sparse import coalesce
 

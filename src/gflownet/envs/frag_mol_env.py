@@ -6,10 +6,7 @@ import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
 
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionType
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.models import bengio2021flow
 
 
@@ -23,6 +20,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     the agent specify which atom each edge uses as an attachment point (single bond) between
     fragments. Masks ensure that the agent can only perform chemically valid attachments.
     """
+
     def __init__(self, max_frags: int = 9, num_cond_dim: int = 0, fragments: List[Tuple[str, List[int]]] = None):
         """Construct a fragment environment
         Parameters
@@ -45,16 +43,32 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.frags_stems = stems
         self.frags_numatm = [m.GetNumAtoms() for m in self.frags_mol]
         self.num_stem_acts = most_stems = max(map(len, self.frags_stems))
-        self.action_map = [(fragidx, stemidx)
-                           for fragidx in range(len(self.frags_stems))
-                           for stemidx in range(len(self.frags_stems[fragidx]))]
+        self.action_map = [
+            (fragidx, stemidx)
+            for fragidx in range(len(self.frags_stems))
+            for stemidx in range(len(self.frags_stems[fragidx]))
+        ]
         self.num_actions = len(self.action_map)
 
         # These values are used by Models to know how many inputs/logits to produce
+        self.edges_are_duplicated = True
+        # The ordering in which the model sees & produces logits for edges matters,
+        # i.e. action(u, v) != action(v, u).
+        # This is because of the way we encode attachment points (see below on semantics of SetEdgeAttr)
+        self.edges_are_unordered = False
         self.num_new_node_values = len(self.frags_smi)
+        self.num_node_attrs = 1
         self.num_node_attr_logits = 0
         self.num_node_dim = len(self.frags_smi) + 1
+
+        # The semantics of the SetEdgeAttr indices is that, for edge (u, v), we use the first half
+        # for u and the second half for v. Each logit i in the first half for a given edge
+        # corresponds to setting the stem atom of fragment u used to attach between u and v to be i
+        # (named f'{u}_attach') and vice versa for the second half and v, u.
         self.num_edge_attr_logits = most_stems * 2
+        # There are thus up to 2 edge attributes, the stem of u and the stem of v.
+        self.num_edge_attrs = 2
+        # The + 1 is for an extra dimension to indicate when the attribute isn't yet set
         self.num_edge_dim = (most_stems + 1) * 2
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
@@ -62,9 +76,13 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
-        self.device = torch.device('cpu')
+        self.bck_action_type_order = [
+            GraphActionType.RemoveNode,
+            GraphActionType.RemoveEdgeAttr,
+        ]
+        self.device = torch.device("cpu")
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int]):
+    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
 
         Parameters
@@ -80,7 +98,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
         """
         act_type, act_row, act_col = [int(i) for i in action_idx]
-        t = self.action_type_order[act_type]
+        if fwd:
+            t = self.action_type_order[act_type]
+        else:
+            t = self.bck_action_type_order[act_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -88,12 +109,18 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         elif t is GraphActionType.SetEdgeAttr:
             a, b = g.edge_index[:, act_row * 2]  # Edges are duplicated to get undirected GNN, deduplicated for logits
             if act_col < self.num_stem_acts:
-                attr = f'{int(a)}_attach'
+                attr = f"{int(a)}_attach"
                 val = act_col
             else:
-                attr = f'{int(b)}_attach'
+                attr = f"{int(b)}_attach"
                 val = act_col - self.num_stem_acts
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
+        elif t is GraphActionType.RemoveNode:
+            return GraphAction(t, source=act_row)
+        elif t is GraphActionType.RemoveEdgeAttr:
+            a, b = g.edge_index[:, act_row * 2]
+            attr = f"{int(a)}_attach" if act_col == 0 else f"{int(b)}_attach"
+            return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
     def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
         """Translate a GraphAction to an index tuple
@@ -113,20 +140,34 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         """
         if action.action is GraphActionType.Stop:
             row = col = 0
+            type_idx = self.action_type_order.index(action.action)
         elif action.action is GraphActionType.AddNode:
             row = action.source
             col = action.value
+            type_idx = self.action_type_order.index(action.action)
         elif action.action is GraphActionType.SetEdgeAttr:
             # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
             # so no need for a double check.
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
             # Because edges are duplicated but logits aren't, divide by two
-            row = row.div(2, rounding_mode='floor')  # type: ignore
-            if action.attr == f'{int(action.source)}_attach':
+            row = row.div(2, rounding_mode="floor")  # type: ignore
+            if action.attr == f"{int(action.source)}_attach":
                 col = action.value
             else:
                 col = action.value + self.num_stem_acts
-        type_idx = self.action_type_order.index(action.action)
+            type_idx = self.action_type_order.index(action.action)
+        elif action.action is GraphActionType.RemoveNode:
+            row = action.source
+            col = 0
+            type_idx = self.bck_action_type_order.index(action.action)
+        elif action.action is GraphActionType.RemoveEdgeAttr:
+            row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
+            row = row.div(2, rounding_mode="floor")  # type: ignore
+            if action.attr == f"{int(action.source)}_attach":
+                col = 0
+            else:
+                col = 1
+            type_idx = self.bck_action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
@@ -143,15 +184,25 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         """
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
-        for i, n in enumerate(g.nodes):
-            x[i, g.nodes[n]['v']] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
+        # TODO: This is a bit silly but we have to do +1 when the graph is empty because the default
+        # padding action is a [0, 0, 0], which needs to be legal for the empty state. Should be
+        # fixable with a bit of smarts & refactoring.
+        remove_node_mask = torch.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
+        remove_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attrs))
         if len(g):
             degrees = torch.tensor(list(g.degree))[:, 1]
-            max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]['v']]) for n in g.nodes])
+            max_degrees = torch.tensor([len(self.frags_stems[g.nodes[n]["v"]]) for n in g.nodes])
         else:
             degrees = max_degrees = torch.zeros((0,))
+        for i, n in enumerate(g.nodes):
+            x[i, g.nodes[n]["v"]] = 1
+            # The node must be connected to at most 1 other node and in the case where it is
+            # connected to exactly one other node, the edge connecting them must not have any
+            # attributes.
+            edge_has_no_attr = bool(len(g.edges[list(g.edges(i))[0]]) == 0 if degrees[i] == 1 else degrees[i] == 0)
+            remove_node_mask[i, 0] = degrees[i] <= 1 and edge_has_no_attr
 
         # We compute the attachment points of fragments that have been already used so that we can
         # mask them out for the agent (so that only one neighbor can be attached to one attachment
@@ -160,16 +211,18 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # If there are unspecified attachment points, we will disallow the agent from using the stop
         # action.
         has_unfilled_attach = False
-        for e in g.edges:
+        for i, e in enumerate(g.edges):
             ed = g.edges[e]
-            a = ed.get(f'{int(e[0])}_attach', -1)
-            b = ed.get(f'{int(e[1])}_attach', -1)
+            a = ed.get(f"{int(e[0])}_attach", -1)
+            b = ed.get(f"{int(e[1])}_attach", -1)
             if a >= 0:
                 attached[e[0]].append(a)
+                remove_edge_attr_mask[i, 0] = 1
             else:
                 has_unfilled_attach = True
             if b >= 0:
                 attached[e[1]].append(b)
+                remove_edge_attr_mask[i, 1] = 1
             else:
                 has_unfilled_attach = True
         # Here we encode the attached atoms in the edge features, as well as mask out attached
@@ -177,27 +230,36 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             for j, n in enumerate(e):
-                idx = ad.get(f'{int(n)}_attach', -1) + 1
+                idx = ad.get(f"{int(n)}_attach", -1) + 1
                 edge_attr[i * 2, idx + (self.num_stem_acts + 1) * j] = 1
                 edge_attr[i * 2 + 1, idx + (self.num_stem_acts + 1) * (1 - j)] = 1
-                if f'{int(n)}_attach' not in ad:
+                if f"{int(n)}_attach" not in ad:
                     for attach_point in range(max_degrees[n]):
                         if attach_point not in attached[n]:
                             set_edge_attr_mask[i, attach_point + self.num_stem_acts * j] = 1
-        edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
-            (-1, 2)).T
+        edge_index = (
+            torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
+        )
         if x.shape[0] == self.max_frags:
-            add_node_mask = torch.zeros((x.shape[0], 1))
+            add_node_mask = torch.zeros((x.shape[0], self.num_new_node_values))
         else:
             add_node_mask = (degrees < max_degrees).float()[:, None] if len(g.nodes) else torch.ones((1, 1))
+            add_node_mask = add_node_mask * torch.ones((x.shape[0], self.num_new_node_values))
         stop_mask = torch.zeros((1, 1)) if has_unfilled_attach or not len(g) else torch.ones((1, 1))
 
-        return gd.Data(x, edge_index, edge_attr, stop_mask=stop_mask, add_node_mask=add_node_mask,
-                       set_edge_attr_mask=set_edge_attr_mask)
+        return gd.Data(
+            x,
+            edge_index,
+            edge_attr,
+            stop_mask=stop_mask,
+            add_node_mask=add_node_mask,
+            set_edge_attr_mask=set_edge_attr_mask,
+            remove_node_mask=remove_node_mask,
+            remove_edge_attr_mask=remove_edge_attr_mask,
+        )
 
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
-
         Parameters
         ----------
         graphs: List[gd.Data]
@@ -207,7 +269,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         batch: gd.Batch
             A torch_geometric Batch object
         """
-        return gd.Batch.from_data_list(graphs, follow_batch=['edge_index'])
+        return gd.Batch.from_data_list(graphs, follow_batch=["edge_index"])
 
     def mol_to_graph(self, mol):
         """Convert an RDMol to a Graph"""
@@ -226,21 +288,23 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         m: Chem.Mol
             The corresponding RDKit molecule
         """
-        offsets = np.cumsum([0] + [self.frags_numatm[g.nodes[i]['v']] for i in g])
+        offsets = np.cumsum([0] + [self.frags_numatm[g.nodes[i]["v"]] for i in g])
         mol = None
         for i in g.nodes:
             if mol is None:
-                mol = self.frags_mol[g.nodes[i]['v']]
+                mol = self.frags_mol[g.nodes[i]["v"]]
             else:
-                mol = Chem.CombineMols(mol, self.frags_mol[g.nodes[i]['v']])
+                mol = Chem.CombineMols(mol, self.frags_mol[g.nodes[i]["v"]])
 
         mol = Chem.EditableMol(mol)
         bond_atoms = []
         for a, b in g.edges:
-            afrag = g.nodes[a]['v']
-            bfrag = g.nodes[b]['v']
-            u, v = (int(self.frags_stems[afrag][g.edges[(a, b)].get(f'{a}_attach', 0)] + offsets[a]),
-                    int(self.frags_stems[bfrag][g.edges[(a, b)].get(f'{b}_attach', 0)] + offsets[b]))
+            afrag = g.nodes[a]["v"]
+            bfrag = g.nodes[b]["v"]
+            u, v = (
+                int(self.frags_stems[afrag][g.edges[(a, b)].get(f"{a}_attach", 0)] + offsets[a]),
+                int(self.frags_stems[bfrag][g.edges[(a, b)].get(f"{b}_attach", 0)] + offsets[b]),
+            )
             bond_atoms += [u, v]
             mol.AddBond(u, v, Chem.BondType.SINGLE)
         mol = mol.GetMol()

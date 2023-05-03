@@ -2,20 +2,25 @@ from typing import Any, Dict
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
+from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.envs.graph_building_env import generate_forward_trajectory
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 
 
 class SoftQLearning:
-    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
-                 hps: Dict[str, Any], max_len=None, max_nodes=None):
+    def __init__(
+        self,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
+        rng: np.random.RandomState,
+        hps: Dict[str, Any],
+        max_len=None,
+        max_nodes=None,
+    ):
         """Soft Q-Learning implementation, see
         xxxxx
 
@@ -43,18 +48,19 @@ class SoftQLearning:
         self.rng = rng
         self.max_len = max_len
         self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps['illegal_action_logreward']
-        self.alpha = hps.get('sql_alpha', 0.01)
-        self.gamma = hps.get('sql_gamma', 1)
-        self.invalid_penalty = hps.get('sql_penalty', -10)
+        self.illegal_action_logreward = hps["illegal_action_logreward"]
+        self.alpha = hps.get("sql_alpha", 0.01)
+        self.gamma = hps.get("sql_gamma", 1)
+        self.invalid_penalty = hps.get("sql_penalty", -10)
         self.bootstrap_own_reward = False
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
 
-    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor,
-                                              random_action_prob: float):
+    def create_training_data_from_own_samples(
+        self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
+    ):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -94,7 +100,7 @@ class SoftQLearning:
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
-        return [{'traj': generate_forward_trajectory(i)} for i in graphs]
+        return [{"traj": generate_forward_trajectory(i)} for i in graphs]
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -112,16 +118,16 @@ class SoftQLearning:
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
+        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
         actions = [
-            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
+            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
         ]
         batch = self.ctx.collate(torch_graphs)
-        batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
+        batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.actions = torch.tensor(actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
-        batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
+        batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
         return batch
 
     def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):
@@ -179,17 +185,17 @@ class SoftQLearning:
         hat_Q = shifted_V_soft
 
         losses = (Q_sa - hat_Q).pow(2)
-        traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         loss = losses.mean()
         invalid_mask = 1 - batch.is_valid
         info = {
-            'mean_loss': loss,
-            'offline_loss': traj_losses[:batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
-            'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
-            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            "mean_loss": loss,
+            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+            "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
+            "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
         }
 
         if not torch.isfinite(traj_losses).all():
-            raise ValueError('loss is not finite')
+            raise ValueError("loss is not finite")
         return loss, info

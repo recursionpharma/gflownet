@@ -7,8 +7,8 @@ from torch_scatter import scatter_add
 def random_walk_probs(g: Data, k: int, skip_odd=False):
     source, _ = g.edge_index[0], g.edge_index[1]
     deg = scatter_add(torch.ones_like(source), source, dim=0, dim_size=g.num_nodes)
-    deg_inv = deg.pow(-1.)
-    deg_inv.masked_fill_(deg_inv == float('inf'), 0)
+    deg_inv = deg.pow(-1.0)
+    deg_inv.masked_fill_(deg_inv == float("inf"), 0)
 
     if g.edge_index.shape[1] == 0:
         P = g.edge_index.new_zeros((1, g.num_nodes, g.num_nodes))

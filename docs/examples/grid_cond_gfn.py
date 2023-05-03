@@ -1,30 +1,29 @@
 import argparse
-from collections import defaultdict
 import gzip
 import itertools
-from itertools import chain
-from itertools import count
 import os
 import pickle  # nosec B403
+from collections import defaultdict
+from itertools import chain, count
 
 import numpy as np
-from scipy.stats import norm
 import torch
-from torch.distributions.categorical import Categorical
 import torch.multiprocessing as mp
 import torch.nn as nn
+from scipy.stats import norm
+from torch.distributions.categorical import Categorical
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--save_path", default='results/example_branincurrin.pkl.gz', type=str)
-parser.add_argument("--device", default='cpu', type=str)
-parser.add_argument("--progress", action='store_true')  # Shows a tqdm bar
+parser.add_argument("--save_path", default="results/example_branincurrin.pkl.gz", type=str)
+parser.add_argument("--device", default="cpu", type=str)
+parser.add_argument("--progress", action="store_true")  # Shows a tqdm bar
 
 # GFN
-parser.add_argument("--method", default='flownet_tb', type=str)
+parser.add_argument("--method", default="flownet_tb", type=str)
 parser.add_argument("--learning_rate", default=1e-2, help="Learning rate", type=float)
-parser.add_argument("--opt", default='adam', type=str)
+parser.add_argument("--opt", default="adam", type=str)
 parser.add_argument("--adam_beta1", default=0.9, type=float)
 parser.add_argument("--adam_beta2", default=0.999, type=float)
 parser.add_argument("--momentum", default=0.9, type=float)
@@ -40,10 +39,10 @@ parser.add_argument("--n_distr_measurements", default=50, type=int)
 parser.add_argument("--n_mp_procs", default=4, type=int)
 
 # Env
-parser.add_argument('--func', default='BraninCurrin')
+parser.add_argument("--func", default="BraninCurrin")
 parser.add_argument("--horizon", default=32, type=int)
 
-_dev = [torch.device('cpu')]
+_dev = [torch.device("cpu")]
 tf = lambda x: torch.FloatTensor(x).to(_dev[0])  # noqa
 tl = lambda x: torch.LongTensor(x).to(_dev[0])  # noqa
 
@@ -60,41 +59,41 @@ def currin(x):
 def branin(x):
     x_0 = 15 * (x[..., 0] / 2 + 0.5) - 5
     x_1 = 15 * (x[..., 1] / 2 + 0.5)
-    t1 = (x_1 - 5.1 / (4 * np.pi**2) * x_0**2 + 5 / np.pi * x_0 - 6)
+    t1 = x_1 - 5.1 / (4 * np.pi**2) * x_0**2 + 5 / np.pi * x_0 - 6
     t2 = 10 * (1 - 1 / (8 * np.pi)) * np.cos(x_0)
     return 1 - (t1**2 + t2 + 10) / 308.13  # Dividing by the max to help normalize
 
 
 class GridEnv:
-    def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None, obs_type='one-hot'):
+    def __init__(self, horizon, ndim=2, xrange=[-1, 1], funcs=None, obs_type="one-hot"):
         self.horizon = horizon
         self.start = [xrange[0]] * ndim
         self.ndim = ndim
         self.width = xrange[1] - xrange[0]
-        self.funcs = ([lambda x: ((np.cos(x * 50) + 1) * norm.pdf(x * 5)).prod(-1) + 0.01] if funcs is None else funcs)
+        self.funcs = [lambda x: ((np.cos(x * 50) + 1) * norm.pdf(x * 5)).prod(-1) + 0.01] if funcs is None else funcs
         self.num_cond_dim = len(self.funcs) + 1
         self.xspace = np.linspace(*xrange, horizon)
         self._true_density = None
         self.obs_type = obs_type
-        if obs_type == 'one-hot':
+        if obs_type == "one-hot":
             self.num_obs_dim = self.horizon * self.ndim
-        elif obs_type == 'scalar':
+        elif obs_type == "scalar":
             self.num_obs_dim = self.ndim
-        elif obs_type == 'tab':
+        elif obs_type == "tab":
             self.num_obs_dim = self.horizon**self.ndim
 
     def obs(self, s=None):
         s = np.int32(self._state if s is None else s)
         z = np.zeros(self.num_obs_dim + self.num_cond_dim)
-        if self.obs_type == 'one-hot':
+        if self.obs_type == "one-hot":
             z = np.zeros((self.horizon * self.ndim + self.num_cond_dim), dtype=np.float32)
             z[np.arange(len(s)) * self.horizon + s] = 1
-        elif self.obs_type == 'scalar':
-            z[:self.ndim] = self.s2x(s)
-        elif self.obs_type == 'tab':
-            idx = (s * (self.horizon**np.arange(self.ndim))).sum()
+        elif self.obs_type == "scalar":
+            z[: self.ndim] = self.s2x(s)
+        elif self.obs_type == "tab":
+            idx = (s * (self.horizon ** np.arange(self.ndim))).sum()
             z[idx] = 1
-        z[-self.num_cond_dim:] = self.cond_obs
+        z[-self.num_cond_dim :] = self.cond_obs
         return z
 
     def s2x(self, s):
@@ -102,7 +101,7 @@ class GridEnv:
 
     def s2r(self, s):
         x = self.s2x(s)
-        return (self.coefficients * np.array([i(x) for i in self.funcs])).sum()**self.temperature
+        return (self.coefficients * np.array([i(x) for i in self.funcs])).sum() ** self.temperature
 
     def reset(self, coefs=None, temp=None):
         self._state = np.int32([0] * self.ndim)
@@ -142,7 +141,7 @@ class GridEnv:
     def state_info(self):
         all_int_states = np.float32(list(itertools.product(*[list(range(self.horizon))] * self.ndim)))
         state_mask = (all_int_states == self.horizon - 1).sum(1) <= 1
-        pos = all_int_states[state_mask].astype('float')
+        pos = all_int_states[state_mask].astype("float")
         s = pos / (self.horizon - 1) * (self.xspace[-1] - self.xspace[0]) + self.xspace[0]
         r = np.stack([f(s) for f in self.funcs]).T
         return s, r, pos
@@ -164,6 +163,7 @@ class GridEnv:
             parents, actions = self.parent_transitions(s, used_stop_action)
             if len(parents) == 0:
                 import pdb
+
                 pdb.set_trace()
             # add the transition
             traj.append([tf(np.array(i)) for i in (parents, actions, [r], self.obs(s), [done])])
@@ -187,14 +187,22 @@ class GridEnv:
 
 def make_mlp(ls, act=nn.LeakyReLU, tail=[]):
     """makes an MLP with no top layer activation"""
-    return nn.Sequential(*(sum([[nn.Linear(i, o)] + ([act()] if n < len(ls) - 2 else [])
-                                for n, (i, o) in enumerate(zip(ls, ls[1:]))], []) + tail))
+    return nn.Sequential(
+        *(
+            sum(
+                [[nn.Linear(i, o)] + ([act()] if n < len(ls) - 2 else []) for n, (i, o) in enumerate(zip(ls, ls[1:]))],
+                [],
+            )
+            + tail
+        )
+    )
 
 
 class FlowNet_TBAgent:
     def __init__(self, args, envs):
-        self.model = make_mlp([envs[0].num_obs_dim + envs[0].num_cond_dim] + [args.n_hid] * args.n_layers +
-                              [args.ndim + 1])
+        self.model = make_mlp(
+            [envs[0].num_obs_dim + envs[0].num_cond_dim] + [args.n_hid] * args.n_layers + [args.ndim + 1]
+        )
         self.Z = make_mlp([envs[0].num_cond_dim] + [args.n_hid // 2] * args.n_layers + [1])
         self.model.to(args.dev)
         self.n_forward_logits = args.ndim + 1
@@ -202,7 +210,7 @@ class FlowNet_TBAgent:
         self.ndim = args.ndim
 
     def forward_logits(self, x):
-        return self.model(x)[:, :self.n_forward_logits]
+        return self.model(x)[:, : self.n_forward_logits]
 
     def parameters(self):
         return chain(self.model.parameters(), self.Z.parameters())
@@ -257,9 +265,9 @@ def make_opt(params, args):
     params = list(params)
     if not len(params):
         return None
-    if args.opt == 'adam':
+    if args.opt == "adam":
         opt = torch.optim.Adam(params, args.learning_rate, betas=(args.adam_beta1, args.adam_beta2), weight_decay=1e-4)
-    elif args.opt == 'msgd':
+    elif args.opt == "msgd":
         opt = torch.optim.SGD(params, args.learning_rate, momentum=args.momentum)
     return opt
 
@@ -352,8 +360,9 @@ def main(args):
         for i in processes:
             all_losses.append(losses_q.get())
         if len(all_losses):
-            progress_bar.set_description_str(' '.join(
-                [f'{np.mean([i[j] for i in all_losses[-100:]]):.5f}' for j in range(len(all_losses[0]))]))
+            progress_bar.set_description_str(
+                " ".join([f"{np.mean([i[j] for i in all_losses[-100:]]):.5f}" for j in range(len(all_losses[0]))])
+            )
 
         if t % (args.n_train_steps // args.n_distr_measurements) == 0:
             for cfg, env in zip(cond_confs, test_envs):
@@ -377,24 +386,24 @@ def main(args):
     final_distribution = compute_exact_dag_distribution(test_envs, agent, args)
 
     results = {
-        'losses': np.float32(all_losses),
-        'params': [i.data.to('cpu').numpy() for i in agent.parameters()],
-        'distributions': distributions,
-        'final_distribution': final_distribution,
-        'cond_confs': cond_confs,
-        'state_info': envs[0].state_info(),
-        'args': args
+        "losses": np.float32(all_losses),
+        "params": [i.data.to("cpu").numpy() for i in agent.parameters()],
+        "distributions": distributions,
+        "final_distribution": final_distribution,
+        "cond_confs": cond_confs,
+        "state_info": envs[0].state_info(),
+        "args": args,
     }
     if args.save_path is not None:
         root = os.path.split(args.save_path)[0]
         if len(root):
             os.makedirs(root, exist_ok=True)
-        pickle.dump(results, gzip.open(args.save_path, 'wb'))
+        pickle.dump(results, gzip.open(args.save_path, "wb"))
     else:
         return results
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parser.parse_args()
     torch.set_num_threads(4)
     main(args)

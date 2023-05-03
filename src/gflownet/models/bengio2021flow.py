@@ -12,18 +12,16 @@ import os
 import pickle  # nosec
 
 import numpy as np
-from rdkit import RDConfig
-from rdkit.Chem import ChemicalFeatures
-from rdkit.Chem.rdchem import BondType as BT
-from rdkit.Chem.rdchem import HybridizationType
 import requests  # type: ignore
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import Batch
-from torch_geometric.data import Data
-from torch_geometric.nn import NNConv
-from torch_geometric.nn import Set2Set
+from rdkit import RDConfig
+from rdkit.Chem import ChemicalFeatures
+from rdkit.Chem.rdchem import BondType as BT
+from rdkit.Chem.rdchem import HybridizationType
+from torch_geometric.data import Batch, Data
+from torch_geometric.nn import NNConv, Set2Set
 from torch_sparse import coalesce
 
 NUM_ATOMIC_NUMBERS = 56  # Number of atoms used in the molecules (i.e. up to Ba)
@@ -31,27 +29,93 @@ NUM_ATOMIC_NUMBERS = 56  # Number of atoms used in the molecules (i.e. up to Ba)
 # These are the fragments used in the original paper, each fragment is a tuple
 # (SMILES string, attachment atom idx).
 # The attachment atom idx is where bonds between fragments are legal.
-FRAGMENTS = [["Br", [0]], ["C", [0]], ["C#N", [0]], ["C1=CCCCC1", [0, 2, 3]], ["C1=CNC=CC1", [0, 2]], ["C1CC1", [0]],
-             ["C1CCCC1", [0]], ["C1CCCCC1", [0, 1, 2, 3, 4, 5]], ["C1CCNC1", [0, 2, 3, 4]], ["C1CCNCC1", [0, 1, 3]],
-             ["C1CCOC1", [0, 1, 2, 4]], ["C1CCOCC1", [0, 1, 2, 4, 5]], ["C1CNCCN1", [2, 5]], ["C1COCCN1", [5]],
-             ["C1COCC[NH2+]1", [5]], ["C=C", [0, 1]], ["C=C(C)C", [0]], ["C=CC", [0, 1]], ["C=N", [0]], ["C=O", [0]],
-             ["CC", [0, 1]], ["CC(C)C", [1]], ["CC(C)O", [1]], ["CC(N)=O", [2]], ["CC=O", [1]], ["CCC", [1]],
-             ["CCO", [1]], ["CN", [0, 1]], ["CNC", [1]], ["CNC(C)=O", [0]], ["CNC=O", [0, 2]], ["CO", [0, 1]],
-             ["CS", [0]], ["C[NH3+]", [0]], ["C[SH2+]", [1]], ["Cl", [0]], ["F", [0]], ["FC(F)F", [1]], ["I", [0]],
-             ["N", [0]], ["N=CN", [1]], ["NC=O", [0, 1]], ["N[SH](=O)=O", [1]], ["O", [0]], ["O=CNO", [1]],
-             ["O=CO", [1]], ["O=C[O-]", [1]], ["O=PO", [1]], ["O=P[O-]", [1]], ["O=S=O", [1]], ["O=[NH+][O-]", [1]],
-             ["O=[PH](O)O", [1]], ["O=[PH]([O-])O", [1]], ["O=[SH](=O)O", [1]], ["O=[SH](=O)[O-]", [1]],
-             ["O=c1[nH]cnc2[nH]cnc12", [3, 6]], ["O=c1[nH]cnc2c1NCCN2", [8, 3]], ["O=c1cc[nH]c(=O)[nH]1", [2, 4]],
-             ["O=c1nc2[nH]c3ccccc3nc-2c(=O)[nH]1", [8, 4, 7]], ["O=c1nccc[nH]1", [3, 6]], ["S", [0]],
-             ["c1cc[nH+]cc1", [1, 3]], ["c1cc[nH]c1", [0, 2]], ["c1ccc2[nH]ccc2c1", [6]], ["c1ccc2ccccc2c1", [0, 2]],
-             ["c1ccccc1", [0, 1, 2, 3, 4, 5]], ["c1ccncc1", [0, 1, 2, 4, 5]], ["c1ccsc1", [2, 4]],
-             ["c1cn[nH]c1", [0, 1, 3, 4]], ["c1cncnc1", [0, 1, 3, 5]], ["c1cscn1", [0,
-                                                                                    3]], ["c1ncc2nc[nH]c2n1", [2, 6]]]
+FRAGMENTS = [
+    ["Br", [0]],
+    ["C", [0]],
+    ["C#N", [0]],
+    ["C1=CCCCC1", [0, 2, 3]],
+    ["C1=CNC=CC1", [0, 2]],
+    ["C1CC1", [0]],
+    ["C1CCCC1", [0]],
+    ["C1CCCCC1", [0, 1, 2, 3, 4, 5]],
+    ["C1CCNC1", [0, 2, 3, 4]],
+    ["C1CCNCC1", [0, 1, 3]],
+    ["C1CCOC1", [0, 1, 2, 4]],
+    ["C1CCOCC1", [0, 1, 2, 4, 5]],
+    ["C1CNCCN1", [2, 5]],
+    ["C1COCCN1", [5]],
+    ["C1COCC[NH2+]1", [5]],
+    ["C=C", [0, 1]],
+    ["C=C(C)C", [0]],
+    ["C=CC", [0, 1]],
+    ["C=N", [0]],
+    ["C=O", [0]],
+    ["CC", [0, 1]],
+    ["CC(C)C", [1]],
+    ["CC(C)O", [1]],
+    ["CC(N)=O", [2]],
+    ["CC=O", [1]],
+    ["CCC", [1]],
+    ["CCO", [1]],
+    ["CN", [0, 1]],
+    ["CNC", [1]],
+    ["CNC(C)=O", [0]],
+    ["CNC=O", [0, 2]],
+    ["CO", [0, 1]],
+    ["CS", [0]],
+    ["C[NH3+]", [0]],
+    ["C[SH2+]", [1]],
+    ["Cl", [0]],
+    ["F", [0]],
+    ["FC(F)F", [1]],
+    ["I", [0]],
+    ["N", [0]],
+    ["N=CN", [1]],
+    ["NC=O", [0, 1]],
+    ["N[SH](=O)=O", [1]],
+    ["O", [0]],
+    ["O=CNO", [1]],
+    ["O=CO", [1]],
+    ["O=C[O-]", [1]],
+    ["O=PO", [1]],
+    ["O=P[O-]", [1]],
+    ["O=S=O", [1]],
+    ["O=[NH+][O-]", [1]],
+    ["O=[PH](O)O", [1]],
+    ["O=[PH]([O-])O", [1]],
+    ["O=[SH](=O)O", [1]],
+    ["O=[SH](=O)[O-]", [1]],
+    ["O=c1[nH]cnc2[nH]cnc12", [3, 6]],
+    ["O=c1[nH]cnc2c1NCCN2", [8, 3]],
+    ["O=c1cc[nH]c(=O)[nH]1", [2, 4]],
+    ["O=c1nc2[nH]c3ccccc3nc-2c(=O)[nH]1", [8, 4, 7]],
+    ["O=c1nccc[nH]1", [3, 6]],
+    ["S", [0]],
+    ["c1cc[nH+]cc1", [1, 3]],
+    ["c1cc[nH]c1", [0, 2]],
+    ["c1ccc2[nH]ccc2c1", [6]],
+    ["c1ccc2ccccc2c1", [0, 2]],
+    ["c1ccccc1", [0, 1, 2, 3, 4, 5]],
+    ["c1ccncc1", [0, 1, 2, 4, 5]],
+    ["c1ccsc1", [2, 4]],
+    ["c1cn[nH]c1", [0, 1, 3, 4]],
+    ["c1cncnc1", [0, 1, 3, 5]],
+    ["c1cscn1", [0, 3]],
+    ["c1ncc2nc[nH]c2n1", [2, 6]],
+]
 
 
 class MPNNet(nn.Module):
-    def __init__(self, num_feat=14, num_vec=3, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_out_per_bond=1,
-                 num_conv_steps=12):
+    def __init__(
+        self,
+        num_feat=14,
+        num_vec=3,
+        dim=64,
+        num_out_per_mol=1,
+        num_out_per_stem=105,
+        num_out_per_bond=1,
+        num_conv_steps=12,
+    ):
         super().__init__()
         self.lin0 = nn.Linear(num_feat + num_vec, dim)
         self.num_ops = num_out_per_stem
@@ -62,13 +126,14 @@ class MPNNet(nn.Module):
         self.act = nn.LeakyReLU()
 
         net = nn.Sequential(nn.Linear(4, 128), self.act, nn.Linear(128, dim * dim))
-        self.conv = NNConv(dim, dim, net, aggr='mean')
+        self.conv = NNConv(dim, dim, net, aggr="mean")
         self.gru = nn.GRU(dim, dim)
 
         self.set2set = Set2Set(dim, processing_steps=3)
         self.lin3 = nn.Linear(dim * 2, num_out_per_mol)
-        self.bond2out = nn.Sequential(nn.Linear(dim * 2, dim), self.act, nn.Linear(dim, dim), self.act,
-                                      nn.Linear(dim, num_out_per_bond))
+        self.bond2out = nn.Sequential(
+            nn.Linear(dim * 2, dim), self.act, nn.Linear(dim, dim), self.act, nn.Linear(dim, num_out_per_bond)
+        )
 
     def forward(self, data, do_dropout=False):
         out = self.act(self.lin0(data.x))
@@ -89,30 +154,33 @@ class MPNNet(nn.Module):
 
 
 def load_original_model():
-    num_feat = (14 + 1 + NUM_ATOMIC_NUMBERS)
+    num_feat = 14 + 1 + NUM_ATOMIC_NUMBERS
     mpnn = MPNNet(num_feat=num_feat, num_vec=0, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_conv_steps=12)
-    f = requests.get("https://github.com/GFNOrg/gflownet/raw/master/mols/data/pretrained_proxy/best_params.pkl.gz",
-                     stream=True, timeout=30)
+    f = requests.get(
+        "https://github.com/GFNOrg/gflownet/raw/master/mols/data/pretrained_proxy/best_params.pkl.gz",
+        stream=True,
+        timeout=30,
+    )
     params = pickle.load(gzip.open(f.raw))  # nosec
     param_map = {
-        'lin0.weight': params[0],
-        'lin0.bias': params[1],
-        'conv.bias': params[3],
-        'conv.nn.0.weight': params[4],
-        'conv.nn.0.bias': params[5],
-        'conv.nn.2.weight': params[6],
-        'conv.nn.2.bias': params[7],
-        'conv.lin.weight': params[2],
-        'gru.weight_ih_l0': params[8],
-        'gru.weight_hh_l0': params[9],
-        'gru.bias_ih_l0': params[10],
-        'gru.bias_hh_l0': params[11],
-        'set2set.lstm.weight_ih_l0': params[16],
-        'set2set.lstm.weight_hh_l0': params[17],
-        'set2set.lstm.bias_ih_l0': params[18],
-        'set2set.lstm.bias_hh_l0': params[19],
-        'lin3.weight': params[20],
-        'lin3.bias': params[21],
+        "lin0.weight": params[0],
+        "lin0.bias": params[1],
+        "conv.bias": params[3],
+        "conv.nn.0.weight": params[4],
+        "conv.nn.0.bias": params[5],
+        "conv.nn.2.weight": params[6],
+        "conv.nn.2.bias": params[7],
+        "conv.lin.weight": params[2],
+        "gru.weight_ih_l0": params[8],
+        "gru.weight_hh_l0": params[9],
+        "gru.bias_ih_l0": params[10],
+        "gru.bias_hh_l0": params[11],
+        "set2set.lstm.weight_ih_l0": params[16],
+        "set2set.lstm.weight_hh_l0": params[17],
+        "set2set.lstm.bias_ih_l0": params[18],
+        "set2set.lstm.bias_hh_l0": params[19],
+        "lin3.weight": params[20],
+        "lin3.bias": params[21],
     }
     for k, v in param_map.items():
         mpnn.get_parameter(k).data = torch.tensor(v)
@@ -123,7 +191,7 @@ _mpnn_feat_cache = [None]
 
 
 def mpnn_feat(mol, ifcoord=True, panda_fmt=False, one_hot_atom=False, donor_features=False):
-    atomtypes = {'H': 0, 'C': 1, 'N': 2, 'O': 3, 'F': 4}
+    atomtypes = {"H": 0, "C": 1, "N": 2, "O": 3, "F": 4}
     bondtypes = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3, BT.UNSPECIFIED: 0}
 
     natm = len(mol.GetAtoms())
@@ -144,7 +212,7 @@ def mpnn_feat(mol, ifcoord=True, panda_fmt=False, one_hot_atom=False, donor_feat
         if one_hot_atom:
             atmfeat[i, ntypes + 9 + atom.GetAtomicNum() - 1] = 1
         else:
-            atmfeat[i, ntypes + 1] = (atom.GetAtomicNum() % 16) / 2.
+            atmfeat[i, ntypes + 1] = (atom.GetAtomicNum() % 16) / 2.0
         atmfeat[i, ntypes + 4] = atom.GetIsAromatic()
         hybridization = atom.GetHybridization()
         atmfeat[i, ntypes + 5] = hybridization == HybridizationType.SP
@@ -155,18 +223,18 @@ def mpnn_feat(mol, ifcoord=True, panda_fmt=False, one_hot_atom=False, donor_feat
     # get donors and acceptors
     if donor_features:
         if _mpnn_feat_cache[0] is None:
-            fdef_name = os.path.join(RDConfig.RDDataDir, 'BaseFeatures.fdef')
+            fdef_name = os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef")
             factory = ChemicalFeatures.BuildFeatureFactory(fdef_name)
             _mpnn_feat_cache[0] = factory
         else:
             factory = _mpnn_feat_cache[0]
         feats = factory.GetFeaturesForMol(mol)
         for j in range(0, len(feats)):
-            if feats[j].GetFamily() == 'Donor':
+            if feats[j].GetFamily() == "Donor":
                 node_list = feats[j].GetAtomIds()
                 for k in node_list:
                     atmfeat[k, ntypes + 3] = 1
-            elif feats[j].GetFamily() == 'Acceptor':
+            elif feats[j].GetFamily() == "Acceptor":
                 node_list = feats[j].GetAtomIds()
                 for k in node_list:
                     atmfeat[k, ntypes + 2] = 1
@@ -216,8 +284,11 @@ def onehot(arr, num_classes, dtype=np.int32):
 def mol2graph(mol, floatX=torch.float, bonds=False, nblocks=False):
     rdmol = mol
     if rdmol is None:
-        g = Data(x=torch.zeros((1, 14 + NUM_ATOMIC_NUMBERS)), edge_attr=torch.zeros((0, 4)), edge_index=torch.zeros(
-            (0, 2)).long())
+        g = Data(
+            x=torch.zeros((1, 14 + NUM_ATOMIC_NUMBERS)),
+            edge_attr=torch.zeros((0, 4)),
+            edge_index=torch.zeros((0, 2)).long(),
+        )
     else:
         atmfeat, _, bond, bondfeat = mpnn_feat(mol, ifcoord=False, one_hot_atom=True, donor_features=False)
         g = mol_to_graph_backend(atmfeat, None, bond, bondfeat)

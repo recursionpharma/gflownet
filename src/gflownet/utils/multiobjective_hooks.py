@@ -1,20 +1,29 @@
-from collections import defaultdict
 import pathlib
 import queue
 import threading
+from collections import defaultdict
 from typing import List
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.multiprocessing as mp
+from torch import Tensor
 
 from gflownet.utils import metrics
 
 
 class MultiObjectiveStatsHook:
-    def __init__(self, num_to_keep: int, log_dir: str, save_every: int = 50, compute_hvi=False, compute_hsri=False,
-                 compute_normed=False, compute_igd=False, compute_pc_entropy=False):
+    def __init__(
+        self,
+        num_to_keep: int,
+        log_dir: str,
+        save_every: int = 50,
+        compute_hvi=False,
+        compute_hsri=False,
+        compute_normed=False,
+        compute_igd=False,
+        compute_pc_entropy=False,
+    ):
         # This __init__ is only called in the main process. This object is then (potentially) cloned
         # in pytorch data worker processed and __call__'ed from within those processes. This means
         # each process will compute its own Pareto front, which we will accumulate in the main
@@ -33,11 +42,11 @@ class MultiObjectiveStatsHook:
         self.pareto_queue: mp.Queue = mp.Queue()
         self.pareto_front = None
         self.pareto_front_smi = None
-        self.pareto_metrics = mp.Array('f', 4)
+        self.pareto_metrics = mp.Array("f", 4)
 
         self.stop = threading.Event()
         self.save_every = save_every
-        self.log_path = pathlib.Path(log_dir) / 'pareto.pt'
+        self.log_path = pathlib.Path(log_dir) / "pareto.pt"
         self.pareto_thread = threading.Thread(target=self._run_pareto_accumulation, daemon=True)
         self.pareto_thread.start()
 
@@ -63,7 +72,7 @@ class MultiObjectiveStatsHook:
             except queue.Empty:
                 continue
             except ConnectionError as e:
-                print('Pareto Accumulation thread Queue ConnectionError', e)
+                print("Pareto Accumulation thread Queue ConnectionError", e)
                 break
 
             # accumulates pareto fronts across batches
@@ -96,18 +105,20 @@ class MultiObjectiveStatsHook:
                     print("Warning: pareto metrics computation lagging")
                 torch.save(
                     {
-                        'pareto_front': self.pareto_front,
-                        'pareto_metrics': list(self.pareto_metrics),
-                        'pareto_front_smi': self.pareto_front_smi,
-                    }, open(self.log_path, 'wb'))
+                        "pareto_front": self.pareto_front,
+                        "pareto_metrics": list(self.pareto_metrics),
+                        "pareto_front_smi": self.pareto_front_smi,
+                    },
+                    open(self.log_path, "wb"),
+                )
 
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
         # locally (in-process) accumulate flat rewards to build a better pareto estimate
         self.all_flat_rewards = self.all_flat_rewards + list(flat_rewards)
-        self.all_smi = self.all_smi + list([i.get('smi', None) for i in trajs])
+        self.all_smi = self.all_smi + list([i.get("smi", None) for i in trajs])
         if len(self.all_flat_rewards) > self.num_to_keep:
-            self.all_flat_rewards = self.all_flat_rewards[-self.num_to_keep:]
-            self.all_smi = self.all_smi[-self.num_to_keep:]
+            self.all_flat_rewards = self.all_flat_rewards[-self.num_to_keep :]
+            self.all_smi = self.all_smi[-self.num_to_keep :]
 
         flat_rewards = torch.stack(self.all_flat_rewards).numpy()
 
@@ -118,7 +129,7 @@ class MultiObjectiveStatsHook:
 
         # send pareto front to main process for lifetime accumulation
         worker_info = torch.utils.data.get_worker_info()
-        wid = (worker_info.id if worker_info is not None else 0)
+        wid = worker_info.id if worker_info is not None else 0
         self.pareto_queue.put((gfn_pareto, pareto_smi, wid))
 
         # compute in-process pareto metrics and collects lifetime pareto metrics from main process
@@ -128,9 +139,9 @@ class MultiObjectiveStatsHook:
             unnorm_hypervolume_wo_zero_ref = metrics.get_hypervolume(torch.tensor(gfn_pareto), zero_ref=False)
             info = {
                 **info,
-                'UHV, zero_ref=True': unnorm_hypervolume_with_zero_ref,
-                'UHV, zero_ref=False': unnorm_hypervolume_wo_zero_ref,
-                'lifetime_hv0': self.pareto_metrics[0],
+                "UHV, zero_ref=True": unnorm_hypervolume_with_zero_ref,
+                "UHV, zero_ref=False": unnorm_hypervolume_wo_zero_ref,
+                "lifetime_hv0": self.pareto_metrics[0],
             }
         if self.compute_normed:
             target_min = flat_rewards.min(0).copy()
@@ -141,29 +152,29 @@ class MultiObjectiveStatsHook:
             hypervolume_wo_zero_ref = metrics.get_hypervolume(torch.tensor(normed_gfn_pareto), zero_ref=False)
             info = {
                 **info,
-                'HV, zero_ref=True': hypervolume_with_zero_ref,
-                'HV, zero_ref=False': hypervolume_wo_zero_ref,
+                "HV, zero_ref=True": hypervolume_with_zero_ref,
+                "HV, zero_ref=False": hypervolume_wo_zero_ref,
             }
         if self.compute_hsri:
             hsri_w_pareto = self._hsri(gfn_pareto)
             info = {
                 **info,
-                'hsri': hsri_w_pareto,
-                'lifetime_hsri': self.pareto_metrics[1],
+                "hsri": hsri_w_pareto,
+                "lifetime_hsri": self.pareto_metrics[1],
             }
         if self.compute_igd:
             igd = metrics.get_IGD(flat_rewards, ref_front=None)
             info = {
                 **info,
-                'igd': igd,
-                'lifetime_igd_frontOnly': self.pareto_metrics[2],
+                "igd": igd,
+                "lifetime_igd_frontOnly": self.pareto_metrics[2],
             }
         if self.compute_pc_entropy:
             pc_ent = metrics.get_PC_entropy(flat_rewards, ref_front=None)
             info = {
                 **info,
-                'PCent': pc_ent,
-                'lifetime_PCent_frontOnly': self.pareto_metrics[3],
+                "PCent": pc_ent,
+                "lifetime_PCent_frontOnly": self.pareto_metrics[3],
             }
 
         return info
@@ -177,7 +188,7 @@ class TopKHook:
         self.num_preferences = num_preferences
 
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
-        self.queue.put([(i['data_idx'], r) for i, r in zip(trajs, rewards)])
+        self.queue.put([(i["data_idx"], r) for i, r in zip(trajs, rewards)])
         return {}
 
     def finalize(self):
@@ -191,6 +202,6 @@ class TopKHook:
         repeats = defaultdict(list)
         for idx, r in data:
             repeats[idx // self.repeats].append(r)
-        top_ks = [np.mean(sorted(i)[-self.k:]) for i in repeats.values()]
+        top_ks = [np.mean(sorted(i)[-self.k :]) for i in repeats.values()]
         assert len(top_ks) == self.num_preferences  # Make sure we got all of them?
         return top_ks
