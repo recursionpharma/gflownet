@@ -232,6 +232,7 @@ class GFNTrainer:
             log_dir=os.path.join(self.hps["log_dir"], "final"),
             random_action_prob=0.,
             hindsight_ratio=0.,
+            init_train_iter=self.hps["num_training_steps"]
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
@@ -321,7 +322,7 @@ class GFNTrainer:
         num_final_gen_steps = self.hps.get('num_final_gen_steps', 0)
         if num_final_gen_steps > 0:
             logger.info(f"Generating final {num_final_gen_steps} batches ...")
-            for it, batch in zip(range(0, 1 + num_final_gen_steps), cycle(final_dl)):
+            for it, batch in zip(range(self.hps["num_training_steps"], self.hps["num_training_steps"] + num_final_gen_steps + 1), cycle(final_dl)):
                 pass
             logger.info(f"Final generation steps completed.")
 

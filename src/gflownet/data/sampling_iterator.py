@@ -42,6 +42,7 @@ class SamplingIterator(IterableDataset):
         sample_cond_info: bool = True,
         random_action_prob: float = 0.0,
         hindsight_ratio: float = 0.0,
+        init_train_iter: int = 0,
     ):
         """Parameters
         ----------
@@ -86,7 +87,7 @@ class SamplingIterator(IterableDataset):
         self.sample_cond_info = sample_cond_info
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
-        self.train_it = 0
+        self.train_it = init_train_iter
         self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env")  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
