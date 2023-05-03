@@ -26,8 +26,8 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
-from gflownet.utils.transforms import thermometer
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.transforms import thermometer
 
 
 class SEHMOOTask(SEHTask):
