@@ -3,7 +3,7 @@ import enum
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import networkx as nx
 import numpy as np
@@ -517,7 +517,9 @@ class GraphActionCategorical:
             self.masks = [i.to(device) for i in self.masks]
         return self
 
-    def _compute_batchwise_max(self, x: List[torch.Tensor], detach: bool = True):
+    def _compute_batchwise_max(
+        self, x: List[torch.Tensor], detach: bool = True, batch: Optional[List[torch.Tensor]] = None
+    ):
         """Compute the maximum value of each batch element in `x`
 
         Parameters
@@ -526,6 +528,8 @@ class GraphActionCategorical:
             A list of tensors of shape `(n, m)` (e.g. representing logits)
         detach: bool, default=True
             If true, detach the tensors before computing the max
+        batch: List[torch.Tensor], default=None
+            The batch index of each element in `x`. If None, uses self.batch
 
         Returns
         -------
@@ -534,20 +538,18 @@ class GraphActionCategorical:
         """
         if detach:
             x = [i.detach() for i in x]
+        if batch is None:
+            batch = self.batch
         # First we prefill `out` with the minimum values in case
         # there are no corresponding logits (this can happen if e.g. a
         # graph has no edges), we don't want to accidentally take the
         # max of that type, since we'd get 0.
         min_val = torch.min(torch.stack([i.min() for i in x if i.numel()]))
         outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in x]
-        maxl = (
-            torch.cat(
-                [scatter(i, b, dim=0, out=out, reduce="max") for i, b, out in zip(x, self.batch, outs)],
-                dim=1,
-            )
-            .max(1)
-            .values
-        )
+        maxl = torch.cat(
+            [scatter(i, b, dim=0, out=out, reduce="max") for i, b, out in zip(x, batch, outs)],
+            dim=1,
+        ).max(1)
         return maxl
 
     def logsoftmax(self):
@@ -555,7 +557,7 @@ class GraphActionCategorical:
         if self.logprobs is not None:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors.
-        maxl = self._compute_batchwise_max(self.logits)
+        maxl = self._compute_batchwise_max(self.logits).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
@@ -576,7 +578,7 @@ class GraphActionCategorical:
         if x is None:
             x = self.logits
         # Use the `subtract by max` trick to avoid precision errors.
-        maxl = self._compute_batchwise_max(x)
+        maxl = self._compute_batchwise_max(x).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
@@ -631,16 +633,11 @@ class GraphActionCategorical:
         # These logits are 2d (num_obj_of_type, num_actions_of_type),
         # first reduce-max over the batch, which preserves the
         # columns, so we get (minibatch_size, num_actions_of_type).
-        # First we prefill `out` with very negative values in case
-        # there are no corresponding logits (this can happen if e.g. a
-        # graph has no edges), we don't want to accidentally take the
-        # max of that type.
         if batch is None:
             batch = self.batch
         if dim_size is None:
             dim_size = self.num_graphs
-        mnb_max = [torch.zeros(dim_size, i.shape[1], device=self.dev) - 1e6 for i in x]
-        mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(x, batch, mnb_max)]
+        mnb_max = self._compute_batchwise_max(x, batch=batch)
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
         col_max = [values.max(1) for values, idx in mnb_max]
