@@ -175,7 +175,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             "n_valid_prefs": 15,
             "n_valid_repeats_per_pref": 128,
             "preference_type": "dirichlet",
-            "use_pref_thermometer": True,
+            "use_pref_thermometer": False,
         }
 
     def setup_algo(self):
