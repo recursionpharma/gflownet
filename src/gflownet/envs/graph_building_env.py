@@ -3,7 +3,7 @@ import enum
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
