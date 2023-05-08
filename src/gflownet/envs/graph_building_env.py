@@ -74,7 +74,15 @@ class GraphActionType(enum.Enum):
 
 
 class GraphAction:
-    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, relabel=None):
+    def __init__(
+        self,
+        action: GraphActionType,
+        source=None,
+        target=None,
+        value=None,
+        attr=None,
+        relabel=None,
+    ):
         """A single graph-building action
 
         Parameters
@@ -255,7 +263,13 @@ class GraphBuildingEnv:
                     add_parent(GraphAction(GraphActionType.AddEdge, source=a, target=b), new_g)
             for k in g.edges[(a, b)]:
                 add_parent(
-                    GraphAction(GraphActionType.SetEdgeAttr, source=a, target=b, attr=k, value=g.edges[(a, b)][k]),
+                    GraphAction(
+                        GraphActionType.SetEdgeAttr,
+                        source=a,
+                        target=b,
+                        attr=k,
+                        value=g.edges[(a, b)][k],
+                    ),
                     graph_without_edge_attr(g, (a, b), k),
                 )
 
@@ -267,18 +281,31 @@ class GraphBuildingEnv:
                 if len(g.edges[edge]) == 0:
                     anchor = edge[0] if edge[1] == i else edge[1]
                     new_g = graph_without_node(g, i)
-                    add_parent(GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]), new_g)
+                    add_parent(
+                        GraphAction(
+                            GraphActionType.AddNode,
+                            source=anchor,
+                            value=g.nodes[i]["v"],
+                        ),
+                        new_g,
+                    )
             if len(g.nodes) == 1:
                 # The final node is degree 0, need this special case to remove it
                 # and end up with S0, the empty graph root
                 add_parent(
-                    GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]), graph_without_node(g, i)
+                    GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]),
+                    graph_without_node(g, i),
                 )
             for k in g.nodes[i]:
                 if k == "v":
                     continue
                 add_parent(
-                    GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
+                    GraphAction(
+                        GraphActionType.SetNodeAttr,
+                        source=i,
+                        attr=k,
+                        value=g.nodes[i][k],
+                    ),
                     graph_without_node_attr(g, i, k),
                 )
         return parents
@@ -319,7 +346,12 @@ class GraphBuildingEnv:
         if ga.action == GraphActionType.SetNodeAttr:
             return GraphAction(GraphActionType.RemoveNodeAttr, source=ga.source, attr=ga.attr)
         if ga.action == GraphActionType.SetEdgeAttr:
-            return GraphAction(GraphActionType.RemoveEdgeAttr, source=ga.source, target=ga.target, attr=ga.attr)
+            return GraphAction(
+                GraphActionType.RemoveEdgeAttr,
+                source=ga.source,
+                target=ga.target,
+                attr=ga.attr,
+            )
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
@@ -351,7 +383,11 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.edges[e][attr] = g.edges[i][attr]
                 act = GraphAction(
-                    GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr, value=g.edges[i][attr]
+                    GraphActionType.SetEdgeAttr,
+                    source=e[0],
+                    target=e[1],
+                    attr=attr,
+                    value=g.edges[i][attr],
                 )
             else:
                 # i doesn't exist, add the edge
@@ -394,7 +430,12 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                 attrs = [j for j in g.nodes[u] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.nodes[n][attr] = g.nodes[u][attr]
-                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[u][attr])
+                act = GraphAction(
+                    GraphActionType.SetNodeAttr,
+                    source=n,
+                    attr=attr,
+                    value=g.nodes[u][attr],
+                )
             if len(gn.nodes[n]) < len(g.nodes[u]):
                 stack.append((u,))  # we still have attributes to add to node u
         traj.append((gt, act))
@@ -518,7 +559,11 @@ class GraphActionCategorical:
         return self
 
     def _compute_batchwise_max(
-        self, x: List[torch.Tensor], detach: bool = True, batch: Optional[List[torch.Tensor]] = None
+        self,
+        x: List[torch.Tensor],
+        detach: bool = True,
+        batch: Optional[List[torch.Tensor]] = None,
+        reduce_columns: bool = True,
     ):
         """Compute the maximum value of each batch element in `x`
 
@@ -530,11 +575,15 @@ class GraphActionCategorical:
             If true, detach the tensors before computing the max
         batch: List[torch.Tensor], default=None
             The batch index of each element in `x`. If None, uses self.batch
+        reduce_columns: bool, default=True
+            If true computes the max over the columns, and returns a tensor of shape `(k,)`
+            If false, only reduces over rows, returns a list of (values, indexes) tuples.
 
         Returns
         -------
-        maxl: torch.Tensor
-            A tensor of shape `(k,)` where `k` is the number of graphs in the batch
+        maxl: (values: torch.Tensor, indices: torch.Tensor)
+            A named tuple of tensors of shape `(k,)` where `k` is the number of graphs in the batch, unless
+            reduce_columns is False. In the latter case, returns a list of named tuples that don't have columns reduced.
         """
         if detach:
             x = [i.detach() for i in x]
@@ -546,10 +595,9 @@ class GraphActionCategorical:
         # max of that type, since we'd get 0.
         min_val = torch.min(torch.stack([i.min() for i in x if i.numel()]))
         outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in x]
-        maxl = torch.cat(
-            [scatter(i, b, dim=0, out=out, reduce="max") for i, b, out in zip(x, batch, outs)],
-            dim=1,
-        ).max(1)
+        maxl = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(x, batch, outs)]
+        if reduce_columns:
+            return torch.cat([values for values, indices in maxl], dim=1).max(1)
         return maxl
 
     def logsoftmax(self):
@@ -612,7 +660,10 @@ class GraphActionCategorical:
         return self.argmax(x=gumbel)
 
     def argmax(
-        self, x: List[torch.Tensor], batch: List[torch.Tensor] = None, dim_size: int = None
+        self,
+        x: List[torch.Tensor],
+        batch: List[torch.Tensor] = None,
+        dim_size: int = None,
     ) -> List[Tuple[int, int, int]]:
         """Takes the argmax, i.e. if x are the logits, returns the most likely action.
 
@@ -637,7 +688,8 @@ class GraphActionCategorical:
             batch = self.batch
         if dim_size is None:
             dim_size = self.num_graphs
-        mnb_max = self._compute_batchwise_max(x, batch=batch)
+        # We don't want to reduce over the columns, since we want to keep the index within each column of the max
+        mnb_max = self._compute_batchwise_max(x, batch=batch, reduce_columns=False)
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
         col_max = [values.max(1) for values, idx in mnb_max]
@@ -663,7 +715,12 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(
+        self,
+        actions: List[Tuple[int, int, int]],
+        logprobs: torch.Tensor = None,
+        batch: torch.Tensor = None,
+    ):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
