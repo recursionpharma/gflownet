@@ -137,10 +137,7 @@ class SEHMOOTask(SEHTask):
                 metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation="l2")
             ).float()
         elif self.focus_type is not None and "learned" in self.focus_type:
-            if (
-                self.focus_model is not None
-                and train_it >= self.focus_model_training_limits[0] * self.max_train_it
-            ):
+            if self.focus_model is not None and train_it >= self.focus_model_training_limits[0] * self.max_train_it:
                 focus_dir = self.focus_model.sample_focus_directions(n)
             else:
                 focus_dir = torch.tensor(
@@ -498,10 +495,10 @@ def main():
         "log_dir": "./logs/debug_run",
         "overwrite_existing_exp": True,
         "seed": 0,
-        "global_batch_size": 64,
-        "num_training_steps": 20_000,
-        "num_final_gen_steps": 500,
-        "validate_every": 5,
+        "global_batch_size": 8,
+        "num_training_steps": 4,
+        "num_final_gen_steps": 3,
+        "validate_every": 10,
         "num_layers": 2,
         "num_emb": 256,
         "algo": "TB",
@@ -526,7 +523,7 @@ def main():
         "replay_buffer_warmup": 0,
         "hindsight_ratio": 0.3,
         "mp_pickle_messages": True,
-        "focus_model_training_limits": [0.0001, 0.75],
+        "focus_model_training_limits": [0.25, 0.75],
         "focus_model_state_space_res": 10,
         "dead_regions": [{"type": "hypersphere", "center": (1.0, 1.0), "radius": 0.6}],
     }

@@ -216,7 +216,7 @@ class GFNTrainer:
             persistent_workers=self.num_workers > 0,
             prefetch_factor=1 if self.num_workers else 2,
         )
-    
+
     def build_final_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         iterator = SamplingIterator(
@@ -228,10 +228,11 @@ class GFNTrainer:
             self.task,
             dev,
             replay_buffer=None,
-            ratio=0.,
+            ratio=0.0,
             log_dir=os.path.join(self.hps["log_dir"], "final"),
-            random_action_prob=0.,
-            hindsight_ratio=0.,
+            random_action_prob=0.0,
+            hindsight_ratio=0.0,
+            init_train_iter=self.hps["num_training_steps"],
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
@@ -318,10 +319,13 @@ class GFNTrainer:
                 self._save_state(it)
         self._save_state(self.hps["num_training_steps"])
 
-        num_final_gen_steps = self.hps.get('num_final_gen_steps', 0)
+        num_final_gen_steps = self.hps.get("num_final_gen_steps", 0)
         if num_final_gen_steps > 0:
             logger.info(f"Generating final {num_final_gen_steps} batches ...")
-            for it, batch in zip(range(0, 1 + num_final_gen_steps), cycle(final_dl)):
+            for it, batch in zip(
+                range(self.hps["num_training_steps"], self.hps["num_training_steps"] + num_final_gen_steps + 1),
+                cycle(final_dl),
+            ):
                 pass
             logger.info(f"Final generation steps completed.")
 
