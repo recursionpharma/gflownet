@@ -74,15 +74,7 @@ class GraphActionType(enum.Enum):
 
 
 class GraphAction:
-    def __init__(
-        self,
-        action: GraphActionType,
-        source=None,
-        target=None,
-        value=None,
-        attr=None,
-        relabel=None,
-    ):
+    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, relabel=None):
         """A single graph-building action
 
         Parameters
@@ -263,13 +255,7 @@ class GraphBuildingEnv:
                     add_parent(GraphAction(GraphActionType.AddEdge, source=a, target=b), new_g)
             for k in g.edges[(a, b)]:
                 add_parent(
-                    GraphAction(
-                        GraphActionType.SetEdgeAttr,
-                        source=a,
-                        target=b,
-                        attr=k,
-                        value=g.edges[(a, b)][k],
-                    ),
+                    GraphAction(GraphActionType.SetEdgeAttr, source=a, target=b, attr=k, value=g.edges[(a, b)][k]),
                     graph_without_edge_attr(g, (a, b), k),
                 )
 
@@ -282,11 +268,7 @@ class GraphBuildingEnv:
                     anchor = edge[0] if edge[1] == i else edge[1]
                     new_g = graph_without_node(g, i)
                     add_parent(
-                        GraphAction(
-                            GraphActionType.AddNode,
-                            source=anchor,
-                            value=g.nodes[i]["v"],
-                        ),
+                        GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]),
                         new_g,
                     )
             if len(g.nodes) == 1:
@@ -300,12 +282,7 @@ class GraphBuildingEnv:
                 if k == "v":
                     continue
                 add_parent(
-                    GraphAction(
-                        GraphActionType.SetNodeAttr,
-                        source=i,
-                        attr=k,
-                        value=g.nodes[i][k],
-                    ),
+                    GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
                     graph_without_node_attr(g, i, k),
                 )
         return parents
@@ -346,12 +323,7 @@ class GraphBuildingEnv:
         if ga.action == GraphActionType.SetNodeAttr:
             return GraphAction(GraphActionType.RemoveNodeAttr, source=ga.source, attr=ga.attr)
         if ga.action == GraphActionType.SetEdgeAttr:
-            return GraphAction(
-                GraphActionType.RemoveEdgeAttr,
-                source=ga.source,
-                target=ga.target,
-                attr=ga.attr,
-            )
+            return GraphAction(GraphActionType.RemoveEdgeAttr, source=ga.source, target=ga.target, attr=ga.attr)
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
@@ -383,11 +355,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.edges[e][attr] = g.edges[i][attr]
                 act = GraphAction(
-                    GraphActionType.SetEdgeAttr,
-                    source=e[0],
-                    target=e[1],
-                    attr=attr,
-                    value=g.edges[i][attr],
+                    GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr, value=g.edges[i][attr]
                 )
             else:
                 # i doesn't exist, add the edge
@@ -430,12 +398,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
                 attrs = [j for j in g.nodes[u] if j not in gn.nodes[n]]
                 attr = attrs[np.random.randint(len(attrs))]
                 gn.nodes[n][attr] = g.nodes[u][attr]
-                act = GraphAction(
-                    GraphActionType.SetNodeAttr,
-                    source=n,
-                    attr=attr,
-                    value=g.nodes[u][attr],
-                )
+                act = GraphAction(GraphActionType.SetNodeAttr, source=n, attr=attr, value=g.nodes[u][attr])
             if len(gn.nodes[n]) < len(g.nodes[u]):
                 stack.append((u,))  # we still have attributes to add to node u
         traj.append((gt, act))
@@ -715,12 +678,7 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(
-        self,
-        actions: List[Tuple[int, int, int]],
-        logprobs: torch.Tensor = None,
-        batch: torch.Tensor = None,
-    ):
+    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
