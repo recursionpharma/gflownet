@@ -22,10 +22,17 @@ class Model(nn.Module):
         self.x2h = nn.Linear(env_ctx.num_node_dim, num_emb)
         self.e2h = nn.Linear(env_ctx.num_edge_dim, num_emb)
         self.graph2emb = nn.ModuleList(
-            sum([[
-                gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add'),
-                gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
-            ] for i in range(6)], []))
+            sum(
+                [
+                    [
+                        gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add"),
+                        gnn.TransformerConv(num_emb, num_emb, edge_dim=num_emb),
+                    ]
+                    for i in range(6)
+                ],
+                [],
+            )
+        )
 
         def h2l(nl):
             return nn.Sequential(nn.Linear(num_emb, num_emb), nn.LeakyReLU(), nn.Linear(num_emb, nl))
@@ -36,8 +43,11 @@ class Model(nn.Module):
         self.emb2add_edge_attr = h2l(env_ctx.num_edge_attr_logits)
         self.emb2stop = h2l(1)
         self.action_type_order = [
-            GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetNodeAttr, GraphActionType.AddEdge,
-            GraphActionType.SetEdgeAttr
+            GraphActionType.Stop,
+            GraphActionType.AddNode,
+            GraphActionType.SetNodeAttr,
+            GraphActionType.AddEdge,
+            GraphActionType.SetEdgeAttr,
         ]
 
     def forward(self, g: gd.Batch):
@@ -58,7 +68,7 @@ class Model(nn.Module):
                 self.emb2add_edge(o[ne_row] + o[ne_col]),
                 self.emb2add_edge_attr(o[e_row] + o[e_col]),
             ],
-            keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
+            keys=[None, "x", "x", "non_edge_index", "edge_index"],
             types=self.action_type_order,
         )
         return cat
@@ -73,6 +83,7 @@ def main(smi, n_steps):
     import networkx as nx
     import numpy as np
     from rdkit import Chem
+
     np.random.seed(123)
     env = GraphBuildingEnv()
     ctx = MolBuildingEnvContext()
@@ -108,13 +119,13 @@ def main(smi, n_steps):
         with torch.no_grad():
             fwd_cat = model(ctx.collate([tg]))
         fwd_cat.logsoftmax()
-        print('stop:', fwd_cat.logprobs[0].exp())
+        print("stop:", fwd_cat.logprobs[0].exp())
         action = fwd_cat.sample()[0]
-        print('action prob:', fwd_cat.log_prob([action]).exp())
+        print("action prob:", fwd_cat.log_prob([action]).exp())
         if fwd_cat.log_prob([action]).exp().item() < 0.2:
             # This test should work but obviously it's not perfect,
             # some probability is left on unlikely (wrong) steps
-            print('oops, starting step over')
+            print("oops, starting step over")
             continue
         graph_action = ctx.aidx_to_GraphAction(tg, action)
         print(graph_action.action, graph_action.source, graph_action.target, graph_action.value)
@@ -133,7 +144,7 @@ def main(smi, n_steps):
     print(new_mol.HasSubstructMatch(mol) and mol.HasSubstructMatch(new_mol))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Simple mol
     main("C1N2C3C2C2C4OC12C34", 500)
     # More complicated mol
