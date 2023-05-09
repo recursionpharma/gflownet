@@ -1,16 +1,14 @@
-from collections.abc import Iterable
 import os
 import sqlite3
+from collections.abc import Iterable
 from typing import Callable, List
 
 import networkx as nx
 import numpy as np
-from rdkit import Chem
-from rdkit import RDLogger
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.utils.data import IterableDataset
+from rdkit import Chem, RDLogger
+from torch.utils.data import Dataset, IterableDataset
 
 
 class SamplingIterator(IterableDataset):

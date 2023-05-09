@@ -2,19 +2,16 @@ import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
-from rdkit.Chem.rdchem import Mol as RDMol
 import torch
-from torch import Tensor
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
 import torch.utils.tensorboard
 import torch_geometric.data as gd
+from rdkit.Chem.rdchem import Mol as RDMol
+from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
 
 from gflownet.data.sampling_iterator import SamplingIterator
-from gflownet.envs.graph_building_env import GraphActionCategorical
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.utils.misc import create_logger
 from gflownet.utils.multiprocessing_proxy import wrap_model_mp
 

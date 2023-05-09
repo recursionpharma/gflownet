@@ -1,18 +1,17 @@
 import argparse
-from collections import defaultdict
 import gzip
 import itertools
-from itertools import chain
-from itertools import count
 import os
 import pickle  # nosec B403
+from collections import defaultdict
+from itertools import chain, count
 
 import numpy as np
-from scipy.stats import norm
 import torch
-from torch.distributions.categorical import Categorical
 import torch.multiprocessing as mp
 import torch.nn as nn
+from scipy.stats import norm
+from torch.distributions.categorical import Categorical
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()

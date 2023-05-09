@@ -12,18 +12,16 @@ import os
 import pickle  # nosec
 
 import numpy as np
-from rdkit import RDConfig
-from rdkit.Chem import ChemicalFeatures
-from rdkit.Chem.rdchem import BondType as BT
-from rdkit.Chem.rdchem import HybridizationType
 import requests  # type: ignore
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import Batch
-from torch_geometric.data import Data
-from torch_geometric.nn import NNConv
-from torch_geometric.nn import Set2Set
+from rdkit import RDConfig
+from rdkit.Chem import ChemicalFeatures
+from rdkit.Chem.rdchem import BondType as BT
+from rdkit.Chem.rdchem import HybridizationType
+from torch_geometric.data import Batch, Data
+from torch_geometric.nn import NNConv, Set2Set
 from torch_sparse import coalesce
 
 NUM_ATOMIC_NUMBERS = 56  # Number of atoms used in the molecules (i.e. up to Ba)

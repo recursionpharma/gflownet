@@ -1,6 +1,6 @@
 import base64
-from collections import defaultdict
 import pickle
+from collections import defaultdict
 
 import networkx as nx
 import pytest

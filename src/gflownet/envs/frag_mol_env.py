@@ -6,10 +6,7 @@ import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
 
-from gflownet.envs.graph_building_env import Graph
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionType
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.models import bengio2021flow
 
 
@@ -263,7 +260,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
-
         Parameters
         ----------
         graphs: List[gd.Data]

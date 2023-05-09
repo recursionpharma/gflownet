@@ -2,11 +2,10 @@ import copy
 from typing import List
 
 import torch
-from torch import Tensor
 import torch.nn as nn
+from torch import Tensor
 
-from gflownet.envs.graph_building_env import GraphAction
-from gflownet.envs.graph_building_env import GraphActionType
+from gflownet.envs.graph_building_env import GraphAction, GraphActionType
 
 
 class GraphSampler:
