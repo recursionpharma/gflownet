@@ -5,10 +5,8 @@ import torch
 import torch_geometric.data as gd
 from torch_scatter import scatter
 
-from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.algo.trajectory_balance import TrajectoryBalanceModel
-from gflownet.envs.graph_building_env import GraphBuildingEnv
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.algo.trajectory_balance import TrajectoryBalance, TrajectoryBalanceModel
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext
 
 
 class MultiObjectiveReinforce(TrajectoryBalance):
