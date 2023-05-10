@@ -5,12 +5,18 @@ import torch
 import torch_geometric.data as gd
 from networkx.algorithms.isomorphism import is_isomorphic as nx_is_isomorphic
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext, graph_without_edge
+from gflownet.envs.graph_building_env import (
+    Graph,
+    GraphAction,
+    GraphActionType,
+    GraphBuildingEnvContext,
+    graph_without_edge,
+)
 from gflownet.utils.graphs import random_walk_probs
 
 
 def hashg(g):
-    return nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(g, node_attr='v')
+    return nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(g, node_attr="v")
 
 
 def is_isomorphic(u, v):
@@ -25,19 +31,21 @@ class CliquesEnvContext(GraphBuildingEnvContext):
       good metric of diversity. Could even be used as a generalization metric. If there is an
       imbalance in the colors seen, what happens to the diversity?
     """
+
     def __init__(self, max_nodes, clique_size, num_cliques, num_cond_dim=0, graph_data=None):
         # The max reward is achievable with this many nodes and steps
         self.recommended_max_nodes = clique_size * num_cliques - num_cliques + 1
-        self.recommended_max_steps = (self.recommended_max_nodes +
-                                      (len(nx.complete_graph(clique_size).edges) - clique_size) * num_cliques)
+        self.recommended_max_steps = (
+            self.recommended_max_nodes + (len(nx.complete_graph(clique_size).edges) - clique_size) * num_cliques
+        )
         self.max_nodes = max_nodes
 
         self.node_attr_values = {
-            'v': [0, 1],  # Imagine this is as colors
+            "v": [0, 1],  # Imagine this is as colors
         }
         self._num_rw_feat = 8
 
-        self.num_new_node_values = len(self.node_attr_values['v'])
+        self.num_new_node_values = len(self.node_attr_values["v"])
         self.num_node_attr_logits = None
         self.num_node_dim = self.num_new_node_values + 1 + self._num_rw_feat
         self.num_node_attrs = 1
@@ -58,7 +66,7 @@ class CliquesEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveNode,
             GraphActionType.RemoveEdge,
         ]
-        self.device = torch.device('cpu')
+        self.device = torch.device("cpu")
         self.graph_data = graph_data
         self.hash_to_graphs: Dict[str, int] = {}
         if graph_data is not None:
@@ -91,7 +99,7 @@ class CliquesEnvContext(GraphBuildingEnvContext):
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
-            return GraphAction(t, source=act_row, value=self.node_attr_values['v'][act_col])
+            return GraphAction(t, source=act_row, value=self.node_attr_values["v"][act_col])
         elif t is GraphActionType.AddEdge:
             a, b = g.non_edge_index[:, act_row]
             return GraphAction(t, source=a.item(), target=b.item())
@@ -108,14 +116,16 @@ class CliquesEnvContext(GraphBuildingEnvContext):
             type_idx = self.action_type_order.index(action.action)
         elif action.action is GraphActionType.AddNode:
             row = action.source
-            col = self.node_attr_values['v'].index(action.value)
+            col = self.node_attr_values["v"].index(action.value)
             type_idx = self.action_type_order.index(action.action)
         elif action.action is GraphActionType.AddEdge:
             # Here we have to retrieve the index in non_edge_index of an edge (s,t)
             # that's also possibly in the reverse order (t,s).
             # That's definitely not too efficient, can we do better?
-            row = ((g.non_edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
-                   (g.non_edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            row = (
+                (g.non_edge_index.T == torch.tensor([(action.source, action.target)])).prod(1)
+                + (g.non_edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)
+            ).argmax()
             col = 0
             type_idx = self.action_type_order.index(action.action)
         elif action.action is GraphActionType.RemoveNode:
@@ -136,7 +146,7 @@ class CliquesEnvContext(GraphBuildingEnvContext):
         remove_node_mask = torch.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
         for i, n in enumerate(g.nodes):
             ad = g.nodes[n]
-            x[i, self.node_attr_values['v'].index(ad['v'])] = 1
+            x[i, self.node_attr_values["v"].index(ad["v"])] = 1
             if g.degree(n) <= 1:
                 remove_node_mask[i] = 1
 
@@ -146,8 +156,9 @@ class CliquesEnvContext(GraphBuildingEnvContext):
                 if nx.algorithms.is_connected(graph_without_edge(g, (u, v))):
                     remove_edge_mask[i] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
-        edge_index = torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape(
-            (-1, 2)).T
+        edge_index = (
+            torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
+        )
         gc = nx.complement(g)
         non_edge_index = torch.tensor([i for i in gc.edges], dtype=torch.long).T.reshape((2, -1))
 
@@ -162,7 +173,8 @@ class CliquesEnvContext(GraphBuildingEnvContext):
                 add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),
                 remove_node_mask=remove_node_mask,
                 remove_edge_mask=remove_edge_mask,
-            ))
+            )
+        )
 
     def _preprocess(self, g: gd.Data) -> gd.Data:
         g.x = torch.cat([g.x, random_walk_probs(g, self._num_rw_feat, skip_odd=True)], 1)
@@ -170,7 +182,7 @@ class CliquesEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
-        return gd.Batch.from_data_list(graphs, follow_batch=['edge_index', 'non_edge_index'])
+        return gd.Batch.from_data_list(graphs, follow_batch=["edge_index", "non_edge_index"])
 
     def obj_to_graph(self, obj: object) -> Graph:
         return obj  # This is already a graph

@@ -31,8 +31,10 @@ class GraphTransformer(nn.Module):
     The per graph outputs are the concatenation of a global mean pooling operation, of the final
     virtual node embeddings, and of the conditional information embedding.
     """
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type='pre',
-                 i2h_width=1):
+
+    def __init__(
+        self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", i2h_width=1
+    ):
         """
         Parameters
         ----------
@@ -55,22 +57,29 @@ class GraphTransformer(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         self.num_noise = num_noise
-        assert ln_type in ['pre', 'post']
+        assert ln_type in ["pre", "post"]
         self.ln_type = ln_type
 
         self.x2h = mlp(x_dim + num_noise, int(num_emb * i2h_width), num_emb, 2)
         self.e2h = mlp(e_dim, int(num_emb * i2h_width), num_emb, 2)
         self.c2h = mlp(g_dim, int(num_emb * i2h_width), num_emb, 2)
         self.graph2emb = nn.ModuleList(
-            sum([[
-                gnn.GENConv(num_emb, num_emb, num_layers=1, aggr='add', norm=None),
-                gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
-                nn.Linear(num_heads * num_emb, num_emb),
-                gnn.LayerNorm(num_emb, affine=False),
-                mlp(num_emb, num_emb * 4, num_emb, 1),
-                gnn.LayerNorm(num_emb, affine=False),
-                nn.Linear(num_emb, num_emb * 2),
-            ] for i in range(self.num_layers)], []))
+            sum(
+                [
+                    [
+                        gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None),
+                        gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
+                        nn.Linear(num_heads * num_emb, num_emb),
+                        gnn.LayerNorm(num_emb, affine=False),
+                        mlp(num_emb, num_emb * 4, num_emb, 1),
+                        gnn.LayerNorm(num_emb, affine=False),
+                        nn.Linear(num_emb, num_emb * 2),
+                    ]
+                    for i in range(self.num_layers)
+                ],
+                [],
+            )
+        )
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         """Forward pass
@@ -104,31 +113,31 @@ class GraphTransformer(nn.Module):
         e_p = torch.zeros((num_total_nodes * 2, e.shape[1]), device=g.x.device)
         e_p[:, 0] = 1  # Manually create a bias term
         aug_e = torch.cat([e, e_p], 0)
-        aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, 'mean')
+        aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, "mean")
         aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
 
         # Append the conditioning information node embedding to o
         o = torch.cat([o, c], 0)
         for i in range(self.num_layers):
             # Run the graph transformer forward
-            gen, trans, linear, norm1, ff, norm2, cscale = self.graph2emb[i * 7:(i + 1) * 7]
+            gen, trans, linear, norm1, ff, norm2, cscale = self.graph2emb[i * 7 : (i + 1) * 7]
             cs = cscale(c[aug_batch])
-            if self.ln_type == 'post':
+            if self.ln_type == "post":
                 agg = gen(o, aug_edge_index, aug_e)
                 l_h = linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e))
-                scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
+                scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
                 o = norm1(o + l_h * scale + shift, aug_batch)
                 o = norm2(o + ff(o), aug_batch)
             else:
                 o_norm = norm1(o, aug_batch)
                 agg = gen(o_norm, aug_edge_index, aug_e)
                 l_h = linear(trans(torch.cat([o_norm, agg], 1), aug_edge_index, aug_e))
-                scale, shift = cs[:, :l_h.shape[1]], cs[:, l_h.shape[1]:]
+                scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
                 o = o + l_h * scale + shift
                 o = o + ff(norm2(o, aug_batch))
 
-        glob = torch.cat([gnn.global_mean_pool(o[:-c.shape[0]], g.batch), o[-c.shape[0]:]], 1)
-        o_final = torch.cat([o[:-c.shape[0]]], 1)
+        glob = torch.cat([gnn.global_mean_pool(o[: -c.shape[0]], g.batch), o[-c.shape[0] :]], 1)
+        o_final = torch.cat([o[: -c.shape[0]]], 1)
         return o_final, glob
 
 
@@ -142,32 +151,49 @@ class GraphTransformerGFN(nn.Module):
     # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
     # embeddings to the right MLP
     _action_type_to_graph_part = {
-        GraphActionType.Stop: 'graph',
-        GraphActionType.AddNode: 'node',
-        GraphActionType.SetNodeAttr: 'node',
-        GraphActionType.AddEdge: 'non_edge',
-        GraphActionType.SetEdgeAttr: 'edge',
-        GraphActionType.RemoveNode: 'node',
-        GraphActionType.RemoveNodeAttr: 'node',
-        GraphActionType.RemoveEdge: 'edge',
-        GraphActionType.RemoveEdgeAttr: 'edge',
+        GraphActionType.Stop: "graph",
+        GraphActionType.AddNode: "node",
+        GraphActionType.SetNodeAttr: "node",
+        GraphActionType.AddEdge: "non_edge",
+        GraphActionType.SetEdgeAttr: "edge",
+        GraphActionType.RemoveNode: "node",
+        GraphActionType.RemoveNodeAttr: "node",
+        GraphActionType.RemoveEdge: "edge",
+        GraphActionType.RemoveEdgeAttr: "edge",
     }
 
     # The torch_geometric batch key each graph part corresponds to
     _graph_part_to_key = {
-        'graph': None,
-        'node': 'x',
-        'non_edge': 'non_edge_index',
-        'edge': 'edge_index',
+        "graph": None,
+        "node": "x",
+        "non_edge": "non_edge_index",
+        "edge": "edge_index",
     }
 
-    def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_mlp_layers=0, ln_type='pre', num_graph_out=1,
-                 i2h_width=1, do_bck=False):
+    def __init__(
+        self,
+        env_ctx,
+        num_emb=64,
+        num_layers=3,
+        num_heads=2,
+        num_mlp_layers=0,
+        ln_type="pre",
+        num_graph_out=1,
+        i2h_width=1,
+        do_bck=False,
+    ):
         """See `GraphTransformer` for argument values"""
         super().__init__()
-        self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
-                                       g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       i2h_width=i2h_width, num_heads=num_heads, ln_type=ln_type)
+        self.transf = GraphTransformer(
+            x_dim=env_ctx.num_node_dim,
+            e_dim=env_ctx.num_edge_dim,
+            g_dim=env_ctx.num_cond_dim,
+            num_emb=num_emb,
+            num_layers=num_layers,
+            i2h_width=i2h_width,
+            num_heads=num_heads,
+            ln_type=ln_type,
+        )
         num_final = num_emb
         num_glob_final = num_emb * 2
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
@@ -227,7 +253,7 @@ class GraphTransformerGFN(nn.Module):
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         node_embeddings, graph_embeddings = self.transf(g, cond)
         # "Non-edges" are edges not currently in the graph that we could add
-        if hasattr(g, 'non_edge_index'):
+        if hasattr(g, "non_edge_index"):
             ne_row, ne_col = g.non_edge_index
             if self.edges_are_unordered:
                 non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
@@ -248,10 +274,10 @@ class GraphTransformerGFN(nn.Module):
             edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
 
         emb = {
-            'graph': graph_embeddings,
-            'node': node_embeddings,
-            'edge': edge_embeddings,
-            'non_edge': non_edge_embeddings,
+            "graph": graph_embeddings,
+            "node": node_embeddings,
+            "edge": edge_embeddings,
+            "non_edge": non_edge_embeddings,
         }
 
         graph_out = self.emb2graph_out(graph_embeddings)

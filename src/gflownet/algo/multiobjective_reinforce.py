@@ -15,12 +15,20 @@ class MultiObjectiveReinforce(TrajectoryBalance):
     """
     Class that inherits from TrajectoryBalance and implements the multi-objective reinforce algorithm
     """
-    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
-                 hps: Dict[str, Any], max_len=None, max_nodes=None):
+
+    def __init__(
+        self,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
+        rng: np.random.RandomState,
+        hps: Dict[str, Any],
+        max_len=None,
+        max_nodes=None,
+    ):
         super().__init__(env, ctx, rng, hps, max_len, max_nodes)
 
     def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
-        """Compute  multi objective REINFORCE loss over trajectories contained in the batch """
+        """Compute  multi objective REINFORCE loss over trajectories contained in the batch"""
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
@@ -40,14 +48,14 @@ class MultiObjectiveReinforce(TrajectoryBalance):
 
         # Take log rewards, and clip
         assert rewards.ndim == 1
-        traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        traj_log_prob = scatter(log_prob, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
         traj_losses = traj_log_prob * (-rewards - (-1) * rewards.mean())
 
         loss = traj_losses.mean()
         info = {
-            'loss': loss.item(),
+            "loss": loss.item(),
         }
         if not torch.isfinite(traj_losses).all():
-            raise ValueError('loss is not finite')
+            raise ValueError("loss is not finite")
         return loss, info

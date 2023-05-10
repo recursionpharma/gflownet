@@ -27,17 +27,24 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
     - AddNode
     - SetEdgeAttr
     """
+
     def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_objectives=2):
         super().__init__()
-        self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
-                                       g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       num_heads=num_heads)
+        self.transf = GraphTransformer(
+            x_dim=env_ctx.num_node_dim,
+            e_dim=env_ctx.num_edge_dim,
+            g_dim=env_ctx.num_cond_dim,
+            num_emb=num_emb,
+            num_layers=num_layers,
+            num_heads=num_heads,
+        )
         num_final = num_emb * 2
         num_mlp_layers = 0
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values * num_objectives, num_mlp_layers)
         # Edge attr logits are "sided", so we will compute both sides independently
-        self.emb2set_edge_attr = mlp(num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2 * num_objectives,
-                                     num_mlp_layers)
+        self.emb2set_edge_attr = mlp(
+            num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2 * num_objectives, num_mlp_layers
+        )
         self.emb2stop = mlp(num_emb * 3, num_emb, num_objectives, num_mlp_layers)
         self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
         self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
@@ -61,8 +68,10 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
 
         def _mask_obj(x, m):
             # mask logit vector x with binary mask m
-            return (x.reshape(x.shape[0], x.shape[1] // self.num_objectives, self.num_objectives) * m[:, :, None] +
-                    self.mask_value * (1 - m[:, :, None])).reshape(x.shape)
+            return (
+                x.reshape(x.shape[0], x.shape[1] // self.num_objectives, self.num_objectives) * m[:, :, None]
+                + self.mask_value * (1 - m[:, :, None])
+            ).reshape(x.shape)
 
         cat = GraphActionCategorical(
             g,
@@ -71,7 +80,7 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
                 _mask(F.relu(self.emb2add_node(node_embeddings)), g.add_node_mask),
                 _mask_obj(F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)), g.set_edge_attr_mask),
             ],
-            keys=[None, 'x', 'edge_index'],
+            keys=[None, "x", "edge_index"],
             types=self.action_type_order,
         )
         r_pred = self.emb2reward(graph_embeddings)
@@ -81,9 +90,11 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
         # Compute the greedy policy
         # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
         # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
-        w = cond[:, -self.num_objectives:]
-        w_dot_Q = [(qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
-                   for qi, b in zip(cat.logits, cat.batch)]
+        w = cond[:, -self.num_objectives :]
+        w_dot_Q = [
+            (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
+            for qi, b in zip(cat.logits, cat.batch)
+        ]
         # Set the softmax distribution to a very low temperature to make sure only the max gets
         # sampled (and we get random argmax tie breaking for free!):
         cat.logits = [i * 100 for i in w_dot_Q]
@@ -94,9 +105,14 @@ class GraphTransformerEnvelopeQL(nn.Module):
     def __init__(self, env_ctx, num_emb=64, num_layers=3, num_heads=2, num_objectives=2):
         """See `GraphTransformer` for argument values"""
         super().__init__()
-        self.transf = GraphTransformer(x_dim=env_ctx.num_node_dim, e_dim=env_ctx.num_edge_dim,
-                                       g_dim=env_ctx.num_cond_dim, num_emb=num_emb, num_layers=num_layers,
-                                       num_heads=num_heads)
+        self.transf = GraphTransformer(
+            x_dim=env_ctx.num_node_dim,
+            e_dim=env_ctx.num_edge_dim,
+            g_dim=env_ctx.num_cond_dim,
+            num_emb=num_emb,
+            num_layers=num_layers,
+            num_heads=num_heads,
+        )
         num_final = num_emb * 2
         num_mlp_layers = 0
         self.emb2add_edge = mlp(num_final, num_emb, num_objectives, num_mlp_layers)
@@ -123,7 +139,7 @@ class GraphTransformerEnvelopeQL(nn.Module):
                 self.emb2add_edge(node_embeddings[ne_row] + node_embeddings[ne_col]),
                 self.emb2set_edge_attr(node_embeddings[e_row] + node_embeddings[e_col]),
             ],
-            keys=[None, 'x', 'x', 'non_edge_index', 'edge_index'],
+            keys=[None, "x", "x", "non_edge_index", "edge_index"],
             types=self.action_type_order,
         )
         r_pred = self.emb2reward(graph_embeddings)
@@ -132,9 +148,11 @@ class GraphTransformerEnvelopeQL(nn.Module):
         # Compute the greedy policy
         # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
         # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
-        w = cond[:, -self.num_objectives:]
-        w_dot_Q = [(qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
-                   for qi, b in zip(cat.logits, cat.batch)]
+        w = cond[:, -self.num_objectives :]
+        w_dot_Q = [
+            (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
+            for qi, b in zip(cat.logits, cat.batch)
+        ]
         # Set the softmax distribution to a very low temperature to make sure only the max gets
         # sampled (and we get random argmax tie breaking for free!):
         cat.logits = [i * 100 for i in w_dot_Q]
@@ -142,8 +160,15 @@ class GraphTransformerEnvelopeQL(nn.Module):
 
 
 class EnvelopeQLearning:
-    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
-                 hps: Dict[str, Any], max_len=None, max_nodes=None):
+    def __init__(
+        self,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
+        rng: np.random.RandomState,
+        hps: Dict[str, Any],
+        max_len=None,
+        max_nodes=None,
+    ):
         """Envelope Q-Learning implementation, see
         A Generalized Algorithm for Multi-Objective Reinforcement Learning and Policy Adaptation,
         Runzhe Yang, Xingyuan Sun, Karthik Narasimhan,
@@ -173,12 +198,12 @@ class EnvelopeQLearning:
         self.rng = rng
         self.max_len = max_len
         self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps['illegal_action_logreward']
-        self.gamma = hps.get('moql_gamma', 1)
-        self.num_objectives = len(hps['objectives'])
-        self.num_omega_samples = hps.get('moql_num_omega_samples', 32)
-        self.Lambda_decay = hps.get('moql_lambda_decay', 10_000)
-        self.invalid_penalty = hps.get('moql_penalty', -10)
+        self.illegal_action_logreward = hps["illegal_action_logreward"]
+        self.gamma = hps.get("moql_gamma", 1)
+        self.num_objectives = len(hps["objectives"])
+        self.num_omega_samples = hps.get("moql_num_omega_samples", 32)
+        self.Lambda_decay = hps.get("moql_lambda_decay", 10_000)
+        self.invalid_penalty = hps.get("moql_penalty", -10)
         self._num_updates = 0
         assert self.gamma == 1
         self.bootstrap_own_reward = False
@@ -187,8 +212,9 @@ class EnvelopeQLearning:
         self.do_q_prime_correction = False
         self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
 
-    def create_training_data_from_own_samples(self, model: nn.Module, n: int, cond_info: Tensor,
-                                              random_action_prob: float):
+    def create_training_data_from_own_samples(
+        self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
+    ):
         """Generate trajectories by sampling a model
 
         Parameters
@@ -228,7 +254,7 @@ class EnvelopeQLearning:
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
-        return [{'traj': generate_forward_trajectory(i)} for i in graphs]
+        return [{"traj": generate_forward_trajectory(i)} for i in graphs]
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -246,16 +272,16 @@ class EnvelopeQLearning:
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj']]
+        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
         actions = [
-            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj['traj']])
+            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
         ]
         batch = self.ctx.collate(torch_graphs)
-        batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
+        batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.actions = torch.tensor(actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
-        batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
+        batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
 
         # Now we create a duplicate/repeated batch for Q(s,a,w')
         omega_prime = self.task.sample_conditional_information(self.num_omega_samples * batch.num_graphs)
@@ -264,8 +290,8 @@ class EnvelopeQLearning:
         batch_prime = self.ctx.collate(torch_graphs)
         batch_prime.traj_lens = batch.traj_lens.repeat_interleave(self.num_omega_samples)
         batch_prime.actions = torch.tensor(actions)
-        batch_prime.cond_info = omega_prime['encoding']
-        batch_prime.preferences = omega_prime['preferences']
+        batch_prime.cond_info = omega_prime["encoding"]
+        batch_prime.preferences = omega_prime["preferences"]
         batch.batch_prime = batch_prime
         return batch
 
@@ -327,10 +353,15 @@ class EnvelopeQLearning:
             # For use in Q_omega_prime, we repeat every state N_omega times,
             # therefore, we repeat_interleave b so that each repeated state has its own w copy
             (
-                qi * (w[b.repeat_interleave(self.num_omega_samples)].reshape(
-                    (self.num_omega_samples * b.shape[0], 1, num_objectives)))
+                qi
+                * (
+                    w[b.repeat_interleave(self.num_omega_samples)].reshape(
+                        (self.num_omega_samples * b.shape[0], 1, num_objectives)
+                    )
+                )
                 # then we multiply the Q(s, a, w') and w, take the sum on the right axis for the dot
-            ).sum(2) for qi, b in zip(Q_omega_prime, fwd_cat.batch)
+            ).sum(2)
+            for qi, b in zip(Q_omega_prime, fwd_cat.batch)
         ]  # List[shape: (N_omega * num objects, num actions)]
 
         # Now we need to do an argmax, over actions _and_ omegas, of the dot which has shape
@@ -341,9 +372,9 @@ class EnvelopeQLearning:
         # same (and thus the max is over all of the repeats as well).
         # Since the batch slices we will later index to get Q[:, argmax a, argmax omega'] are those
         # of Q_omega_prime, we need to use fwd_cat_prime.
-        argmax = fwd_cat_prime.argmax(x=w_dot_Q,
-                                      batch=[b.repeat_interleave(self.num_omega_samples) for b in fwd_cat.batch],
-                                      dim_size=num_states)
+        argmax = fwd_cat_prime.argmax(
+            x=w_dot_Q, batch=[b.repeat_interleave(self.num_omega_samples) for b in fwd_cat.batch], dim_size=num_states
+        )
         # Now what we want, for each state, is the vector prediction made by Q(s, a, w') for the
         # argmax a,w'. Let's again reuse GraphActionCategorical methods to do the indexing for us.
         # We must again use fwd_cat_prime to use the right slices.
@@ -368,19 +399,19 @@ class EnvelopeQLearning:
         losses = (1 - Lambda) * loss_A + Lambda * loss_B
         self._num_updates += 1
 
-        traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce='sum')
+        traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         loss = losses.mean()
         invalid_mask = 1 - batch.is_valid
         info = {
-            'loss': loss.item(),
-            'loss_A': loss_A.mean(),
-            'loss_B': loss_B.mean(),
-            'offline_loss': traj_losses[:batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            'online_loss': traj_losses[batch.num_offline:].mean() if batch.num_online > 0 else 0,
-            'invalid_trajectories': invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
-            'invalid_losses': (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            "loss": loss.item(),
+            "loss_A": loss_A.mean(),
+            "loss_B": loss_B.mean(),
+            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+            "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
+            "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
         }
 
         if not torch.isfinite(traj_losses).all():
-            raise ValueError('loss is not finite')
+            raise ValueError("loss is not finite")
         return loss, info

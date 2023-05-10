@@ -6,14 +6,14 @@ def create_logger(name="gflownet_logger", loglevel=logging.INFO, logfile=None, s
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
     formatter = logging.Formatter(
-        fmt='%(asctime)s - %(levelname)s - {} - %(message)s'.format(name),
-        datefmt='%d/%m/%Y %H:%M:%S',
+        fmt="%(asctime)s - %(levelname)s - {} - %(message)s".format(name),
+        datefmt="%d/%m/%Y %H:%M:%S",
     )
     logger.propagate = False
 
     handlers = []
     if logfile is not None:
-        handlers.append(logging.FileHandler(logfile, mode='a'))
+        handlers.append(logging.FileHandler(logfile, mode="a"))
     if streamHandle:
         handlers.append(logging.StreamHandler(stream=sys.stdout))
 

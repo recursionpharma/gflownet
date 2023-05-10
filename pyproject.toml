@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.distutils.bdist_wheel]
 universal = "true"
 
 [tool.bandit]
-skips = ["B101"]
+# B101 tests the use of assert
+# B301 and B403 test the use of pickle
+skips = ["B101", "B301", "B403"]
 exclude_dirs = ["tests", ".tox", ".venv"]
 
 [tool.pytest.ini_options]
@@ -51,8 +53,46 @@ name = "gflownet"
 readme = "README.md"
 classifiers = ["Operating System :: OS Independent", "Programming Language :: Python", "Programming Language :: Python :: 3"]
 keywords = ["gflownet"]
-requires-python = ">=3.8"
-dynamic = ["version", "dependencies", "optional-dependencies"]
+requires-python = ">=3.8,<3.10"
+dynamic = ["version"]
+dependencies = [
+    "torch==1.10.2",
+    # These pins are specific on purpose, some of these packages have
+    # unstable APIs since they are fairly new. We could instead pin
+    # them as >= in dev until something breaks?
+    "torch-geometric==2.0.3",
+    "torch-scatter==2.0.9",
+    "torch-sparse==0.6.13",
+    "torch-cluster==1.6.0",
+    "rdkit",
+    "tables",
+    "scipy",
+    "networkx",
+    "tensorboard",
+    "cvxopt",
+    "pyarrow",
+    "botorch==0.6.6",  # pin because of the torch==1.10.2 dependency, botorch>=0.7 requires torch>=1.11
+    # pins to help depencency resolution, because of the above pin
+    "pyro-ppl==1.8.0",
+    "gpytorch==1.8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "bandit[toml]",
+    "black",
+    "isort",
+    "mypy",
+    "pip-compile-multi",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "typeguard",
+    "types-pkg_resources",
+    # Security pin
+    "gitpython>=3.1.30",
+]
 
 [[project.authors]]
 name = "Recursion Pharmaceuticals"

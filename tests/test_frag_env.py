@@ -25,20 +25,21 @@ def build_two_node_states():
     def g2h(g):
         gc = g.to_directed()
         for e in gc.edges:
-            gc.edges[e]['v'] = str(gc.edges[e].get(f'{e[0]}_attach', -1)) + '_' + str(gc.edges[e].get(
-                f'{e[1]}_attach', -1))
-        h = nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(gc, 'v', 'v')
+            gc.edges[e]["v"] = (
+                str(gc.edges[e].get(f"{e[0]}_attach", -1)) + "_" + str(gc.edges[e].get(f"{e[1]}_attach", -1))
+            )
+        h = nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(gc, "v", "v")
         if h not in _graph_cache_buckets:
             _graph_cache_buckets[h] = [g]
-            return h + '_0'
+            return h + "_0"
         else:
             bucket = _graph_cache_buckets[h]
             for i, gp in enumerate(bucket):
                 if nx.algorithms.isomorphism.is_isomorphic(g, gp, lambda a, b: a == b, lambda a, b: a == b):
-                    return h + '_' + str(i)
+                    return h + "_" + str(i)
             # Nothing was isomorphic
             bucket.append(g)
-            return h + '_' + str(len(bucket) - 1)
+            return h + "_" + str(len(bucket) - 1)
 
     mdp_graph = nx.DiGraph()
     mdp_graph.add_node(0)

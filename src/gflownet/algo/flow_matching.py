@@ -8,8 +8,13 @@ import torch_geometric.data as gd
 from torch_scatter import scatter
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.envs.graph_building_env import (Graph, GraphAction, GraphActionType, GraphBuildingEnv,
-                                              GraphBuildingEnvContext)
+from gflownet.envs.graph_building_env import (
+    Graph,
+    GraphAction,
+    GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
+)
 
 
 def relabel(ga: GraphAction, g: Graph):
@@ -31,15 +36,22 @@ def relabel(ga: GraphAction, g: Graph):
 
 
 class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could have a generic GFNAlgorithm class
-    def __init__(self, env: GraphBuildingEnv, ctx: GraphBuildingEnvContext, rng: np.random.RandomState,
-                 hps: Dict[str, Any], max_len=None, max_nodes=None):
+    def __init__(
+        self,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
+        rng: np.random.RandomState,
+        hps: Dict[str, Any],
+        max_len=None,
+        max_nodes=None,
+    ):
         super().__init__(env, ctx, rng, hps, max_len=max_len, max_nodes=max_nodes)
-        self.fm_epsilon = torch.as_tensor(hps.get('fm_epsilon', 1e-38)).log()
+        self.fm_epsilon = torch.as_tensor(hps.get("fm_epsilon", 1e-38)).log()
         # We include the "balanced loss" as a possibility to reproduce results from the FM paper, but
         # in a number of settings the regular loss is more stable.
-        self.fm_balanced_loss = hps.get('fm_balanced_loss', False)
-        self.fm_leaf_coef = hps.get('fm_leaf_coef', 10)
-        self.correct_idempotent = self.correct_idempotent or hps.get('fm_correct_idempotent', False)
+        self.fm_balanced_loss = hps.get("fm_balanced_loss", False)
+        self.fm_leaf_coef = hps.get("fm_leaf_coef", 10)
+        self.correct_idempotent = self.correct_idempotent or hps.get("fm_correct_idempotent", False)
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -59,12 +71,12 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         """
         if not self.correct_idempotent:
             # For every s' (i.e. every state except the first of each trajectory), enumerate parents
-            parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj['traj'][1:]]
+            parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj["traj"][1:]]
             # convert parents to Data
             parent_graphs = [self.ctx.graph_to_Data(pstate) for parent in parents for pact, pstate in parent]
         else:
             # Here we again enumerate parents
-            states = [i[0] for tj in trajs for i in tj['traj'][1:]]
+            states = [i[0] for tj in trajs for i in tj["traj"][1:]]
             base_parents = [[relabel(*i) for i in self.env.parents(i)] for i in states]
             base_parent_graphs = [
                 [self.ctx.graph_to_Data(pstate) for pact, pstate in parent_set] for parent_set in base_parents
@@ -94,20 +106,20 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         parent_actions = [pact for parent in parents for pact, pstate in parent]
         parent_actionidcs = [self.ctx.GraphAction_to_aidx(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)]
         # convert state to Data
-        state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj['traj'][1:]]
+        state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"][1:]]
         terminal_actions = [
-            self.ctx.GraphAction_to_aidx(self.ctx.graph_to_Data(tj['traj'][-1][0]), tj['traj'][-1][1]) for tj in trajs
+            self.ctx.GraphAction_to_aidx(self.ctx.graph_to_Data(tj["traj"][-1][0]), tj["traj"][-1][1]) for tj in trajs
         ]
 
         # Create a batch from [*parents, *states]. This order will make it easier when computing the loss
         batch = self.ctx.collate(parent_graphs + state_graphs)
         batch.num_parents = torch.tensor([len(i) for i in parents])
-        batch.traj_lens = torch.tensor([len(i['traj']) for i in trajs])
+        batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.parent_acts = torch.tensor(parent_actionidcs)
         batch.terminal_acts = torch.tensor(terminal_actions)
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
-        batch.is_valid = torch.tensor([i.get('is_valid', True) for i in trajs]).float()
+        batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
         return batch
 
     def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, num_bootstrap: int = 0):
@@ -127,9 +139,10 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # Compute the index of the first graph of every trajectory via a cumsum of the trajectory
         # lengths. This works because by design the first parent of every trajectory is s0 (i.e. s1
         # only has one parent that is s0)
-        num_parents_per_traj = scatter(batch.num_parents, states_traj_idx, 0, reduce='sum')
+        num_parents_per_traj = scatter(batch.num_parents, states_traj_idx, 0, reduce="sum")
         first_graph_idx = torch.cumsum(
-            torch.cat([torch.zeros_like(num_parents_per_traj[0])[None], num_parents_per_traj]), 0)
+            torch.cat([torch.zeros_like(num_parents_per_traj[0])[None], num_parents_per_traj]), 0
+        )
         # Similarly we want the index of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens - 1, 0) + total_num_parents - 1
 
@@ -141,11 +154,12 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # parent actions. To do so we reuse the log_prob mechanism, but specify that the logprobs
         # tensor is actually just the logits (which we chose to interpret as edge flows F(s,a). We
         # only need the parent's outputs so we specify those batch indices.
-        parent_log_F_sa = cat.log_prob(batch.parent_acts, logprobs=cat.logits,
-                                       batch=torch.arange(total_num_parents, device=dev))
+        parent_log_F_sa = cat.log_prob(
+            batch.parent_acts, logprobs=cat.logits, batch=torch.arange(total_num_parents, device=dev)
+        )
         # The inflows is then simply the sum reduction of exponentiating the log edge flows. The
         # indices are the state index that each parent belongs to.
-        log_inflows = scatter(parent_log_F_sa.exp(), parents_state_idx, 0, reduce='sum').log()
+        log_inflows = scatter(parent_log_F_sa.exp(), parents_state_idx, 0, reduce="sum").log()
         # To compute the outflows we can just logsumexp the log F(s,a) predictions. We do so for the
         # entire batch, which is slightly wasteful (TODO). We only take the last outflows here, and
         # later take the log outflows of s0 to estimate logZ.
@@ -162,15 +176,16 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         if self.fm_balanced_loss:
             loss = intermediate_loss.mean() + terminal_loss.mean() * self.fm_leaf_coef
         else:
-            loss = (intermediate_loss.sum() + terminal_loss.sum()) / (intermediate_loss.shape[0] +
-                                                                      terminal_loss.shape[0])
+            loss = (intermediate_loss.sum() + terminal_loss.sum()) / (
+                intermediate_loss.shape[0] + terminal_loss.shape[0]
+            )
 
         # logZ is simply the outflow of s0, the first graph of each parent set.
         logZ = all_log_outflows[first_graph_idx]
         info = {
-            'intermediate_loss': intermediate_loss.mean().item(),
-            'terminal_loss': terminal_loss.mean().item(),
-            'loss': loss.item(),
-            'logZ': logZ.mean().item(),
+            "intermediate_loss": intermediate_loss.mean().item(),
+            "terminal_loss": terminal_loss.mean().item(),
+            "loss": loss.item(),
+            "logZ": logZ.mean().item(),
         }
         return loss, info
