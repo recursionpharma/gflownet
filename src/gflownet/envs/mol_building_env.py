@@ -355,7 +355,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def is_sane(self, g: Graph) -> bool:
         try:
-            mol = self.graph_to_obj(g)
+            mol = self.graph_to_mol(g)
             assert mol is not None
         except Exception:
             return False
