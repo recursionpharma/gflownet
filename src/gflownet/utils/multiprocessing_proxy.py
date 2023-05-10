@@ -1,6 +1,7 @@
 import pickle
 import queue
 import threading
+import traceback
 
 import torch
 import torch.multiprocessing as mp
@@ -31,7 +32,10 @@ class MPModelPlaceholder:
 
     def decode(self, m):
         if self.pickle_messages:
-            return pickle.loads(m)
+            m = pickle.loads(m)
+        if isinstance(m, Exception):
+            print("Received exception from main process, reraising.")
+            raise m
         return m
 
     # TODO: make a generic method for this based on __getattr__
@@ -117,7 +121,18 @@ class MPModelProxy:
                 f = getattr(self.model, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
-                result = f(*args, **kwargs)
+                try:
+                    # There's no need to compute gradients, since we can't transfer them back to the worker
+                    with torch.no_grad():
+                        result = f(*args, **kwargs)
+                except Exception as e:
+                    result = e
+                    try:
+                        pickle.dumps(e)
+                    except:
+                        result = RuntimeError(
+                            "Exception raised in MPModelProxy, but it cannot be pickled.\n" + traceback.format_exc()
+                        )
                 if isinstance(result, (list, tuple)):
                     msg = [self.to_cpu(i) for i in result]
                     self.out_queues[qi].put(self.encode(msg))
