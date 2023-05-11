@@ -3,7 +3,7 @@ import enum
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -267,12 +267,16 @@ class GraphBuildingEnv:
                 if len(g.edges[edge]) == 0:
                     anchor = edge[0] if edge[1] == i else edge[1]
                     new_g = graph_without_node(g, i)
-                    add_parent(GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]), new_g)
+                    add_parent(
+                        GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]),
+                        new_g,
+                    )
             if len(g.nodes) == 1:
                 # The final node is degree 0, need this special case to remove it
                 # and end up with S0, the empty graph root
                 add_parent(
-                    GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]), graph_without_node(g, i)
+                    GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]),
+                    graph_without_node(g, i),
                 )
             for k in g.nodes[i]:
                 if k == "v":
@@ -517,47 +521,75 @@ class GraphActionCategorical:
             self.masks = [i.to(device) for i in self.masks]
         return self
 
+    def _compute_batchwise_max(
+        self,
+        x: List[torch.Tensor],
+        detach: bool = True,
+        batch: Optional[List[torch.Tensor]] = None,
+        reduce_columns: bool = True,
+    ):
+        """Compute the maximum value of each batch element in `x`
+
+        Parameters
+        ----------
+        x: List[torch.Tensor]
+            A list of tensors of shape `(n, m)` (e.g. representing logits)
+        detach: bool, default=True
+            If true, detach the tensors before computing the max
+        batch: List[torch.Tensor], default=None
+            The batch index of each element in `x`. If None, uses self.batch
+        reduce_columns: bool, default=True
+            If true computes the max over the columns, and returns a tensor of shape `(k,)`
+            If false, only reduces over rows, returns a list of (values, indexes) tuples.
+
+        Returns
+        -------
+        maxl: (values: torch.Tensor, indices: torch.Tensor)
+            A named tuple of tensors of shape `(k,)` where `k` is the number of graphs in the batch, unless
+            reduce_columns is False. In the latter case, returns a list of named tuples that don't have columns reduced.
+        """
+        if detach:
+            x = [i.detach() for i in x]
+        if batch is None:
+            batch = self.batch
+        # First we prefill `out` with the minimum values in case
+        # there are no corresponding logits (this can happen if e.g. a
+        # graph has no edges), we don't want to accidentally take the
+        # max of that type, since we'd get 0.
+        min_val = torch.min(torch.stack([i.min() for i in x if i.numel()]))
+        outs = [torch.zeros(self.num_graphs, i.shape[1], device=self.dev) + min_val for i in x]
+        maxl = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(x, batch, outs)]
+        if reduce_columns:
+            return torch.cat([values for values, indices in maxl], dim=1).max(1)
+        return maxl
+
     def logsoftmax(self):
         """Compute log-probabilities given logits"""
         if self.logprobs is not None:
             return self.logprobs
-        # Use the `subtract by max` trick to avoid precision errors:
-        # compute max
-        maxl = (
-            torch.cat(
-                [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="max") for i, b in zip(self.logits, self.batch)],
-                dim=1,
-            )
-            .max(1)
-            .values.detach()
-        )
+        # Use the `subtract by max` trick to avoid precision errors.
+        maxl = self._compute_batchwise_max(self.logits).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        exp_logits = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(self.logits, self.batch)]
-        # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
+        corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
+        exp_logits = [i.exp().clamp(self._epsilon) for i, b in zip(corr_logits, self.batch)]
+        # sum corrected exponentiated logits, to get log(Z') = log(Z - max) = log(sum(exp(logits - max)))
         logZ = sum(
             [
                 scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
                 for i, b in zip(exp_logits, self.batch)
             ]
         ).log()
-        # log probabilities is log(exp(logit) / Z)
-        self.logprobs = [i.log() - logZ[b, None] for i, b in zip(exp_logits, self.batch)]
+        # log probabilities is log(exp(logit) / Z) = (logit - max) - log(Z')
+        self.logprobs = [i - logZ[b, None] for i, b in zip(corr_logits, self.batch)]
         return self.logprobs
 
     def logsumexp(self, x=None):
         """Reduces `x` (the logits by default) to one scalar per graph"""
         if x is None:
             x = self.logits
-        # Use the `subtract by max` trick to avoid precision errors:
-        # compute max
-        maxl = (
-            torch.cat(
-                [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="max") for i, b in zip(x, self.batch)], dim=1
-            )
-            .max(1)
-            .values.detach()
-        )
+        # Use the `subtract by max` trick to avoid precision errors.
+        maxl = self._compute_batchwise_max(x).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
@@ -591,7 +623,10 @@ class GraphActionCategorical:
         return self.argmax(x=gumbel)
 
     def argmax(
-        self, x: List[torch.Tensor], batch: List[torch.Tensor] = None, dim_size: int = None
+        self,
+        x: List[torch.Tensor],
+        batch: List[torch.Tensor] = None,
+        dim_size: int = None,
     ) -> List[Tuple[int, int, int]]:
         """Takes the argmax, i.e. if x are the logits, returns the most likely action.
 
@@ -612,16 +647,12 @@ class GraphActionCategorical:
         # These logits are 2d (num_obj_of_type, num_actions_of_type),
         # first reduce-max over the batch, which preserves the
         # columns, so we get (minibatch_size, num_actions_of_type).
-        # First we prefill `out` with very negative values in case
-        # there are no corresponding logits (this can happen if e.g. a
-        # graph has no edges), we don't want to accidentally take the
-        # max of that type.
         if batch is None:
             batch = self.batch
         if dim_size is None:
             dim_size = self.num_graphs
-        mnb_max = [torch.zeros(dim_size, i.shape[1], device=self.dev) - 1e6 for i in x]
-        mnb_max = [scatter_max(i, b, dim=0, out=out) for i, b, out in zip(x, batch, mnb_max)]
+        # We don't want to reduce over the columns, since we want to keep the index within each column of the max
+        mnb_max = self._compute_batchwise_max(x, batch=batch, reduce_columns=False)
         # Then over cols, this gets us which col holds the max value,
         # so we get (minibatch_size,)
         col_max = [values.max(1) for values, idx in mnb_max]
