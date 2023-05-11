@@ -239,6 +239,7 @@ class GFNTrainer:
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
         valid_freq = self.hps.get("validate_every", 0)
+        # If checkpoint_every is not specified, checkpoint at every validation epoch
         ckpt_freq = self.hps.get("checkpoint_every", valid_freq)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
