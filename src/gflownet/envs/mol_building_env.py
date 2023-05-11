@@ -29,6 +29,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         expl_H_range=[0, 1],
         allow_explicitly_aromatic=False,
         num_rw_feat=8,
+        max_nodes=None,
+        max_edges=None,
     ):
         """An env context for building molecules atom-by-atom and bond-by-bond.
 
@@ -50,6 +52,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             (default False)
         num_rw_feat: int
             If >0, augments the feature representation with n-step random walk features. (default n=8).
+        max_nodes: int
+            If not None, then the maximum number of nodes in the graph. Corresponding actions are masked. (default None)
+        max_edges: int
+            If not None, then the maximum number of edges in the graph. Corresponding actions are masked. (default None)
         """
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
@@ -61,6 +67,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             "fill_wildcard": [None] + atoms,  # default is, there is nothing
         }
         self.num_rw_feat = num_rw_feat
+        self.max_nodes = max_nodes
+        self.max_edges = max_edges
 
         self.default_wildcard_replacement = "C"
         self.negative_attrs = ["fill_wildcard"]
@@ -198,6 +206,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
         add_node_mask = torch.ones((x.shape[0], self.num_new_node_values))
+        if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
+            add_node_mask *= 0
         explicit_valence = {}
         max_valence = {}
         set_node_attr_mask = torch.ones((x.shape[0], self.num_node_attr_logits))
@@ -257,12 +267,17 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         edge_index = (
             torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
         )
-        gc = nx.complement(g)
 
         def is_ok_non_edge(e):
             return all([explicit_valence[i] + 1 <= max_valence[i] for i in e])
 
-        non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape((2, -1))
+        if self.max_edges is not None and len(g.edges) >= self.max_edges:
+            non_edge_index = torch.zeros((2, 0), dtype=torch.long)
+        else:
+            gc = nx.complement(g)
+            non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape(
+                (2, -1)
+            )
         data = gd.Data(
             x,
             edge_index,
@@ -333,12 +348,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             mp.AddBond(e[0], e[1], d.get("type", BondType.SINGLE))
         mp.CommitBatchEdit()
         Chem.SanitizeMol(mp)
-        return mp
+        # Not sure why, but this seems to find errors that SanitizeMol doesn't, and it saves us trouble downstream,
+        # since MolFromSmiles returns None if the SMILES encoding of the molecule is invalid, which seemingly happens
+        # occasionally (although very rarely) even if RDKit is able to create a SMILES string from `mp`.
+        return Chem.MolFromSmiles(Chem.MolToSmiles(mp))
 
     def is_sane(self, g: Graph) -> bool:
         try:
             mol = self.graph_to_mol(g)
-            assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
         except Exception:
             return False
         if mol is None:
