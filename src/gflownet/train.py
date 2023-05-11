@@ -238,6 +238,9 @@ class GFNTrainer:
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
+        valid_freq = self.hps.get("validate_every", 0)
+        # If checkpoint_every is not specified, checkpoint at every validation epoch
+        ckpt_freq = self.hps.get("checkpoint_every", valid_freq)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
         callbacks = self.build_callbacks()
@@ -251,7 +254,7 @@ class GFNTrainer:
             if self.verbose:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
 
-            if it % self.hps["validate_every"] == 0:
+            if valid_freq > 0 and it % valid_freq == 0:
                 for batch in valid_dl:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
@@ -261,6 +264,7 @@ class GFNTrainer:
                     if hasattr(c, "on_validation_end"):
                         c.on_validation_end(end_metrics)
                 self.log(end_metrics, it, "valid_end")
+            if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
         self._save_state(self.hps["num_training_steps"])
 
