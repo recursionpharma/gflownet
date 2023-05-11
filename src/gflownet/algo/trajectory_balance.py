@@ -149,7 +149,15 @@ class TrajectoryBalance:
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
-        return [{"traj": generate_forward_trajectory(i)} for i in graphs]
+        trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
+        for traj in trajs:
+            n_back = [
+                self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
+                for gp, _ in traj["traj"][1:]
+            ] + [1]
+            traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(self.ctx.device)
+            traj["result"] = traj["traj"][-1][0]
+        return trajs
 
     def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction):
         """Returns the list of idempotent actions for a given transition.
