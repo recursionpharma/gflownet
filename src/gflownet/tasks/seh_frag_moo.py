@@ -272,7 +272,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         fmt_hps = "\n".join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
         with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as fd:
-            json.dump(self.hps, fd, sort_keys=True, ident=4)
+            json.dump(self.hps, fd, sort_keys=True, indent=4)
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
