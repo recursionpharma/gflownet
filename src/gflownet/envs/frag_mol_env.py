@@ -66,7 +66,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # corresponds to setting the stem atom of fragment u used to attach between u and v to be i
         # (named f'{u}_attach') and vice versa for the second half and v, u.
         # Note to self: this choice results in a special case in generate_forward_trajectory for these
-        # edge attributes. See PR#xx for details.
+        # edge attributes. See PR#83 for details.
         self.num_edge_attr_logits = most_stems * 2
         # There are thus up to 2 edge attributes, the stem of u and the stem of v.
         self.num_edge_attrs = 2
