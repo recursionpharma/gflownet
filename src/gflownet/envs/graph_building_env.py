@@ -348,14 +348,26 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
         if len(i) > 1:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
             if e in gn.edges:
-                # i exists in the new graph, that means some of its attributes need to be added
-                attrs = [j for j in g.edges[i] if j not in gn.edges[e]]
+                # i exists in the new graph, that means some of its attributes need to be added.
+                #
+                # This remap is a special case for the fragment environment, due to the (poor) design
+                # choice of treating directed edges as undirected edges. Until we have routines for
+                # directed graphs, this may need to stay.
+                def possibly_remap(attr):
+                    if attr == f"{i[0]}_attach":
+                        return f"{e[0]}_attach"
+                    elif attr == f"{i[1]}_attach":
+                        return f"{e[1]}_attach"
+                    return attr
+
+                attrs = [j for j in g.edges[i] if possibly_remap(j) not in gn.edges[e]]
                 if len(attrs) == 0:
                     continue  # If nodes are in cycles edges leading to them get stack multiple times, disregard
-                attr = attrs[np.random.randint(len(attrs))]
-                gn.edges[e][attr] = g.edges[i][attr]
+                iattr = attrs[np.random.randint(len(attrs))]
+                eattr = possibly_remap(iattr)
+                gn.edges[e][eattr] = g.edges[i][iattr]
                 act = GraphAction(
-                    GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=attr, value=g.edges[i][attr]
+                    GraphActionType.SetEdgeAttr, source=e[0], target=e[1], attr=eattr, value=g.edges[i][iattr]
                 )
             else:
                 # i doesn't exist, add the edge
