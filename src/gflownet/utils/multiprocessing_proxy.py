@@ -127,12 +127,11 @@ class MPModelProxy:
                         result = f(*args, **kwargs)
                 except Exception as e:
                     result = e
+                    exc_str = traceback.format_exc()
                     try:
                         pickle.dumps(e)
-                    except:
-                        result = RuntimeError(
-                            "Exception raised in MPModelProxy, but it cannot be pickled.\n" + traceback.format_exc()
-                        )
+                    except Exception:
+                        result = RuntimeError("Exception raised in MPModelProxy, but it cannot be pickled.\n" + exc_str)
                 if isinstance(result, (list, tuple)):
                     msg = [self.to_cpu(i) for i in result]
                     self.out_queues[qi].put(self.encode(msg))
