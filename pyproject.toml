@@ -71,6 +71,7 @@ dependencies = [
     "tensorboard",
     "cvxopt",
     "pyarrow",
+    "GitPython",
     "botorch==0.6.6",  # pin because of the torch==1.10.2 dependency, botorch>=0.7 requires torch>=1.11
     # pins to help depencency resolution, because of the above pin
     "pyro-ppl==1.8.0",
