@@ -4,26 +4,23 @@ import os
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
+import scipy.stats as stats
+import torch
+import torch.nn as nn
+import torch_geometric.data as gd
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from ruamel.yaml import YAML
-import scipy.stats as stats
-import torch
 from torch import Tensor
-import torch.nn as nn
 from torch.utils.data import Dataset
-import torch_geometric.data as gd
 
+import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models.graph_transformer import GraphTransformerGFN
-import gflownet.models.mxmnet as mxmnet
-from gflownet.train import FlatRewards
-from gflownet.train import GFNTask
-from gflownet.train import GFNTrainer
-from gflownet.train import RewardScalar
+from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
 
 

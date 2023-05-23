@@ -1,13 +1,13 @@
-from collections import defaultdict
 import pathlib
 import queue
 import threading
+from collections import defaultdict
 from typing import List
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.multiprocessing as mp
+from torch import Tensor
 
 from gflownet.utils import metrics
 

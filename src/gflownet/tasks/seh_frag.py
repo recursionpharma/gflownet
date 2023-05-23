@@ -9,14 +9,14 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 
 import git
 import numpy as np
-from rdkit import RDLogger
-from rdkit.Chem.rdchem import Mol as RDMol
 import scipy.stats as stats
 import torch
-from torch import Tensor
 import torch.nn as nn
-from torch.utils.data import Dataset
 import torch_geometric.data as gd
+from rdkit import RDLogger
+from rdkit.Chem.rdchem import Mol as RDMol
+from torch import Tensor
+from torch.utils.data import Dataset
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
@@ -24,10 +24,7 @@ from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import FlatRewards
-from gflownet.train import GFNTask
-from gflownet.train import GFNTrainer
-from gflownet.train import RewardScalar
+from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
 
 

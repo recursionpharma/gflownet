@@ -3,8 +3,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from gflownet.utils.metrics import compute_focus_coef
-from gflownet.utils.metrics import get_limits_of_hypercube
+from gflownet.utils.metrics import compute_focus_coef, get_limits_of_hypercube
 
 
 class FocusModel:
