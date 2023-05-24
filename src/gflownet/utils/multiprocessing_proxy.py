@@ -8,8 +8,8 @@ import torch.multiprocessing as mp
 
 class MPObjectPlaceholder:
     """This class can be used for example as a model or dataset placeholder
-    in a worker process, and translates calls to the object-placeholder to
-    queries to the main process to execute on the real object."""
+    in a worker process, and translates calls to the object-placeholder into
+    queries for the main process to execute on the real object."""
 
     def __init__(self, in_queues, out_queues, pickle_messages=False):
         self.qs = in_queues, out_queues

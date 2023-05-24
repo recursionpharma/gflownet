@@ -238,8 +238,6 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.num_workers,
             persistent_workers=self.num_workers > 0,
-            # The 2 here is an odd quirk of torch 1.10, it is fixed and
-            # replaced by None in torch 2.
             prefetch_factor=1 if self.num_workers else 2,
         )
 
@@ -287,18 +285,12 @@ class GFNTrainer:
         for it, batch in zip(range(start, 1 + self.hps["num_training_steps"]), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
-            mem_usage = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
                 logger.info(
-                    f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup} "
-                    f"(main process memory usage: {mem_usage:.2f} GB)"
+                    f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
-            info["mem_usage"] = mem_usage
-            info["buffer_len"] = len(self.replay_buffer) if self.replay_buffer is not None else -1
-            info["num_workers"] = self.num_workers
-            info["elapsed_time"] = time.time() - start_time
             self.log(info, it, "train")
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))

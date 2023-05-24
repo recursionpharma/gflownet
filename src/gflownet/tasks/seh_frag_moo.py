@@ -197,7 +197,7 @@ class SEHMOOTask(SEHTask):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
 
         else:
-            flat_r = []
+            flat_r: List[Tensor] = []
             if "seh" in self.objectives:
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
@@ -251,15 +251,15 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_algo(self):
         hps = self.hps
         if hps["algo"] == "TB":
-            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
         elif hps["algo"] == "SQL":
-            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
         elif hps["algo"] == "A2C":
-            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
         elif hps["algo"] == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
         elif hps["algo"] == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=9)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
 
         if hps["focus_type"] is not None and "learned" in hps["focus_type"]:
             if hps["focus_type"] == "learned-tabular":
@@ -302,7 +302,12 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 num_objectives=len(self.hps["objectives"]),
             )
         else:
-            model = GraphTransformerGFN(self.ctx, num_emb=self.hps["num_emb"], num_layers=self.hps["num_layers"])
+            model = GraphTransformerGFN(
+                self.ctx,
+                num_emb=self.hps["num_emb"],
+                num_layers=self.hps["num_layers"],
+                do_bck=self.hps["tb_p_b_is_parameterized"],
+            )
 
         if self.hps["algo"] in ["A2C", "MOQL"]:
             model.do_mask = False
@@ -310,7 +315,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup_env_context(self):
         n_cond = self.hps["num_thermometer_dim"] + 2 * len(self.hps["objectives"])  # 1 for prefs and 1 for focus region
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=n_cond)
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=n_cond)
 
     def setup(self):
         super().setup()
@@ -324,7 +329,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 focus_cosim=self.hps["focus_cosim"],
             )
         )
-
         # instantiate preference and focus conditioning vectors for validation
 
         n_obj = len(self.hps["objectives"])
@@ -456,9 +460,9 @@ def main():
         "log_dir": "./logs/debug_run",
         "overwrite_existing_exp": True,
         "seed": 0,
-        "global_batch_size": 8,
-        "num_training_steps": 4,
-        "num_final_gen_steps": 3,
+        "global_batch_size": 64,
+        "num_training_steps": 20_000,
+        "num_final_gen_steps": 500,
         "validate_every": 10,
         "num_layers": 2,
         "num_emb": 256,
@@ -479,7 +483,7 @@ def main():
         "focus_cosim": 0.98,
         "focus_limit_coef": 1e-1,
         "n_valid": 15,
-        "n_valid_repeats": 8,
+        "n_valid_repeats": 128,
         "use_replay_buffer": True,
         "replay_buffer_warmup": 0,
         "hindsight_ratio": 0.3,
@@ -500,8 +504,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Warning as e:
-        print(e)
-        exit(1)
+    main()
