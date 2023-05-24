@@ -284,8 +284,6 @@ werkzeug==2.2.3
     # via tensorboard
 wheel==0.40.0
     # via
-    #   nvidia-cublas-cu11
-    #   nvidia-cuda-runtime-cu11
     #   pip-tools
     #   tensorboard
 yacs==0.1.8

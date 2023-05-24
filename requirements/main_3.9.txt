@@ -181,8 +181,6 @@ werkzeug==2.2.3
     # via tensorboard
 wheel==0.38.4
     # via
-    #   nvidia-cublas-cu11
-    #   nvidia-cuda-runtime-cu11
     #   tensorboard
 yacs==0.1.8
     # via torch-geometric
