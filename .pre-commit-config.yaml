@@ -16,7 +16,7 @@ repos:
       - id: check-executables-have-shebangs # Ensures that (non-binary) executables have a shebang.
       - id: check-json # This hook checks json files for parseable syntax.
       - id: check-shebang-scripts-are-executable # Ensures that (non-binary) files with a shebang are executable.
-      - id: pretty-format-json # This hook sets a standard for formatting JSON files.
+# Seems unnecessary:      - id: pretty-format-json # This hook sets a standard for formatting JSON files.
       - id: check-merge-conflict # Check for files that contain merge conflict strings.
       - id: check-symlinks # Checks for symlinks which do not point to anything.
       - id: check-toml # This hook checks toml files for parseable syntax.
