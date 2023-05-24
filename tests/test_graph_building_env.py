@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional
 from torch_geometric.data import Batch, Data
 
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
@@ -48,6 +49,20 @@ def test_logsoftmax():
     assert torch.isclose(sum([i.exp().sum() for i in ls]), torch.tensor(3.0))
 
 
+def test_logsoftmax_grad():
+    # Purposefully large values to test extremal behaviors
+    logits = torch.tensor([[100, 101, -102, 95, 10, 20, 72]]).float()
+    logits.requires_grad_(True)
+    batch = Batch.from_data_list([Data(x=torch.ones((1, 10)), y=torch.ones((2, 6)))], follow_batch=["y"])
+    cat = GraphActionCategorical(batch, [logits[:, :3], logits[:, 3:].reshape(2, 2)], [None, "y"], [None, None])
+    cat._epsilon = 0
+    gac_softmax = cat.logsoftmax()
+    torch_softmax = torch.nn.functional.log_softmax(logits, dim=1)
+    (grad_gac,) = torch.autograd.grad(gac_softmax[0].sum() + gac_softmax[1].sum(), logits, retain_graph=True)
+    (grad_torch,) = torch.autograd.grad(torch_softmax.sum(), logits)
+    assert torch.isclose(grad_gac, grad_torch).all()
+
+
 def test_logsumexp():
     cat = make_test_cat()
     totals = torch.tensor(
@@ -59,6 +74,18 @@ def test_logsumexp():
         ]
     )
     assert torch.isclose(cat.logsumexp(), totals).all()
+
+
+def test_logsumexp_grad():
+    # Purposefully large values to test extremal behaviors
+    logits = torch.tensor([[100, 101, -102, 95, 10, 20, 72]]).float()
+    logits.requires_grad_(True)
+    batch = Batch.from_data_list([Data(x=torch.ones((1, 10)), y=torch.ones((2, 6)))], follow_batch=["y"])
+    cat = GraphActionCategorical(batch, [logits[:, :3], logits[:, 3:].reshape(2, 2)], [None, "y"], [None, None])
+    cat._epsilon = 0
+    (grad_gac,) = torch.autograd.grad(cat.logsumexp(), logits, retain_graph=True)
+    (grad_torch,) = torch.autograd.grad(torch.logsumexp(logits, dim=1), logits)
+    assert torch.isclose(grad_gac, grad_torch).all()
 
 
 def test_sample():

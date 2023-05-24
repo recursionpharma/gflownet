@@ -144,6 +144,13 @@ def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = Fals
     cuda calls by forwarding data through the model, or a replay buffer
     such that the new data is pushed in from the worker processes but only the
     main process has to hold the full buffer in memory.
+                    self.out_queues[qi].put(self.encode(msg))
+                elif isinstance(result, dict):
+                    msg = {k: self.to_cpu(i) for k, i in result.items()}
+                    self.out_queues[qi].put(self.encode(msg))
+                else:
+                    msg = self.to_cpu(result)
+                    self.out_queues[qi].put(self.encode(msg))
 
     Parameters
     ----------

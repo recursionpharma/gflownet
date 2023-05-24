@@ -173,7 +173,7 @@ class SamplingIterator(IterableDataset):
                 num_online = num_offline
                 num_offline = 0
                 cond_info = self.task.encode_conditional_information(
-                    cond_info=torch.stack([self.data[i] for i in idcs])
+                    steer_info=torch.stack([self.data[i] for i in idcs])
                 )
                 trajs, flat_rewards = [], []
 

@@ -28,6 +28,7 @@ from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.transforms import thermometer
 
 
 class SEHMOOTask(SEHTask):
@@ -47,6 +48,7 @@ class SEHMOOTask(SEHTask):
         temperature_sample_dist: str,
         temperature_parameters: Tuple[float, float],
         num_thermometer_dim: int,
+        use_steer_thermometer: bool = False,
         preference_type: str = None,
         focus_type: Union[list, str] = None,
         focus_cosim: float = 0.0,
@@ -67,6 +69,7 @@ class SEHMOOTask(SEHTask):
         self.temperature_sample_dist = temperature_sample_dist
         self.temperature_dist_params = temperature_parameters
         self.num_thermometer_dim = num_thermometer_dim
+        self.use_steer_thermometer = use_steer_thermometer
         self.preference_type = preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
@@ -128,23 +131,43 @@ class SEHMOOTask(SEHTask):
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
 
-        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences, focus_dir], 1)
+        preferences_enc = (
+            thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+            if self.use_steer_thermometer
+            else preferences
+        )
+        focus_enc = (
+            thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+            if self.use_steer_thermometer
+            else focus_dir
+        )
+
+        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences_enc, focus_enc], 1)
         cond_info["preferences"] = preferences
         cond_info["focus_dir"] = focus_dir
         return cond_info
 
-    def encode_conditional_information(self, cond_info: Tensor) -> Dict[str, Tensor]:
+    def encode_conditional_information(self, steer_info: Tensor) -> Dict[str, Tensor]:
+        n = len(steer_info)
         if self.temperature_sample_dist == "constant":
-            beta = torch.ones(len(cond_info)) * self.temperature_dist_params
-            beta_enc = torch.zeros((len(cond_info), self.num_thermometer_dim))
+            beta = torch.ones(n) * self.temperature_dist_params
+            beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
-            beta = torch.ones(len(cond_info)) * self.temperature_dist_params[-1]
-            beta_enc = torch.ones((len(cond_info), self.num_thermometer_dim))
+            beta = torch.ones(n) * self.temperature_dist_params[-1]
+            beta_enc = torch.ones((n, self.num_thermometer_dim))
+
         assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
 
-        preferences = cond_info[:, : len(self.objectives)].float()
-        focus_dir = cond_info[:, len(self.objectives) :].float()
-        encoding = torch.cat([beta_enc, cond_info], 1).float()
+        preferences = steer_info[:, : len(self.objectives)].float()
+        focus_dir = steer_info[:, len(self.objectives) :].float()
+        if self.use_steer_thermometer:
+            encoding = torch.cat([
+                beta_enc, 
+                thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1),
+                thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1),
+                ], 1)
+        else:
+            encoding = torch.cat([beta_enc, steer_info], 1).float()
 
         return {
             "beta": beta,
@@ -246,6 +269,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             "hindsight_ratio": 0.0,
             "focus_model_training_limits": None,
             "focus_model_state_space_res": None,
+            "use_steer_thermometer": False,
         }
 
     def setup_algo(self):
@@ -281,6 +305,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             temperature_sample_dist=self.hps["temperature_sample_dist"],
             temperature_parameters=self.hps["temperature_dist_params"],
             num_thermometer_dim=self.hps["num_thermometer_dim"],
+            use_steer_thermometer=self.hps["use_steer_thermometer"],
             preference_type=self.hps["preference_type"],
             focus_type=self.hps["focus_type"],
             focus_cosim=self.hps["focus_cosim"],
@@ -314,8 +339,11 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.model = model
 
     def setup_env_context(self):
-        n_cond = self.hps["num_thermometer_dim"] + 2 * len(self.hps["objectives"])  # 1 for prefs and 1 for focus region
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=n_cond)
+        if self.hps.get("use_steer_thermometer", False):
+            ncd = self.hps["num_thermometer_dim"] * (1 + 2 * len(self.hps["objectives"]))
+        else:
+            ncd = self.hps["num_thermometer_dim"] + 2 * len(self.hps["objectives"])  # 1 for prefs and 1 for focus region
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=ncd)
 
     def setup(self):
         super().setup()
