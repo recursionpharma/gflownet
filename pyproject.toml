@@ -61,9 +61,9 @@ dependencies = [
     # unstable APIs since they are fairly new. We could instead pin
     # them as >= in dev until something breaks?
     "torch-geometric==2.0.3",
-    "torch-scatter==2.1.1",
-    "torch-sparse==0.6.17",
-    "torch-cluster==1.6.0",
+    "torch-scatter",
+    "torch-sparse",
+    "torch-cluster",
     "rdkit",
     "tables",
     "scipy",
