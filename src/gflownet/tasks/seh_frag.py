@@ -66,7 +66,7 @@ class SEHTask(GFNTask):
         model, self.device = self._wrap_model(model, send_to_device=True)
         return {"seh": model}
 
-    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         beta = None
         if self.temperature_sample_dist == "constant":
             assert type(self.temperature_dist_params) is float

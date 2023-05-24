@@ -95,7 +95,7 @@ class SEHMOOTask(SEHTask):
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        cond_info = super().sample_conditional_information(n)
+        cond_info = super().sample_conditional_information(n, train_it)
 
         if self.preference_type is None:
             preferences = torch.ones((n, len(self.objectives)))
@@ -161,11 +161,14 @@ class SEHMOOTask(SEHTask):
         preferences = steer_info[:, : len(self.objectives)].float()
         focus_dir = steer_info[:, len(self.objectives) :].float()
         if self.use_steer_thermometer:
-            encoding = torch.cat([
-                beta_enc, 
-                thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1),
-                thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1),
-                ], 1)
+            encoding = torch.cat(
+                [
+                    beta_enc,
+                    thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1),
+                    thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1),
+                ],
+                1,
+            )
         else:
             encoding = torch.cat([beta_enc, steer_info], 1).float()
 
@@ -342,7 +345,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if self.hps.get("use_steer_thermometer", False):
             ncd = self.hps["num_thermometer_dim"] * (1 + 2 * len(self.hps["objectives"]))
         else:
-            ncd = self.hps["num_thermometer_dim"] + 2 * len(self.hps["objectives"])  # 1 for prefs and 1 for focus region
+            ncd = self.hps["num_thermometer_dim"] + 2 * len(
+                self.hps["objectives"]
+            )  # 1 for prefs and 1 for focus region
         self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=ncd)
 
     def setup(self):

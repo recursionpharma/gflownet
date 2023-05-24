@@ -1,9 +1,7 @@
 import os
 import pathlib
-import time
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
-import psutil
 import torch
 import torch.nn as nn
 import torch.utils.tensorboard
@@ -284,7 +282,6 @@ class GFNTrainer:
         callbacks = self.build_callbacks()
         start = self.hps.get("start_at_step", 0) + 1
         logger.info("Starting training")
-        start_time = time.time()
         for it, batch in zip(range(start, 1 + self.hps["num_training_steps"]), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
@@ -320,7 +317,7 @@ class GFNTrainer:
                 cycle(final_dl),
             ):
                 pass
-            logger.info(f"Final generation steps completed.")
+            logger.info("Final generation steps completed.")
 
     def _save_state(self, it):
         torch.save(
