@@ -68,6 +68,16 @@ numpy==1.24.1
     #   tables
     #   tensorboard
     #   torch-geometric
+nvidia-cublas-cu11==11.10.3.66
+    # via
+    #   nvidia-cudnn-cu11
+    #   torch
+nvidia-cuda-nvrtc-cu11==11.7.99
+    # via torch
+nvidia-cuda-runtime-cu11==11.7.99
+    # via torch
+nvidia-cudnn-cu11==8.5.0.96
+    # via torch
 oauthlib==3.2.2
     # via requests-oauthlib
 opt-einsum==3.3.0
@@ -149,7 +159,7 @@ tensorboard-plugin-wit==1.8.1
     # via tensorboard
 threadpoolctl==3.1.0
     # via scikit-learn
-torch==1.10.2
+torch==1.13.1
     # via
     #   botorch
     #   gflownet (pyproject.toml)
@@ -159,9 +169,9 @@ torch-cluster==1.6.0
     # via gflownet (pyproject.toml)
 torch-geometric==2.0.3
     # via gflownet (pyproject.toml)
-torch-scatter==2.0.9
+torch-scatter==2.1.1
     # via gflownet (pyproject.toml)
-torch-sparse==0.6.13
+torch-sparse==0.6.17
     # via gflownet (pyproject.toml)
 tqdm==4.64.1
     # via
@@ -174,7 +184,10 @@ urllib3==1.26.14
 werkzeug==2.2.3
     # via tensorboard
 wheel==0.38.4
-    # via tensorboard
+    # via
+    #   nvidia-cublas-cu11
+    #   nvidia-cuda-runtime-cu11
+    #   tensorboard
 yacs==0.1.8
     # via torch-geometric
 zipp==3.12.0
