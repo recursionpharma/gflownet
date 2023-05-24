@@ -94,6 +94,16 @@ class SEHMOOTask(SEHTask):
         model, self.device = self._wrap_model(model, send_to_device=True)
         return {"seh": model}
 
+    def get_steer_encodings(self, preferences, focus_dirs):
+        n = len(preferences)
+        if self.use_steer_thermometer:
+            pref_enc = thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+            focus_enc = thermometer(focus_dirs, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+        else:
+            pref_enc = preferences
+            focus_enc = focus_dirs
+        return pref_enc, focus_enc
+
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
 
@@ -131,17 +141,7 @@ class SEHMOOTask(SEHTask):
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
 
-        preferences_enc = (
-            thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
-            if self.use_steer_thermometer
-            else preferences
-        )
-        focus_enc = (
-            thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1)
-            if self.use_steer_thermometer
-            else focus_dir
-        )
-
+        preferences_enc, focus_enc = self.get_steer_encodings(preferences, focus_dir)
         cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences_enc, focus_enc], 1)
         cond_info["preferences"] = preferences
         cond_info["focus_dir"] = focus_dir
@@ -160,17 +160,9 @@ class SEHMOOTask(SEHTask):
 
         preferences = steer_info[:, : len(self.objectives)].float()
         focus_dir = steer_info[:, len(self.objectives) :].float()
-        if self.use_steer_thermometer:
-            encoding = torch.cat(
-                [
-                    beta_enc,
-                    thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1),
-                    thermometer(focus_dir, self.num_thermometer_dim, 0, 1).reshape(n, -1),
-                ],
-                1,
-            )
-        else:
-            encoding = torch.cat([beta_enc, steer_info], 1).float()
+
+        preferences_enc, focus_enc = self.get_steer_encodings(preferences, focus_dir)
+        encoding = torch.cat([beta_enc, preferences_enc, focus_enc], 1).float()
 
         return {
             "beta": beta,
@@ -188,11 +180,15 @@ class SEHMOOTask(SEHTask):
         _, in_focus_mask = metrics.compute_focus_coef(flat_rewards, cond_info["focus_dir"], self.focus_cosim)
         out_focus_mask = torch.logical_not(in_focus_mask)
         hindsight_idxs = hindsight_idxs[out_focus_mask[hindsight_idxs]]
+
         # relabels the focus_dirs and log_rewards
         cond_info["focus_dir"][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
+
+        preferences_enc, focus_enc = self.get_steer_encodings(cond_info["preferences"], cond_info["focus_dir"])
         cond_info["encoding"] = torch.cat(
-            [cond_info["encoding"][:, : self.num_thermometer_dim + len(self.objectives)], cond_info["focus_dir"]], 1
+            [cond_info["encoding"][:, : self.num_thermometer_dim], preferences_enc, focus_enc], 1
         )
+
         log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
         return cond_info, log_rewards
 
@@ -511,6 +507,7 @@ def main():
         "temperature_sample_dist": "constant",
         "temperature_dist_params": 60.0,
         "num_thermometer_dim": 32,
+        "use_steer_thermometer": False,
         "preference_type": None,
         "focus_type": "learned-tabular",
         "focus_cosim": 0.98,
