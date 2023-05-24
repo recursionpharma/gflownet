@@ -115,6 +115,16 @@ numpy==1.24.2
     #   tables
     #   tensorboard
     #   torch-geometric
+nvidia-cublas-cu11==11.10.3.66
+    # via
+    #   nvidia-cudnn-cu11
+    #   torch
+nvidia-cuda-nvrtc-cu11==11.7.99
+    # via torch
+nvidia-cuda-runtime-cu11==11.7.99
+    # via torch
+nvidia-cudnn-cu11==8.5.0.96
+    # via torch
 oauthlib==3.2.2
     # via requests-oauthlib
 opt-einsum==3.3.0

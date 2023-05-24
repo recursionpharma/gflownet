@@ -14,6 +14,10 @@ cvxopt==1.3.0
     # via gflownet (pyproject.toml)
 cython==0.29.33
     # via tables
+gitdb==4.0.10
+    # via gitpython
+gitpython==3.1.31
+    # via gflownet (pyproject.toml)
 google-auth==2.16.0
     # via
     #   google-auth-oauthlib
@@ -68,6 +72,16 @@ numpy==1.24.1
     #   tables
     #   tensorboard
     #   torch-geometric
+nvidia-cublas-cu11==11.10.3.66
+    # via
+    #   nvidia-cudnn-cu11
+    #   torch
+nvidia-cuda-nvrtc-cu11==11.7.99
+    # via torch
+nvidia-cuda-runtime-cu11==11.7.99
+    # via torch
+nvidia-cudnn-cu11==8.5.0.96
+    # via torch
 oauthlib==3.2.2
     # via requests-oauthlib
 opt-einsum==3.3.0
@@ -139,6 +153,8 @@ six==1.16.0
     #   isodate
     #   multipledispatch
     #   python-dateutil
+smmap==5.0.0
+    # via gitdb
 tables==3.8.0
     # via gflownet (pyproject.toml)
 tensorboard==2.11.2
