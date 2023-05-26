@@ -18,6 +18,7 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
@@ -147,10 +148,18 @@ class SEHFragTrainer(GFNTrainer):
             "replay_buffer_size": 10000,
             "replay_buffer_warmup": 10000,
             "mp_pickle_messages": False,
+            "algo": "TB",
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
+        algo = self.hps.get("algo", "TB")
+        if algo == "TB":
+            algo = TrajectoryBalance
+        elif algo == "FM":
+            algo = FlowMatching
+        else:
+            raise ValueError(algo)
+        self.algo = algo(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
 
     def setup_task(self):
         self.task = SEHTask(
