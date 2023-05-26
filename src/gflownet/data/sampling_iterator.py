@@ -256,8 +256,6 @@ class SamplingIterator(IterableDataset):
                 # If we have a replay buffer, we push the online trajectories in it
                 # and resample immediately such that the "online" data in the batch
                 # comes from a more stable distribution (try to avoid forgetting)
-                # Important: note that the 'online' metrics now will be describing the data
-                # in the replay buffer and not purely the data from the last generated batch
 
                 # cond_info is a dict, so we need to convert it to a list of dicts
                 cond_info = [{k: v[i] for k, v in cond_info.items()} for i in range(num_offline + num_online)]
