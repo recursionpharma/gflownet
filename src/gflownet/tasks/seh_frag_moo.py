@@ -148,6 +148,15 @@ class SEHMOOTask(SEHTask):
         return cond_info
 
     def encode_conditional_information(self, steer_info: Tensor) -> Dict[str, Tensor]:
+        """
+        Encode conditional information at validation-time
+        We use the maximum temperature beta for inference
+        Args:
+            steer_info: Tensor of shape (Batch, 2 * n_objectives) containing the preferences and focus_dirs
+            in that order
+        Returns:
+            Dict[str, Tensor]: Dictionary containing the encoded conditional information
+        """
         n = len(steer_info)
         if self.temperature_sample_dist == "constant":
             beta = torch.ones(n) * self.temperature_dist_params
@@ -158,6 +167,7 @@ class SEHMOOTask(SEHTask):
 
         assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
 
+        # TODO: positional assumption here, should have something cleaner
         preferences = steer_info[:, : len(self.objectives)].float()
         focus_dir = steer_info[:, len(self.objectives) :].float()
 
@@ -430,7 +440,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             n_obj,
         ), f"Invalid shape for valid_preferences, {valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
 
-        # combine preferences and focus directions (fixed focus cosim)
+        # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
+        # TODO: this relies on positional assumptions, should have something cleaner
         valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
 
         self._top_k_hook = TopKHook(10, self.hps["n_valid_repeats"], len(valid_cond_vector))
