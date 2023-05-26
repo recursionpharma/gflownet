@@ -300,7 +300,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                     device=self.device,
                     n_objectives=len(hps["objectives"]),
                     state_space_res=hps["focus_model_state_space_res"],
-                    focus_cosim=hps["focus_cosim"],
                 )
             else:
                 raise NotImplementedError("Unknown focus model type {self.focus_type}")

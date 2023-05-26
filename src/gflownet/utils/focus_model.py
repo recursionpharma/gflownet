@@ -21,11 +21,18 @@ class FocusModel:
         been sampled should be given the maximum likelihood.
     """
 
-    def __init__(self, device, n_objectives: int, state_space_res: int, focus_cosim: float) -> None:
+    def __init__(self, device: torch.device, n_objectives: int, state_space_res: int) -> None:
+        """
+        args:
+            device: torch device
+            n_objectives: number of objectives
+            state_space_res: resolution of the state space discretisation. The number of focus directions to consider
+                grows within O(state_space_res ** n_objectives) and depends on the amount of filtering we apply
+                (e.g. valid focus-directions should sum to 1 [dirichlet], should contain a 1 [limits], etc.)
+        """
         self.device = device
         self.n_objectives = n_objectives
         self.state_space_res = state_space_res
-        self.focus_cosim = focus_cosim
 
         self.feasible_flow = 1.0
         self.infeasible_flow = 0.1
@@ -33,7 +40,7 @@ class FocusModel:
     def update_belief(self, focus_dirs: torch.Tensor, flat_rewards: torch.Tensor):
         raise NotImplementedError
 
-    def sample_focus_directions(self, n):
+    def sample_focus_directions(self, n: int):
         raise NotImplementedError
 
 
@@ -46,8 +53,8 @@ class TabularFocusModel(FocusModel):
     If a focus direction has not been sampled yet it obtains the maximum likelihood of one.
     """
 
-    def __init__(self, device, n_objectives: int, state_space_res: int, focus_cosim: float) -> None:
-        super().__init__(device, n_objectives, state_space_res, focus_cosim)
+    def __init__(self, device: torch.device, n_objectives: int, state_space_res: int) -> None:
+        super().__init__(device, n_objectives, state_space_res)
         self.n_objectives = n_objectives
         self.state_space_res = state_space_res
         self.focus_dir_dataset = (
@@ -76,7 +83,7 @@ class TabularFocusModel(FocusModel):
             idx_increments = torch.bincount(idxs, minlength=len(count))
             count += idx_increments
 
-    def sample_focus_directions(self, n):
+    def sample_focus_directions(self, n: int):
         """
         Samples n focus directions from the focus model.
         """
@@ -101,7 +108,7 @@ class TabularFocusModel(FocusModel):
         }
         torch.save(params, open(path / "tabular_focus_model.pt", "wb"))
 
-    def load(self, device, path: Path):
+    def load(self, device: torch.device, path: Path):
         params = torch.load(open(path / "tabular_focus_model.pt", "rb"))
         self.n_objectives = params["n_objectives"]
         self.state_space_res = params["state_space_res"]
