@@ -56,14 +56,14 @@ keywords = ["gflownet"]
 requires-python = ">=3.8,<3.10"
 dynamic = ["version"]
 dependencies = [
-    "torch==1.10.2",
+    "torch==1.13.1",
     # These pins are specific on purpose, some of these packages have
     # unstable APIs since they are fairly new. We could instead pin
     # them as >= in dev until something breaks?
     "torch-geometric==2.0.3",
-    "torch-scatter==2.0.9",
-    "torch-sparse==0.6.13",
-    "torch-cluster==1.6.0",
+    "torch-scatter",
+    "torch-sparse",
+    "torch-cluster",
     "rdkit",
     "tables",
     "scipy",
@@ -71,10 +71,10 @@ dependencies = [
     "tensorboard",
     "cvxopt",
     "pyarrow",
-    "botorch==0.6.6",  # pin because of the torch==1.10.2 dependency, botorch>=0.7 requires torch>=1.11
-    # pins to help depencency resolution, because of the above pin
-    "pyro-ppl==1.8.0",
-    "gpytorch==1.8.1",
+    "gitpython",
+    "botorch",
+    "pyro-ppl",
+    "gpytorch",
 ]
 
 [project.optional-dependencies]
