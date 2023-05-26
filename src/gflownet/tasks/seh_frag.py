@@ -1,10 +1,13 @@
 import ast
 import copy
+import json
 import os
+import pathlib
 import shutil
 import socket
 from typing import Any, Callable, Dict, List, Tuple, Union
 
+import git
 import numpy as np
 import scipy.stats as stats
 import torch
@@ -15,7 +18,9 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
@@ -59,10 +64,10 @@ class SEHTask(GFNTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model)
+        model, self.device = self._wrap_model(model, send_to_device=True)
         return {"seh": model}
 
-    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         beta = None
         if self.temperature_sample_dist == "constant":
             assert type(self.temperature_dist_params) is float
@@ -86,7 +91,7 @@ class SEHTask(GFNTask):
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
-        return {"beta": beta, "encoding": beta_enc}
+        return {"beta": torch.tensor(beta), "encoding": beta_enc}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -116,7 +121,7 @@ class SEHFragTrainer(GFNTrainer):
             "hostname": socket.gethostname(),
             "bootstrap_own_reward": False,
             "learning_rate": 1e-4,
-            "Z_learning_rate": 1e-4,
+            "Z_learning_rate": 1e-3,
             "global_batch_size": 64,
             "num_emb": 128,
             "num_layers": 4,
@@ -131,26 +136,39 @@ class SEHFragTrainer(GFNTrainer):
             "momentum": 0.9,
             "adam_eps": 1e-8,
             "lr_decay": 20000,
-            "Z_lr_decay": 20000,
+            "Z_lr_decay": 50000,
             "clip_grad_type": "norm",
             "clip_grad_param": 10,
-            "random_action_prob": 0.0,
+            "random_action_prob": 0.01,
             "valid_random_action_prob": 0.0,
             "sampling_tau": 0.0,
             "max_nodes": 9,
             "num_thermometer_dim": 32,
+            "use_replay_buffer": False,
+            "replay_buffer_size": 10000,
+            "replay_buffer_warmup": 10000,
+            "mp_pickle_messages": False,
+            "algo": "TB",
         }
 
     def setup_algo(self):
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
+        algo = self.hps.get("algo", "TB")
+        if algo == "TB":
+            algo = TrajectoryBalance
+        elif algo == "FM":
+            algo = FlowMatching
+        else:
+            raise ValueError(algo)
+        self.algo = algo(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
 
     def setup_task(self):
         self.task = SEHTask(
             dataset=self.training_data,
             temperature_distribution=self.hps["temperature_sample_dist"],
             temperature_parameters=self.hps["temperature_dist_params"],
+            rng=self.rng,
             num_thermometer_dim=self.hps["num_thermometer_dim"],
-            wrap_model=self._wrap_model_mp,
+            wrap_model=self._wrap_for_mp,
         )
 
     def setup_model(self):
@@ -170,6 +188,11 @@ class SEHFragTrainer(GFNTrainer):
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
+        self.replay_buffer = (
+            ReplayBuffer(self.hps["replay_buffer_size"], self.hps["replay_buffer_warmup"], self.rng)
+            if self.hps["use_replay_buffer"]
+            else None
+        )
         self.setup_env_context()
         self.setup_algo()
         self.setup_task()
@@ -204,6 +227,16 @@ class SEHFragTrainer(GFNTrainer):
             "norm": (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
             "none": (lambda x: None),
         }[hps["clip_grad_type"]]
+
+        # saving hyperparameters
+        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        self.hps["gflownet_git_hash"] = git_hash
+
+        os.makedirs(self.hps["log_dir"], exist_ok=True)
+        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(self.hps.items())])
+        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
+        with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as f:
+            json.dump(self.hps, f)
 
     def step(self, loss: Tensor):
         loss.backward()
@@ -241,7 +274,7 @@ def main():
     os.makedirs(hps["log_dir"])
 
     trial = SEHFragTrainer(hps, torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
-    trial.verbose = True
+    trial.print_every = 1
     trial.run()
 
 

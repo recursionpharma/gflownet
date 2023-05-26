@@ -2,9 +2,9 @@ import json
 import os
 import pathlib
 import shutil
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Tuple, Union
 
-import git
 import numpy as np
 import torch
 import torch.nn as nn
@@ -26,6 +26,7 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
+from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import thermometer
 
@@ -47,7 +48,16 @@ class SEHMOOTask(SEHTask):
         temperature_sample_dist: str,
         temperature_parameters: Tuple[float, float],
         num_thermometer_dim: int,
-        use_pref_thermometer: bool,
+        use_steer_thermometer: bool = False,
+        preference_type: str = None,
+        focus_type: Union[list, str] = None,
+        focus_cosim: float = 0.0,
+        focus_limit_coef: float = 1.0,
+        fixed_focus_dirs: torch.Tensor = None,
+        illegal_action_logreward: float = None,
+        focus_model: FocusModel = None,
+        focus_model_training_limits: Tuple[int, int] = None,
+        max_train_it: int = None,
         rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
@@ -59,9 +69,18 @@ class SEHMOOTask(SEHTask):
         self.temperature_sample_dist = temperature_sample_dist
         self.temperature_dist_params = temperature_parameters
         self.num_thermometer_dim = num_thermometer_dim
-        self.use_pref_thermometer = use_pref_thermometer
+        self.use_steer_thermometer = use_steer_thermometer
+        self.preference_type = preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
+        self.focus_type = focus_type
+        self.focus_cosim = focus_cosim
+        self.focus_limit_coef = focus_limit_coef
+        self.fixed_focus_dirs = fixed_focus_dirs
+        self.illegal_action_logreward = illegal_action_logreward
+        self.focus_model = focus_model
+        self.focus_model_training_limits = focus_model_training_limits
+        self.max_train_it = max_train_it
         assert set(objectives) <= {"seh", "qed", "sa", "mw"} and len(objectives) == len(set(objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -72,33 +91,73 @@ class SEHMOOTask(SEHTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model)
+        model, self.device = self._wrap_model(model, send_to_device=True)
         return {"seh": model}
 
-    def sample_conditional_information(self, n: int) -> Dict[str, Tensor]:
-        cond_info = super().sample_conditional_information(n)
-
-        if self.seeded_preference is not None:
-            preferences = torch.tensor([self.seeded_preference] * n).float()
-        elif self.experimental_dirichlet:
-            a = np.random.dirichlet([1] * len(self.objectives), n)
-            b = np.random.exponential(1, n)[:, None]
-            preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
+    def get_steer_encodings(self, preferences, focus_dirs):
+        n = len(preferences)
+        if self.use_steer_thermometer:
+            pref_enc = thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
+            focus_enc = thermometer(focus_dirs, self.num_thermometer_dim, 0, 1).reshape(n, -1)
         else:
-            m = Dirichlet(torch.FloatTensor([1.0] * len(self.objectives)))
-            preferences = m.sample([n])
+            pref_enc = preferences
+            focus_enc = focus_dirs
+        return pref_enc, focus_enc
 
-        preferences_enc = (
-            thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
-            if self.use_pref_thermometer
-            else preferences
-        )
-        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences_enc], 1)
+    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+        cond_info = super().sample_conditional_information(n, train_it)
+
+        if self.preference_type is None:
+            preferences = torch.ones((n, len(self.objectives)))
+        else:
+            if self.seeded_preference is not None:
+                preferences = torch.tensor([self.seeded_preference] * n).float()
+            elif self.experimental_dirichlet:
+                a = np.random.dirichlet([1] * len(self.objectives), n)
+                b = np.random.exponential(1, n)[:, None]
+                preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
+            else:
+                m = Dirichlet(torch.FloatTensor([1.0] * len(self.objectives)))
+                preferences = m.sample([n])
+
+        if self.fixed_focus_dirs is not None:
+            focus_dir = torch.tensor(
+                np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32)
+            )
+        elif self.focus_type == "dirichlet":
+            m = Dirichlet(torch.FloatTensor([1.0] * len(self.objectives)))
+            focus_dir = m.sample([n])
+        elif self.focus_type == "hyperspherical":
+            focus_dir = torch.tensor(
+                metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation="l2")
+            ).float()
+        elif self.focus_type is not None and "learned" in self.focus_type:
+            if self.focus_model is not None and train_it >= self.focus_model_training_limits[0] * self.max_train_it:
+                focus_dir = self.focus_model.sample_focus_directions(n)
+            else:
+                focus_dir = torch.tensor(
+                    metrics.sample_positiveQuadrant_ndim_sphere(n, len(self.objectives), normalisation="l2")
+                ).float()
+        else:
+            raise NotImplementedError(f"Unsupported focus_type={type(self.focus_type)}")
+
+        preferences_enc, focus_enc = self.get_steer_encodings(preferences, focus_dir)
+        cond_info["encoding"] = torch.cat([cond_info["encoding"], preferences_enc, focus_enc], 1)
         cond_info["preferences"] = preferences
+        cond_info["focus_dir"] = focus_dir
         return cond_info
 
-    def encode_conditional_information(self, preferences: Tensor) -> Dict[str, Tensor]:
-        n = len(preferences)
+    def encode_conditional_information(self, steer_info: Tensor) -> Dict[str, Tensor]:
+        """
+        Encode conditional information at validation-time
+        We use the maximum temperature beta for inference
+        Args:
+            steer_info: Tensor of shape (Batch, 2 * n_objectives) containing the preferences and focus_dirs
+            in that order
+        Returns:
+            Dict[str, Tensor]: Dictionary containing the encoded conditional information
+        """
+        n = len(steer_info)
         if self.temperature_sample_dist == "constant":
             beta = torch.ones(n) * self.temperature_dist_params
             beta_enc = torch.zeros((n, self.num_thermometer_dim))
@@ -107,11 +166,41 @@ class SEHMOOTask(SEHTask):
             beta_enc = torch.ones((n, self.num_thermometer_dim))
 
         assert len(beta.shape) == 1, f"beta should be of shape (Batch,), got: {beta.shape}"
-        if self.use_pref_thermometer:
-            encoding = torch.cat([beta_enc, thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)], 1)
-        else:
-            encoding = torch.cat([beta_enc, preferences], 1)
-        return {"beta": beta, "encoding": encoding.float(), "preferences": preferences.float()}
+
+        # TODO: positional assumption here, should have something cleaner
+        preferences = steer_info[:, : len(self.objectives)].float()
+        focus_dir = steer_info[:, len(self.objectives) :].float()
+
+        preferences_enc, focus_enc = self.get_steer_encodings(preferences, focus_dir)
+        encoding = torch.cat([beta_enc, preferences_enc, focus_enc], 1).float()
+
+        return {
+            "beta": beta,
+            "encoding": encoding,
+            "preferences": preferences,
+            "focus_dir": focus_dir,
+        }
+
+    def relabel_condinfo_and_logrewards(
+        self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: FlatRewards, hindsight_idxs: Tensor
+    ):
+        if self.focus_type is None:
+            return cond_info, log_rewards
+        # only keep hindsight_idxs that actually correspond to a violated constraint
+        _, in_focus_mask = metrics.compute_focus_coef(flat_rewards, cond_info["focus_dir"], self.focus_cosim)
+        out_focus_mask = torch.logical_not(in_focus_mask)
+        hindsight_idxs = hindsight_idxs[out_focus_mask[hindsight_idxs]]
+
+        # relabels the focus_dirs and log_rewards
+        cond_info["focus_dir"][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
+
+        preferences_enc, focus_enc = self.get_steer_encodings(cond_info["preferences"], cond_info["focus_dir"])
+        cond_info["encoding"] = torch.cat(
+            [cond_info["encoding"][:, : self.num_thermometer_dim], preferences_enc, focus_enc], 1
+        )
+
+        log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
+        return cond_info, log_rewards
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if isinstance(flat_reward, list):
@@ -123,6 +212,14 @@ class SEHMOOTask(SEHTask):
         assert len(scalar_logreward.shape) == len(
             cond_info["beta"].shape
         ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
+
+        if self.focus_type is not None:
+            focus_coef, in_focus_mask = metrics.compute_focus_coef(
+                flat_reward, cond_info["focus_dir"], self.focus_cosim, self.focus_limit_coef
+            )
+            scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
+            scalar_logreward[~in_focus_mask] = self.illegal_action_logreward
+
         return RewardScalar(scalar_logreward * cond_info["beta"])
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
@@ -132,13 +229,13 @@ class SEHMOOTask(SEHTask):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
 
         else:
-            flat_rewards: List[Tensor] = []
+            flat_r: List[Tensor] = []
             if "seh" in self.objectives:
                 batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
                 batch.to(self.device)
                 seh_preds = self.models["seh"](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
                 seh_preds[seh_preds.isnan()] = 0
-                flat_rewards.append(seh_preds)
+                flat_r.append(seh_preds)
 
             def safe(f, x, default):
                 try:
@@ -148,19 +245,19 @@ class SEHMOOTask(SEHTask):
 
             if "qed" in self.objectives:
                 qeds = torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v.item()])
-                flat_rewards.append(qeds)
+                flat_r.append(qeds)
 
             if "sa" in self.objectives:
                 sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i, v in zip(mols, is_valid) if v.item()])
                 sas = (10 - sas) / 9  # Turn into a [0-1] reward
-                flat_rewards.append(sas)
+                flat_r.append(sas)
 
             if "mw" in self.objectives:
                 molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i, v in zip(mols, is_valid) if v.item()])
                 molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-                flat_rewards.append(molwts)
+                flat_r.append(molwts)
 
-            flat_rewards = torch.stack(flat_rewards, dim=1)
+            flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
 
@@ -172,10 +269,16 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             "objectives": ["seh", "qed", "sa", "mw"],
             "sampling_tau": 0.95,
             "valid_sample_cond_info": False,
-            "n_valid_prefs": 15,
-            "n_valid_repeats_per_pref": 128,
+            "n_valid": 15,
+            "n_valid_repeats": 128,
             "preference_type": "dirichlet",
-            "use_pref_thermometer": False,
+            "focus_type": None,
+            "focus_cosim": None,
+            "focus_limit_coef": 1.0,
+            "hindsight_ratio": 0.0,
+            "focus_model_training_limits": None,
+            "focus_model_state_space_res": None,
+            "use_steer_thermometer": False,
         }
 
     def setup_algo(self):
@@ -191,6 +294,18 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif hps["algo"] == "MOQL":
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
 
+        if hps["focus_type"] is not None and "learned" in hps["focus_type"]:
+            if hps["focus_type"] == "learned-tabular":
+                self.focus_model = TabularFocusModel(
+                    device=self.device,
+                    n_objectives=len(hps["objectives"]),
+                    state_space_res=hps["focus_model_state_space_res"],
+                )
+            else:
+                raise NotImplementedError("Unknown focus model type {self.focus_type}")
+        else:
+            self.focus_model = None
+
     def setup_task(self):
         self.task = SEHMOOTask(
             objectives=self.hps["objectives"],
@@ -198,8 +313,17 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             temperature_sample_dist=self.hps["temperature_sample_dist"],
             temperature_parameters=self.hps["temperature_dist_params"],
             num_thermometer_dim=self.hps["num_thermometer_dim"],
-            wrap_model=self._wrap_model_mp,
-            use_pref_thermometer=self.hps["use_pref_thermometer"],
+            use_steer_thermometer=self.hps["use_steer_thermometer"],
+            preference_type=self.hps["preference_type"],
+            focus_type=self.hps["focus_type"],
+            focus_cosim=self.hps["focus_cosim"],
+            focus_limit_coef=self.hps["focus_limit_coef"],
+            illegal_action_logreward=self.hps["illegal_action_logreward"],
+            focus_model=self.focus_model,
+            focus_model_training_limits=self.hps["focus_model_training_limits"],
+            max_train_it=self.hps["num_training_steps"],
+            rng=self.rng,
+            wrap_model=self._wrap_for_mp,
         )
 
     def setup_model(self):
@@ -223,55 +347,107 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.model = model
 
     def setup_env_context(self):
-        if self.hps.get("use_pref_thermometer", False):
-            ncd = self.hps["num_thermometer_dim"] * (1 + len(self.hps["objectives"]))
+        if self.hps.get("use_steer_thermometer", False):
+            ncd = self.hps["num_thermometer_dim"] * (1 + 2 * len(self.hps["objectives"]))
         else:
-            ncd = self.hps["num_thermometer_dim"] + len(self.hps["objectives"])
-        self.ctx = FragMolBuildingEnvContext(max_frags=9, num_cond_dim=ncd)
+            ncd = self.hps["num_thermometer_dim"] + 2 * len(
+                self.hps["objectives"]
+            )  # 1 for prefs and 1 for focus region
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=ncd)
 
     def setup(self):
         super().setup()
         self.sampling_hooks.append(
-            MultiObjectiveStatsHook(256, self.hps["log_dir"], compute_igd=True, compute_pc_entropy=True)
+            MultiObjectiveStatsHook(
+                256,
+                self.hps["log_dir"],
+                compute_igd=True,
+                compute_pc_entropy=True,
+                compute_focus_accuracy=True if self.hps["focus_type"] is not None else False,
+                focus_cosim=self.hps["focus_cosim"],
+            )
         )
+        # instantiate preference and focus conditioning vectors for validation
 
         n_obj = len(self.hps["objectives"])
+        n_valid = self.hps["n_valid"]
 
-        # create fixed preference vectors for validation
-        if self.hps["preference_type"] is None:
-            valid_preferences = np.ones((self.hps["n_valid_prefs"], n_obj))
-        elif self.hps["preference_type"] == "dirichlet":
-            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=self.hps["n_valid_prefs"], normalisation="l1")
-        elif self.hps["preference_type"] == "seeded_single":
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet(
-                [1] * n_obj, self.hps["n_valid_prefs"]
+        # making sure hyperparameters for preferences and focus regions are consistent
+        if not (
+            self.hps["focus_type"] is None
+            or self.hps["focus_type"] == "centered"
+            or (type(self.hps["focus_type"]) is list and len(self.hps["focus_type"]) == 1)
+        ):
+            assert self.hps["preference_type"] is None, (
+                f"Cannot use preferences with multiple focus regions, here focus_type={self.hps['focus_type']} "
+                f"and preference_type={self.hps['preference_type']}"
             )
+
+        if type(self.hps["focus_type"]) is list and len(self.hps["focus_type"]) > 1:
+            n_valid = len(self.hps["focus_type"])
+
+        # preference vectors
+        if self.hps["preference_type"] is None:
+            valid_preferences = np.ones((n_valid, n_obj))
+        elif self.hps["preference_type"] == "dirichlet":
+            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
+        elif self.hps["preference_type"] == "seeded_single":
+            seeded_prefs = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif self.hps["preference_type"] == "seeded_many":
-            valid_preferences = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet(
-                [1] * n_obj, self.hps["n_valid_prefs"]
+            valid_preferences = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet([1] * n_obj, n_valid)
+        else:
+            raise NotImplementedError(f"Unknown preference type {self.hps['preference_type']}")
+
+        # focus regions
+        if self.hps["focus_type"] is None:
+            valid_focus_dirs = np.zeros((n_valid, n_obj))
+            self.task.fixed_focus_dirs = valid_focus_dirs
+        elif self.hps["focus_type"] == "centered":
+            valid_focus_dirs = np.ones((n_valid, n_obj))
+            self.task.fixed_focus_dirs = valid_focus_dirs
+        elif self.hps["focus_type"] == "partitioned":
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.task.fixed_focus_dirs = valid_focus_dirs
+        elif self.hps["focus_type"] in ["dirichlet", "learned-gfn"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
+            self.task.fixed_focus_dirs = None
+        elif self.hps["focus_type"] in ["hyperspherical", "learned-tabular"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.task.fixed_focus_dirs = None
+        elif type(self.hps["focus_type"]) is list:
+            if len(self.hps["focus_type"]) == 1:
+                valid_focus_dirs = np.array([self.hps["focus_type"][0]] * n_valid)
+                self.task.fixed_focus_dirs = valid_focus_dirs
+            else:
+                valid_focus_dirs = np.array(self.hps["focus_type"])
+                self.task.fixed_focus_dirs = valid_focus_dirs
+        else:
+            raise NotImplementedError(
+                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
+                f"focus_type, but here: {self.hps['focus_type']}"
             )
 
-        self._top_k_hook = TopKHook(10, self.hps["n_valid_repeats_per_pref"], len(valid_preferences))
-        self.test_data = RepeatedPreferenceDataset(valid_preferences, self.hps["n_valid_repeats_per_pref"])
+        self.hps["fixed_focus_dirs"] = (
+            np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
+        )
+        with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as f:
+            json.dump(self.hps, f)
+        assert valid_focus_dirs.shape == (
+            n_valid,
+            n_obj,
+        ), f"Invalid shape for valid_preferences, {valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+
+        # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
+        # TODO: this relies on positional assumptions, should have something cleaner
+        valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
+
+        self._top_k_hook = TopKHook(10, self.hps["n_valid_repeats"], len(valid_cond_vector))
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.hps["n_valid_repeats"])
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
-
-        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
-        self.hps["gflownet_git_hash"] = git_hash
-
-        os.makedirs(self.hps["log_dir"], exist_ok=True)
-        torch.save(
-            {
-                "hps": self.hps,
-            },
-            open(pathlib.Path(self.hps["log_dir"]) / "hps.pt", "wb"),
-        )
-        fmt_hps = "\n".join([f"{k}:\t({type(v).__name__})\t{v}".expandtabs(40) for k, v in self.hps.items()])
-        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        json.dump(self.hps, open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w"))
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
@@ -287,18 +463,34 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         return {"topk": TopKMetricCB()}
 
+    def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
+        focus_model_training_limits = self.hps["focus_model_training_limits"]
+        max_train_it = self.hps["num_training_steps"]
+        if (
+            self.focus_model is not None
+            and train_it >= focus_model_training_limits[0] * max_train_it
+            and train_it <= focus_model_training_limits[1] * max_train_it
+        ):
+            self.focus_model.update_belief(deepcopy(batch.focus_dir), deepcopy(batch.flat_rewards))
+        return super().train_batch(batch, epoch_idx, batch_idx, train_it)
 
-class RepeatedPreferenceDataset:
-    def __init__(self, preferences, repeat):
-        self.prefs = preferences
+    def _save_state(self, it):
+        if self.focus_model is not None:
+            self.focus_model.save(pathlib.Path(self.hps["log_dir"]))
+        return super()._save_state(it)
+
+
+class RepeatedCondInfoDataset:
+    def __init__(self, cond_info_vectors, repeat):
+        self.cond_info_vectors = cond_info_vectors
         self.repeat = repeat
 
     def __len__(self):
-        return len(self.prefs) * self.repeat
+        return len(self.cond_info_vectors) * self.repeat
 
     def __getitem__(self, idx):
         assert 0 <= idx < len(self)
-        return torch.tensor(self.prefs[int(idx // self.repeat)])
+        return torch.tensor(self.cond_info_vectors[int(idx // self.repeat)])
 
 
 def main():
@@ -309,8 +501,10 @@ def main():
         "seed": 0,
         "global_batch_size": 64,
         "num_training_steps": 20_000,
-        "validate_every": 1,
-        "num_layers": 4,
+        "num_final_gen_steps": 500,
+        "validate_every": 10,
+        "num_layers": 2,
+        "num_emb": 256,
         "algo": "TB",
         "objectives": ["seh", "qed"],
         "learning_rate": 1e-4,
@@ -319,13 +513,23 @@ def main():
         "Z_lr_decay": 50000,
         "sampling_tau": 0.95,
         "random_action_prob": 0.1,
-        "num_data_loader_workers": 8,
+        "num_data_loader_workers": 0,
         "temperature_sample_dist": "constant",
         "temperature_dist_params": 60.0,
         "num_thermometer_dim": 32,
-        "preference_type": "dirichlet",
-        "n_valid_prefs": 15,
-        "n_valid_repeats_per_pref": 128,
+        "use_steer_thermometer": False,
+        "preference_type": None,
+        "focus_type": "learned-tabular",
+        "focus_cosim": 0.98,
+        "focus_limit_coef": 1e-1,
+        "n_valid": 15,
+        "n_valid_repeats": 128,
+        "use_replay_buffer": True,
+        "replay_buffer_warmup": 0,
+        "hindsight_ratio": 0.3,
+        "mp_pickle_messages": True,
+        "focus_model_training_limits": [0.25, 0.75],
+        "focus_model_state_space_res": 10,
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:
@@ -335,7 +539,7 @@ def main():
     os.makedirs(hps["log_dir"])
 
     trial = SEHMOOFragTrainer(hps, torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
-    trial.verbose = True
+    trial.print_every = 1
     trial.run()
 
 

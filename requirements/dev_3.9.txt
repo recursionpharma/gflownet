@@ -246,7 +246,7 @@ tomli==2.0.1
     #   pytest
 toposort==1.10
     # via pip-compile-multi
-torch==1.10.2
+torch==1.13.1
     # via
     #   botorch
     #   gflownet (pyproject.toml)
@@ -256,9 +256,9 @@ torch-cluster==1.6.0
     # via gflownet (pyproject.toml)
 torch-geometric==2.0.3
     # via gflownet (pyproject.toml)
-torch-scatter==2.0.9
+torch-scatter==2.1.1
     # via gflownet (pyproject.toml)
-torch-sparse==0.6.13
+torch-sparse==0.6.17
     # via gflownet (pyproject.toml)
 tqdm==4.65.0
     # via
