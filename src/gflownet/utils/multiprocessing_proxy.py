@@ -6,9 +6,10 @@ import torch
 import torch.multiprocessing as mp
 
 
-class MPModelPlaceholder:
-    """This class can be used as a Model in a worker process, and
-    translates calls to queries to the main process"""
+class MPObjectPlaceholder:
+    """This class can be used for example as a model or dataset placeholder
+    in a worker process, and translates calls to the object-placeholder into
+    queries for the main process to execute on the real object."""
 
     def __init__(self, in_queues, out_queues, pickle_messages=False):
         self.qs = in_queues, out_queues
@@ -34,39 +35,45 @@ class MPModelPlaceholder:
             return pickle.loads(m)
         return m
 
-    # TODO: make a generic method for this based on __getattr__
-    def logZ(self, *a, **kw):
-        self._check_init()
-        self.in_queue.put(self.encode(("logZ", a, kw)))
-        return self.decode(self.out_queue.get())
+    def __getattr__(self, name):
+        def method_wrapper(*a, **kw):
+            self._check_init()
+            self.in_queue.put(self.encode((name, a, kw)))
+            return self.decode(self.out_queue.get())
+
+        return method_wrapper
 
     def __call__(self, *a, **kw):
         self._check_init()
         self.in_queue.put(self.encode(("__call__", a, kw)))
         return self.decode(self.out_queue.get())
 
+    def __len__(self):
+        self._check_init()
+        self.in_queue.put(("__len__", (), {}))
+        return self.out_queue.get()
 
-class MPModelProxy:
-    """This class maintains a reference to an in-cuda-memory model, and
+
+class MPObjectProxy:
+    """This class maintains a reference to some object and
     creates a `placeholder` attribute which can be safely passed to
     multiprocessing DataLoader workers.
 
-    This placeholder model sends messages accross multiprocessing
-    queues, which are received by this proxy instance, which calls the
-    model and sends the return value back to the worker.
+    The placeholders in each process send messages accross multiprocessing
+    queues which are received by this proxy instance. The proxy instance then
+    runs the calls on our object and sends the return value back to the worker.
 
-    Starts its own (daemon) thread. Always passes CPU tensors between
-    processes.
-
+    Starts its own (daemon) thread.
+    Always passes CPU tensors between processes.
     """
 
-    def __init__(self, model: torch.nn.Module, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
-        """Construct a multiprocessing model proxy for torch DataLoaders.
+    def __init__(self, obj, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
+        """Construct a multiprocessing object proxy.
 
         Parameters
         ----------
-        model: torch.nn.Module
-            A torch model which lives in the main process to which method calls are passed
+        obj: any python object to be proxied (typically a torch.nn.Module or ReplayBuffer)
+            Lives in the main process to which method calls are passed
         num_workers: int
             Number of DataLoader workers
         cast_types: tuple
@@ -80,9 +87,12 @@ class MPModelProxy:
         self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
         self.pickle_messages = pickle_messages
-        self.placeholder = MPModelPlaceholder(self.in_queues, self.out_queues, pickle_messages)
-        self.model = model
-        self.device = next(model.parameters()).device
+        self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages)
+        self.obj = obj
+        if hasattr(obj, "parameters"):
+            self.device = next(obj.parameters()).device
+        else:
+            self.device = torch.device("cpu")
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -114,12 +124,26 @@ class MPModelProxy:
                 except ConnectionError:
                     break
                 attr, args, kwargs = r
-                f = getattr(self.model, attr)
+                f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
                 result = f(*args, **kwargs)
                 if isinstance(result, (list, tuple)):
                     msg = [self.to_cpu(i) for i in result]
+                elif isinstance(result, dict):
+                    msg = {k: self.to_cpu(i) for k, i in result.items()}
+                else:
+                    msg = self.to_cpu(result)
+                self.out_queues[qi].put(self.encode(msg))
+
+
+def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False):
+    """Construct a multiprocessing object proxy for torch DataLoaders so
+    that it does not need to be copied in every worker's memory. For example,
+    this can be used to wrap a model such that only the main process makes
+    cuda calls by forwarding data through the model, or a replay buffer
+    such that the new data is pushed in from the worker processes but only the
+    main process has to hold the full buffer in memory.
                     self.out_queues[qi].put(self.encode(msg))
                 elif isinstance(result, dict):
                     msg = {k: self.to_cpu(i) for k, i in result.items()}
@@ -128,16 +152,10 @@ class MPModelProxy:
                     msg = self.to_cpu(result)
                     self.out_queues[qi].put(self.encode(msg))
 
-
-def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False):
-    """Construct a multiprocessing model proxy for torch DataLoaders so
-    that only one process ends up making cuda calls and holding cuda
-    tensors in memory.
-
     Parameters
     ----------
-    model: torch.Module
-        A torch model which lives in the main process to which method calls are passed
+    obj: any python object to be proxied (typically a torch.nn.Module or ReplayBuffer)
+            Lives in the main process to which method calls are passed
     num_workers: int
         Number of DataLoader workers
     cast_types: tuple
@@ -150,8 +168,8 @@ def wrap_model_mp(model, num_workers, cast_types, pickle_messages: bool = False)
 
     Returns
     -------
-    placeholder: MPModelPlaceholder
-        A placeholder model whose method calls route arguments to the main process
+    placeholder: MPObjectPlaceholder
+        A placeholder object whose method calls route arguments to the main process
 
     """
-    return MPModelProxy(model, num_workers, cast_types, pickle_messages).placeholder
+    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages).placeholder
