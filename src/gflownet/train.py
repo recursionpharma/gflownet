@@ -278,7 +278,8 @@ class GFNTrainer:
         ckpt_freq = self.hps.get("checkpoint_every", valid_freq)
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
-        final_dl = self.build_final_data_loader()
+        if self.hps.get("num_final_gen_steps", 0) > 0:
+            final_dl = self.build_final_data_loader()
         callbacks = self.build_callbacks()
         start = self.hps.get("start_at_step", 0) + 1
         logger.info("Starting training")
