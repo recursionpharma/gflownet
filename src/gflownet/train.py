@@ -99,8 +99,8 @@ class GFNTrainer:
         self.model: nn.Module
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
-        self.replay_buffer: ReplayBuffer
         self.sampling_model: nn.Module
+        self.replay_buffer: ReplayBuffer
         self.mb_size: int
         self.env: GraphBuildingEnv
         self.ctx: GraphBuildingEnvContext
