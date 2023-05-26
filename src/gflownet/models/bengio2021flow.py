@@ -9,8 +9,8 @@ target proxy used in that paper (sEH binding affinity prediction).
 """
 import gzip
 import os
-import pickle
-from pathlib import Path  # nosec
+import pickle  # nosec
+from pathlib import Path
 
 import numpy as np
 import requests  # type: ignore
@@ -182,7 +182,7 @@ def load_weights(cache, location):
     except FileNotFoundError as e:
         download(location)
         gz = gzip.open(location)
-    return pickle.load(gz)
+    return pickle.load(gz)  # nosec
 
 
 def load_original_model(cache=True, location=Path(__file__).parent / "cache" / "bengio2021flow_proxy.pkl.gz"):
