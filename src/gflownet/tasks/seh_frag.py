@@ -224,7 +224,7 @@ class SEHFragTrainer(GFNTrainer):
         self.hps["gflownet_git_hash"] = git_hash
 
         os.makedirs(self.hps["log_dir"], exist_ok=True)
-        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in self.hps.items()])
+        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(self.hps.items())])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
         with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as f:
             json.dump(self.hps, f)
