@@ -56,7 +56,7 @@ class SoftQLearning:
         self.illegal_action_logreward = hps["illegal_action_logreward"]
         self.alpha = hps.get("sql_alpha", 0.01)
         self.gamma = hps.get("sql_gamma", 1)
-        self.tree_backup = hps.get("sql_tree", 0)  # 1 corresponds to not doing tree backup
+        self.n_tree = hps.get("sql_tree", 0)  # 1 corresponds to not doing tree backup
         self.invalid_penalty = hps.get("sql_penalty", -10)
         self.bootstrap_own_reward = False
         # Experimental flags
@@ -178,7 +178,7 @@ class SoftQLearning:
             hat_Q = self.calc_targets(batch, rewards, final_graph_idx, Q, V_soft)
         else:
             rewards = rewards / self.alpha
-            if self.tree_backup == 0:
+            if self.n_tree == 0:
                 # avoid duplicate if not needed
                 hat_Q = self.calc_targets(batch, rewards, final_graph_idx, Q)
             else:
@@ -219,7 +219,7 @@ class SoftQLearning:
         first_v = self.calc_targets(batch, rewards, final_graph_idx, Q)
 
         n = batch.traj_lens.max().item()
-        n = min(n, self.tree_backup)
+        n = min(n, self.n_tree)
         for _ in range(n):
             shifted_V_soft = self.calc_targets(batch, rewards, final_graph_idx, Q)
             new = Q.inv_log_prob(batch.actions, shifted_V_soft)
