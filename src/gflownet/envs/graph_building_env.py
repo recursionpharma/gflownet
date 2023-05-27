@@ -521,6 +521,12 @@ class GraphActionCategorical:
             self.masks = [i.to(device) for i in self.masks]
         return self
 
+    def duplicate(self):
+        new = copy.copy(self)
+        new.logits = [torch.clone(i) for i in new.logits]
+        new.logprobs = None
+        return new
+
     def _compute_batchwise_max(
         self,
         x: List[torch.Tensor],
@@ -678,7 +684,62 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def calc_offset(self, actions, logprobs, batch):
+        """Calculate the offsets needed to access a flattened `self.logprobs`
+
+        Parameters
+        ----------
+        actions: List[Tuple[int, int, int]]
+            A list of n action tuples denoting indices
+        logprobs: List[Tensor]
+            [Optional] The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
+            assumes there are n graphs represented by this object).
+        batch: Tensor
+            [Optional] The batch of each action. If None (default) then this is arange(num_graphs), i.e. one
+            action per graph is selected, in order.
+
+        Returns
+        -------
+        log_prob: Tensor
+            The log probability of each action.
+        """
+        N = self.num_graphs
+        if batch is None:
+            batch = torch.arange(N, device=self.dev)
+        # We want to do the equivalent of this:
+        #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
+        # but faster.
+
+        # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
+        actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
+        assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
+
+        # The action type offset depends on how many elements each logit group has, and we retrieve by
+        # the type index 0:
+        t_offsets = torch.tensor([0] + [i.numel() for i in logprobs], device=self.dev).cumsum(0)[actions[:, 0]]
+        # The row offset depends on which row the graph's corresponding logits start (since they are
+        # all concatenated together). This is stored in self.slice; each logit group has its own
+        # slice tensor of shape N+1 (since the 0th entry is always 0).
+        # We want slice[t][i] for every graph i in the batch, since each slice has N+1 elements we
+        # multiply t by N+1, batch is by default arange(N) so it just gets each graph's
+        # corresponding row index.
+        graph_row_offsets = torch.cat(self.slice)[actions[:, 0] * (N + 1) + batch]
+        # Now we add the row value. To do that we need to know the number of elements of each row in
+        # the flattened array, this is simply i.shape[1].
+        row_lengths = torch.tensor([i.shape[1] for i in logprobs], device=self.dev)
+        # Now we can multiply the length of the row for each type t by the actual row index,
+        # offsetting by the row at which each graph's logits start.
+        row_offsets = row_lengths[actions[:, 0]] * (actions[:, 1] + graph_row_offsets)
+        # This is the last index in the raveled tensor, therefore the offset is just the column value
+        col_offsets = actions[:, 2]
+        return t_offsets, row_offsets, col_offsets
+
+    def log_prob(
+        self,
+        actions: List[Tuple[int, int, int]],
+        logprobs: Optional[torch.Tensor] = None,
+        batch: Optional[torch.Tensor] = None,
+    ):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
@@ -698,42 +759,73 @@ class GraphActionCategorical:
         log_prob: Tensor
             The log probability of each action.
         """
-        N = self.num_graphs
         if logprobs is None:
             logprobs = self.logsoftmax()
-        if batch is None:
-            batch = torch.arange(N, device=self.dev)
-        # We want to do the equivalent of this:
-        #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
-        # but faster.
 
-        # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
-        actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
-        assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
         # indices of the raveled actions.
         # First, flatten and cat:
         all_logprobs = torch.cat([i.flatten() for i in logprobs])
-        # The action type offset depends on how many elements each logit group has, and we retrieve by
-        # the type index 0:
-        t_offsets = torch.tensor([0] + [i.numel() for i in logprobs], device=self.dev).cumsum(0)[actions[:, 0]]
-        # The row offset depends on which row the graph's corresponding logits start (since they are
-        # all concatenated together). This is stored in self.slice; each logit group has its own
-        # slice tensor of shape N+1 (since the 0th entry is always 0).
-        # We want slice[t][i] for every graph i in the batch, since each slice has N+1 elements we
-        # multiply t by N+1, batch is by default arange(N) so it just gets each graph's
-        # corresponding row index.
-        graph_row_offsets = torch.cat(self.slice)[actions[:, 0] * (N + 1) + batch]
-        # Now we add the row value. To do that we need to know the number of elements of each row in
-        # the flattened array, this is simply i.shape[1].
-        row_lengths = torch.tensor([i.shape[1] for i in logprobs], device=self.dev)
-        # Now we can multiply the length of the row for each type t by the actual row index,
-        # offsetting by the row at which each graph's logits start.
-        row_offsets = row_lengths[actions[:, 0]] * (actions[:, 1] + graph_row_offsets)
-        # This is the last index in the raveled tensor, therefore the offset is just the column value
-        col_offsets = actions[:, 2]
+        # Calculate the offsets
+        t_offsets, row_offsets, col_offsets = self.calc_offset(actions, logprobs, batch)
         # Index the flattened array
         return all_logprobs[t_offsets + row_offsets + col_offsets]
+
+    def inv_log_prob(
+        self,
+        actions: List[Tuple[int, int, int]],
+        logprobs: torch.Tensor,
+        batch: Optional[torch.Tensor] = None,
+        backbone: Optional[torch.Tensor] = None,
+        full: Optional[Any] = None,
+        original: Optional[List[torch.Tensor]] = None,
+    ) -> List[torch.Tensor]:
+        """Inverse of the `log_prob` function, projects the result of `log_prob` to the original data.
+
+        Parameters
+        ----------
+        actions: List[Tuple[int, int, int]]
+            A list of n action tuples denoting indices
+        logprobs: Tensor
+            The log-probablities to be projected back i.e. the output of `self.log_prob`.
+        batch: Tensor
+            [Optional] The batch of each action. If None (default) then this is arange(num_graphs), i.e. one
+            action per graph is selected, in order.
+        backbone: Optional[torch.Tensor]
+            [Optional] Concatenation of all original values to be projected back to, used inplace
+        full: Union[float,
+            [Optional] If backbone is `None`, create backbone as a Tensor whose value is `full`
+        original: List[Size]
+            [Optional] The original tensor to project to, if `full` is None, a flatten copy of
+            this tensor will be used as `backbone`. If original is `None`, `self.logits` will be used
+
+        Returns
+        -------
+        log_prob: List[Tensor]
+            Projects `sel_logprobs` back to the original format.
+        """
+        # See self.log_prob
+
+        if original is None:
+            original = self.logits
+        if backbone is None:
+            if full is None:
+                backbone = torch.cat([i.flatten() for i in original])
+            else:
+                backbone = torch.full(
+                    (sum(i.numel() for i in self.logits),), full, device=self.dev, dtype=original[0].dtype
+                )
+
+        t_offsets, row_offsets, col_offsets = self.calc_offset(actions, backbone, batch)
+        backbone[t_offsets + row_offsets + col_offsets] = logprobs
+        # Build back the original List[Tensor]
+        a = 0
+        x = []
+        for i in original:
+            j = i.numel()
+            x.append(backbone[a : a + j].reshape(i))
+            a += j
+        return x
 
     def entropy(self, logprobs=None):
         """The entropy for each graph categorical in the batch
