@@ -176,10 +176,10 @@ def load_weights(cache, location):
 
     try:
         gz = gzip.open(location)
-    except gzip.BadGzipFile as e:
+    except gzip.BadGzipFile:
         download(location)
         gz = gzip.open(location)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         download(location)
         gz = gzip.open(location)
     return pickle.load(gz)  # nosec
