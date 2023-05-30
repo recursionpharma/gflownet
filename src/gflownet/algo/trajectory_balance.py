@@ -18,6 +18,18 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
+from gflownet.config import config_class, _name_to_config
+
+
+@config_class("algo.tb")
+class TBConfig:
+    illegal_action_logreward: float = -100.0
+    bootstrap_own_reward: bool = False
+    epsilon: float = None
+
+
+print("Hello from TB")
+print(_name_to_config)
 
 
 class TrajectoryBalanceModel(nn.Module):

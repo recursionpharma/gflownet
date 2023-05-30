@@ -27,6 +27,12 @@ from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
+from gflownet.config import config_class, Config
+
+
+@config_class("seh")
+class SEHTaskConfig:
+    pass
 
 
 class SEHTask(GFNTask):
