@@ -127,7 +127,7 @@ class QM9GapTask(GFNTask):
 
 
 class QM9GapTrainer(GFNTrainer):
-    def default_hps(self) -> Dict[str, Any]:
+    def set_default_hps(self) -> Dict[str, Any]:
         return {
             "bootstrap_own_reward": False,
             "learning_rate": 1e-4,

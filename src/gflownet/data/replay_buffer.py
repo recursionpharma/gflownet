@@ -8,6 +8,7 @@ from gflownet.config import Config, config_class
 
 @config_class("replay")
 class ReplayConfig:
+    use: bool = False
     capacity: int
     warmup: int
     hindsight_ratio: float = 0

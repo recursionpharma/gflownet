@@ -18,6 +18,9 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from gflownet.algo.advantage_actor_critic import A2C
+from gflownet.algo.soft_q_learning import SoftQLearning
+from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
@@ -27,12 +30,15 @@ from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
-from gflownet.config import config_class, Config
+from gflownet.config import config_class, Config, config_to_dict
 
 
-@config_class("seh")
+@config_class("task.seh")
 class SEHTaskConfig:
-    pass
+    # TODO: a proper class for temperature-conditional sampling
+    temperature_sample_dist: str = "uniform"
+    temperature_dist_params: List[Any] = [0.5, 32]
+    num_thermometer_dim: int = 32
 
 
 class SEHTask(GFNTask):
@@ -42,15 +48,13 @@ class SEHTask(GFNTask):
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
 
     This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
-    objective, or of the original paper when using Flow Matching (TODO: port to this repo).
+    objective, or of the original paper when using Flow Matching.
     """
 
     def __init__(
         self,
         dataset: Dataset,
-        temperature_distribution: str,
-        temperature_parameters: Tuple[float, float],
-        num_thermometer_dim: int,
+        cfg: Config,
         rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
@@ -58,9 +62,9 @@ class SEHTask(GFNTask):
         self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
-        self.temperature_sample_dist = temperature_distribution
-        self.temperature_dist_params = temperature_parameters
-        self.num_thermometer_dim = num_thermometer_dim
+        self.temperature_sample_dist = cfg.task.seh.temperature_sample_dist
+        self.temperature_dist_params = cfg.task.seh.temperature_dist_params
+        self.num_thermometer_dim = cfg.task.seh.num_thermometer_dim
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -122,71 +126,71 @@ class SEHTask(GFNTask):
 
 
 class SEHFragTrainer(GFNTrainer):
-    def default_hps(self) -> Dict[str, Any]:
-        return {
-            "hostname": socket.gethostname(),
-            "bootstrap_own_reward": False,
-            "learning_rate": 1e-4,
-            "Z_learning_rate": 1e-3,
-            "global_batch_size": 64,
-            "num_emb": 128,
-            "num_layers": 4,
-            "tb_epsilon": None,
-            "tb_p_b_is_parameterized": False,
-            "illegal_action_logreward": -75,
-            "reward_loss_multiplier": 1,
-            "temperature_sample_dist": "uniform",
-            "temperature_dist_params": (0.5, 32.0),
-            "weight_decay": 1e-8,
-            "num_data_loader_workers": 8,
-            "momentum": 0.9,
-            "adam_eps": 1e-8,
-            "lr_decay": 20000,
-            "Z_lr_decay": 50000,
-            "clip_grad_type": "norm",
-            "clip_grad_param": 10,
-            "random_action_prob": 0.01,
-            "valid_random_action_prob": 0.0,
-            "sampling_tau": 0.0,
-            "max_nodes": 9,
-            "num_thermometer_dim": 32,
-            "use_replay_buffer": False,
-            "replay_buffer_size": 10000,
-            "replay_buffer_warmup": 10000,
-            "mp_pickle_messages": False,
-            "algo": "TB",
-        }
+    def set_default_hps(self, cfg: Config):
+        cfg.hostname = socket.gethostname()
+        cfg.pickle_mp_messages = False
+        cfg.num_workers = 8
+        cfg.opt.learning_rate = 1e-4
+        cfg.opt.weight_decay = 1e-8
+        cfg.opt.momentum = 0.9
+        cfg.opt.adam_eps = 1e-8
+        cfg.opt.lr_decay = 20_000
+        cfg.opt.clip_grad_type = "norm"
+        cfg.opt.clip_grad_param = 10
+        cfg.algo.global_batch_size = 64
+        cfg.model.num_emb = 128
+        cfg.model.num_layers = 4
+
+        cfg.algo.method = "TB"
+        cfg.algo.max_nodes = 9
+        cfg.algo.sampling_tau = 0.9
+        cfg.algo.illegal_action_logreward = -75
+        cfg.algo.train_random_action_prob = 0.0
+        cfg.algo.valid_random_action_prob = 0.0
+        cfg.algo.tb.epsilon = None
+        cfg.algo.tb.bootstrap_own_reward = False
+        cfg.algo.tb.Z_learning_rate = 1e-3
+        cfg.algo.tb.Z_lr_decay = 50_000
+        cfg.algo.tb.do_parameterize_p_b = False
+
+        cfg.replay.use = False
+        cfg.replay.capacity = 10_000
+        cfg.replay.warmup = 1_000
 
     def setup_algo(self):
-        algo = self.hps.get("algo", "TB")
+        algo = self.cfg.algo.method
         if algo == "TB":
             algo = TrajectoryBalance
         elif algo == "FM":
             algo = FlowMatching
+        elif algo == "A2C":
+            algo = A2C
         else:
             raise ValueError(algo)
-        self.algo = algo(self.env, self.ctx, self.rng, self.hps, max_nodes=self.hps["max_nodes"])
+        self.algo = algo(self.env, self.ctx, self.rng, self.cfg)
 
     def setup_task(self):
         self.task = SEHTask(
             dataset=self.training_data,
-            temperature_distribution=self.hps["temperature_sample_dist"],
-            temperature_parameters=self.hps["temperature_dist_params"],
+            cfg=self.cfg,
             rng=self.rng,
-            num_thermometer_dim=self.hps["num_thermometer_dim"],
             wrap_model=self._wrap_for_mp,
         )
 
     def setup_model(self):
-        self.model = GraphTransformerGFN(self.ctx, num_emb=self.hps["num_emb"], num_layers=self.hps["num_layers"])
+        model = GraphTransformerGFN(
+            self.ctx,
+            self.cfg,
+            do_bck=self.cfg.algo.tb.do_parameterize_p_b,
+        )
+        self.model = model
 
     def setup_env_context(self):
         self.ctx = FragMolBuildingEnvContext(
-            max_frags=self.hps["max_nodes"], num_cond_dim=self.hps["num_thermometer_dim"]
+            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.cfg.task.seh.num_thermometer_dim
         )
 
     def setup(self):
-        hps = self.hps
         RDLogger.DisableLog("rdApp.*")
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
@@ -194,11 +198,7 @@ class SEHFragTrainer(GFNTrainer):
         self.test_data = []
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
-        self.replay_buffer = (
-            ReplayBuffer(self.hps["replay_buffer_size"], self.hps["replay_buffer_warmup"], self.rng)
-            if self.hps["use_replay_buffer"]
-            else None
-        )
+        self.replay_buffer = ReplayBuffer(self.cfg, self.rng) if self.cfg.replay.use else None
         self.setup_env_context()
         self.setup_algo()
         self.setup_task()
@@ -209,40 +209,39 @@ class SEHFragTrainer(GFNTrainer):
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = torch.optim.Adam(
             non_Z_params,
-            hps["learning_rate"],
-            (hps["momentum"], 0.999),
-            weight_decay=hps["weight_decay"],
-            eps=hps["adam_eps"],
+            self.cfg.opt.learning_rate,
+            (self.cfg.opt.momentum, 0.999),
+            weight_decay=self.cfg.opt.weight_decay,
+            eps=self.cfg.opt.adam_eps,
         )
-        self.opt_Z = torch.optim.Adam(Z_params, hps["Z_learning_rate"], (0.9, 0.999))
-        self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / hps["lr_decay"]))
-        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(self.opt_Z, lambda steps: 2 ** (-steps / hps["Z_lr_decay"]))
+        self.opt_Z = torch.optim.Adam(Z_params, self.cfg.algo.tb.Z_learning_rate, (0.9, 0.999))
+        self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
+        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
+            self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
+        )
 
-        self.sampling_tau = hps["sampling_tau"]
+        self.sampling_tau = self.cfg.algo.sampling_tau
         if self.sampling_tau > 0:
             self.sampling_model = copy.deepcopy(self.model)
         else:
             self.sampling_model = self.model
-        eps = hps["tb_epsilon"]
-        hps["tb_epsilon"] = ast.literal_eval(eps) if isinstance(eps, str) else eps
 
-        self.mb_size = hps["global_batch_size"]
-        self.clip_grad_param = hps["clip_grad_param"]
+        self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_callback = {
-            "value": (lambda params: torch.nn.utils.clip_grad_value_(params, self.clip_grad_param)),
-            "norm": (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
+            "value": (lambda params: torch.nn.utils.clip_grad_value_(params, self.cfg.opt.clip_grad_param)),
+            "norm": (lambda params: torch.nn.utils.clip_grad_norm_(params, self.cfg.opt.clip_grad_param)),
             "none": (lambda x: None),
-        }[hps["clip_grad_type"]]
+        }[self.cfg.opt.clip_grad_type]
 
         # saving hyperparameters
         git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
-        self.hps["gflownet_git_hash"] = git_hash
+        self.cfg.git_hash = git_hash
 
-        os.makedirs(self.hps["log_dir"], exist_ok=True)
+        os.makedirs(self.cfg.log_dir, exist_ok=True)
         fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(self.hps.items())])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as f:
-            json.dump(self.hps, f)
+        with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
+            json.dump(config_to_dict(self.cfg), f)
 
     def step(self, loss: Tensor):
         loss.backward()
@@ -264,13 +263,11 @@ def main():
     hps = {
         "log_dir": "./logs/debug_run",
         "overwrite_existing_exp": True,
-        "qm9_h5_path": "/data/chem/qm9/qm9.h5",
         "num_training_steps": 10_000,
-        "validate_every": 1,
-        "lr_decay": 20000,
-        "sampling_tau": 0.99,
-        "num_data_loader_workers": 8,
-        "temperature_dist_params": (0.0, 64.0),
+        "num_workers": 8,
+        "opt.lr_decay": 20000,
+        "algo.sampling_tau": 0.99,
+        "task.seh.temperature_dist_params": (0.0, 64.0),
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

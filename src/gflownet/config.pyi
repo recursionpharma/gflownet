@@ -29,11 +29,14 @@ class Config:
             num_omega_samples: int
             penalty: float
         offline_ratio: float
+        sampling_tau: float
         class sql:
             alpha: float
             gamma: float
             penalty: float
         class tb:
+            Z_learning_rate: float
+            Z_lr_decay: float
             bootstrap_own_reward: bool
             do_correct_idempotent: bool
             do_parameterize_p_b: bool
@@ -45,76 +48,63 @@ class Config:
         valid_random_action_prob: float
         valid_sample_cond_info: bool
     checkpoint_every: Optional[int]
+    git_hash: Optional[str]
     hostname: Optional[str]
     log_dir: str
     """The directory where to store logs, checkpoints, and samples."""
-    name: ConfigNames
+    class model:
+        class graph_transformer:
+            ln_type: str
+            num_heads: int
+            num_mlp_layers: int
+        num_emb: int
+        num_layers: int
+        """The number of layers in the model"""
     num_final_gen_steps: Optional[int]
     num_training_steps: int
     num_workers: int
+    class opt:
+        adam_eps: float
+        clip_grad_param: float
+        clip_grad_type: str
+        learning_rate: float
+        """The learning rate"""
+        lr_decay: float
+        momentum: float
+        opt: str
+        weight_decay: float
+    overwrite_existing_exp: bool
     pickle_mp_messages: bool
     class replay:
         capacity: int
         hindsight_ratio: float
+        use: bool
         warmup: int
-    class seh:
-        ...
+    seed: int
     start_at_step: int
+    class task:
+        class seh:
+            num_thermometer_dim: int
+            temperature_dist_params: List[typing.Any]
+            temperature_sample_dist: str
+        class seh_moo:
+            focus_cosim: float
+            focus_limit_coef: float
+            focus_model_state_space_res: Optional[int]
+            focus_model_training_limits: Optional[typing.Tuple[int, int]]
+            focus_type: Union[list, str, NoneType]
+            max_train_it: Optional[int]
+            n_valid: int
+            n_valid_repeats: int
+            num_thermometer_dim: int
+            objectives: List[str]
+            preference_type: Optional[str]
+            temperature_parameters: Tuple[float, float]
+            temperature_sample_dist: str
+            use_steer_thermometer: bool
     validate_every: int
-class ConfigNames:
-    class algo:
-        class a2c:
-            entropy = "algo.a2c.entropy"
-            gamma = "algo.a2c.gamma"
-            penalty = "algo.a2c.penalty"
-        class fm:
-            balanced_loss = "algo.fm.balanced_loss"
-            correct_idempotent = "algo.fm.correct_idempotent"
-            espilon = "algo.fm.espilon"
-            leaf_coef = "algo.fm.leaf_coef"
-        global_batch_size = "algo.global_batch_size"
-        illegal_action_logreward = "algo.illegal_action_logreward"
-        max_edges = "algo.max_edges"
-        max_len = "algo.max_len"
-        max_nodes = "algo.max_nodes"
-        method = "algo.method"
-        class moql:
-            gamma = "algo.moql.gamma"
-            lambda_decay = "algo.moql.lambda_decay"
-            num_objectives = "algo.moql.num_objectives"
-            num_omega_samples = "algo.moql.num_omega_samples"
-            penalty = "algo.moql.penalty"
-        offline_ratio = "algo.offline_ratio"
-        class sql:
-            alpha = "algo.sql.alpha"
-            gamma = "algo.sql.gamma"
-            penalty = "algo.sql.penalty"
-        class tb:
-            bootstrap_own_reward = "algo.tb.bootstrap_own_reward"
-            do_correct_idempotent = "algo.tb.do_correct_idempotent"
-            do_parameterize_p_b = "algo.tb.do_parameterize_p_b"
-            do_subtb = "algo.tb.do_subtb"
-            epsilon = "algo.tb.epsilon"
-            reward_loss_multiplier = "algo.tb.reward_loss_multiplier"
-            subtb_max_len = "algo.tb.subtb_max_len"
-        train_random_action_prob = "algo.train_random_action_prob"
-        valid_random_action_prob = "algo.valid_random_action_prob"
-        valid_sample_cond_info = "algo.valid_sample_cond_info"
-    checkpoint_every = "checkpoint_every"
-    hostname = "hostname"
-    log_dir = "log_dir"
-    name = "name"
-    num_final_gen_steps = "num_final_gen_steps"
-    num_training_steps = "num_training_steps"
-    num_workers = "num_workers"
-    pickle_mp_messages = "pickle_mp_messages"
-    class replay:
-        capacity = "replay.capacity"
-        hindsight_ratio = "replay.hindsight_ratio"
-        warmup = "replay.warmup"
-    class seh:
-        ...
-    start_at_step = "start_at_step"
-    validate_every = "validate_every"
 def config_class(name): ...
 def config_from_dict(config_dict: dict[str, Any]) -> Config: ...
+def make_config() -> Config: ...
+def update_config(config: Config, config_dict: dict[str, Any]) -> Config: ...
+def config_to_dict(config: Config) -> dict[str, Any]: ...

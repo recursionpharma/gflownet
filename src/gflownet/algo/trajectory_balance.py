@@ -30,6 +30,8 @@ class TBConfig:
     do_correct_idempotent: bool = False
     do_parameterize_p_b: bool = False
     subtb_max_len: int = 128
+    Z_learning_rate: float = 1e-4
+    Z_lr_decay: float = 50_000
 
 
 class TrajectoryBalanceModel(nn.Module):
@@ -412,11 +414,11 @@ class TrajectoryBalance:
                 reward_losses = abs(log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap])
             else:
                 reward_losses = (log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap]).pow(2)
-            reward_loss = reward_losses.mean()
+            reward_loss = reward_losses.mean() * self.cfg.reward_loss_multiplier
         else:
             reward_loss = 0
 
-        loss = traj_losses.mean() + reward_loss * self.reward_loss_multiplier
+        loss = traj_losses.mean() + reward_loss
         info = {
             "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
             "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,

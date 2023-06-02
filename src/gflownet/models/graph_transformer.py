@@ -7,6 +7,14 @@ import torch_geometric.nn as gnn
 from torch_geometric.utils import add_self_loops
 
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
+from gflownet.config import Config, config_class
+
+
+@config_class("model.graph_transformer")
+class GraphTransformerConfig:
+    num_heads: int = 2
+    ln_type: str = "pre"
+    num_mlp_layers: int = 0
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -139,8 +147,7 @@ class GraphTransformer(nn.Module):
 
 
 class GraphTransformerGFN(nn.Module):
-    """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical. Meant for atom-wise
-    generation.
+    """GraphTransformer class for a GFlowNet which outputs a GraphActionCategorical.
 
     Outputs logits corresponding to the action types used by the env_ctx argument.
     """
@@ -148,11 +155,7 @@ class GraphTransformerGFN(nn.Module):
     def __init__(
         self,
         env_ctx,
-        num_emb=64,
-        num_layers=3,
-        num_heads=2,
-        num_mlp_layers=0,
-        ln_type="pre",
+        cfg: Config,
         num_graph_out=1,
         do_bck=False,
     ):
@@ -162,11 +165,12 @@ class GraphTransformerGFN(nn.Module):
             x_dim=env_ctx.num_node_dim,
             e_dim=env_ctx.num_edge_dim,
             g_dim=env_ctx.num_cond_dim,
-            num_emb=num_emb,
-            num_layers=num_layers,
-            num_heads=num_heads,
-            ln_type=ln_type,
+            num_emb=cfg.model.num_emb,
+            num_layers=cfg.model.num_layers,
+            num_heads=cfg.model.graph_transformer.num_heads,
+            ln_type=cfg.model.graph_transformer.ln_type,
         )
+        num_emb = cfg.model.num_emb
         num_final = num_emb
         num_glob_final = num_emb * 2
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
@@ -212,14 +216,14 @@ class GraphTransformerGFN(nn.Module):
         mlps = {}
         for atype in chain(env_ctx.action_type_order, env_ctx.bck_action_type_order if do_bck else []):
             num_in, num_out = self._action_type_to_num_inputs_outputs[atype]
-            mlps[atype.cname] = mlp(num_in, num_emb, num_out, num_mlp_layers)
+            mlps[atype.cname] = mlp(num_in, num_emb, num_out, cfg.model.graph_transformer.num_mlp_layers)
         self.mlps = nn.ModuleDict(mlps)
 
         self.do_bck = do_bck
         if do_bck:
             self.bck_action_type_order = env_ctx.bck_action_type_order
 
-        self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, num_mlp_layers)
+        self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
 

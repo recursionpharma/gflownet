@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 import ast
@@ -16,8 +17,6 @@ def _recursive_creative_setattr(o, keys, default, value):
         setattr(o, keys[0], value)
         return
     if not hasattr(o, keys[0]):
-        if default is None:
-            raise ValueError(f"Config value {keys[0]} not found")
         setattr(o, keys[0], default())
     _recursive_creative_setattr(getattr(o, keys[0]), keys[1:], default, value)
 
@@ -89,16 +88,12 @@ class Visitor(ast.NodeVisitor):
                 if t.__module__ != "builtins" and iname is not None:
                     imports.append(f"from {t.__module__} import {iname}")
 
-        def f(name, d, indentlevel, prefix=[], output_names=False):
+        def f(name, d, indentlevel):
             s = ""
             s += "    " * indentlevel + f"class {name}:\n"
-            if indentlevel:
-                prefix = prefix + [name]
             for k, v in sorted(d.items()):
                 if isinstance(v, dict):
-                    s += f(k, v, indentlevel + 1, prefix, output_names=output_names)
-                elif output_names:
-                    s += "    " * (indentlevel + 1) + f'{k} = "{".".join(prefix + [k])}"\n'
+                    s += f(k, v, indentlevel + 1)
                 else:
                     s += "    " * (indentlevel + 1) + f"{k}: {v.type}\n"
                     if v.docstring:
@@ -109,12 +104,13 @@ class Visitor(ast.NodeVisitor):
                 s += "    " * (indentlevel + 1) + "...\n"
             return s
 
-        self.config["name"] = ConfigAttr("ConfigNames", "")
         s = "\n".join(sorted(set(imports))) + "\n\n"
         s += f("Config", self.config, 0)
-        s += f("ConfigNames", self.config, 0, output_names=True)
         s += """def config_class(name): ...
 def config_from_dict(config_dict: dict[str, Any]) -> Config: ...
+def make_config() -> Config: ...
+def update_config(config: Config, config_dict: dict[str, Any]) -> Config: ...
+def config_to_dict(config: Config) -> dict[str, Any]: ...
 """
         with open(Path(__file__).parent / "config.pyi", "w") as f:
             f.write(s)
@@ -133,22 +129,32 @@ def config_from_dict(config_dict: dict[str, Any]) -> Config: ...
         self.generic_visit(node)
 
 
-class ConfigNames:
+class Config:
     pass
 
 
-class Config:
-    name: ConfigNames
-
-
-def config_from_dict(config_dict) -> Config:
+def make_config():
     config = _name_to_config.get("@base", Config)()
     for cname, cobj in sorted(_name_to_config.items()):
         if cname == "@base":
             continue
         _recursive_creative_setattr(config, cname.split("."), Config, cobj())
+    return config
+
+
+def update_config(config, config_dict):
     for cname, val in config_dict.items():
-        _recursive_creative_setattr(config, cname.split("."), None, val)
+        _recursive_creative_setattr(config, cname.split("."), Config, val)
+
+
+def config_from_dict(config_dict) -> Config:
+    config = make_config()
+    update_config(config, config_dict)
+    check_config(config)
+    return config
+
+
+def check_config(config):
     for cname, cobj in _name_to_config.items():
         if cname == "@base":
             continue
@@ -156,27 +162,26 @@ def config_from_dict(config_dict) -> Config:
         for name, t in cobj.__annotations__.items() if hasattr(cobj, "__annotations__") else []:
             if not hasattr(subcfg, name):
                 print(f"Warning, setting {cname}.{name} was declared but not defined in created config")
-    return config
 
 
-def update_names():
-    names = ConfigNames()
-
-    def set_names(cname, nameobj, target=None):
-        _recursive_creative_setattr(names, cname.split("."), ConfigNames, nameobj)
-        for attr_name in dir(nameobj if target is None else target):
-            if attr_name.startswith("__"):
-                continue  # ignore dunderscores
-            print(cname, attr_name)
-            setattr(nameobj, attr_name, ".".join(list(filter(None, cname.split("."))) + [attr_name]))
-
-    config = _name_to_config.get("@base", Config)()
-    set_names("", names, config)
-    for cname, cobj in sorted(_name_to_config.items()):
+def config_to_dict(config):
+    d = {}
+    config_classes = tuple(_name_to_config.values()) + (Config,)
+    for cname, _ in _name_to_config.items():
         if cname == "@base":
-            continue
-        set_names(cname, cobj())
-    Config.name = names
+            csplit = []
+            subcfg = config
+        else:
+            csplit = cname.split(".")
+            subcfg = _recursive_getattr(config, csplit)
+        for i in dir(subcfg):
+            if i.startswith("__"):
+                continue
+            o = getattr(subcfg, i)
+            if isinstance(o, config_classes):
+                continue
+            d[".".join(csplit + [i])] = o
+    return d
 
 
 def config_class(name):
@@ -187,7 +192,6 @@ def config_class(name):
             print(c, _name_to_config[name])
             raise ValueError("Redefining", name, "is not allowed; found", c, "and", _name_to_config[name])
         _name_to_config[name] = c
-        update_names()
         return c
 
     return decorator
@@ -221,3 +225,6 @@ if __name__ == "__main__":
         visitor.visit(root)
         visitor.finalize_module()
     visitor.output_stub()
+    print("Default config:")
+    d = config_to_dict(make_config())
+    print(json.dumps(d, indent=2, sort_keys=True))

@@ -10,7 +10,7 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-from gflownet.config import Config, config_class, config_from_dict
+from gflownet.config import Config, config_class, make_config, update_config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
@@ -36,6 +36,7 @@ class BaseConfig:
     """
 
     log_dir: str
+    seed: int = 0
     validate_every: int = 1000
     checkpoint_every: Optional[int] = None
     start_at_step: int = 0
@@ -44,6 +45,42 @@ class BaseConfig:
     num_workers: int = 0
     hostname: Optional[str] = None
     pickle_mp_messages: bool = False
+    git_hash: Optional[str] = None
+    overwrite_existing_exp: bool = True
+
+
+@config_class("opt")
+class OptimizerConfig:
+    """Generic configuration for optimizers
+
+    Attributes
+    ----------
+    learning_rate : float
+        The learning rate
+    """
+
+    opt: str = "adam"
+    learning_rate: float = 1e-4
+    lr_decay: float = 20_000
+    weight_decay: float = 1e-8
+    momentum: float = 0.9
+    clip_grad_type: str = "norm"
+    clip_grad_param: float = 10.0
+    adam_eps: float = 1e-8
+
+
+@config_class("model")
+class ModelConfig:
+    """Generic configuration for models
+
+    Attributes
+    ----------
+    num_layers : int
+        The number of layers in the model
+    """
+
+    num_layers: int = 3
+    num_emb: int = 128
 
 
 @config_class("algo")
@@ -77,6 +114,7 @@ class AlgoConfig:
     train_random_action_prob: float = 0.0
     valid_random_action_prob: float = 0.0
     valid_sample_cond_info: bool = True
+    sampling_tau: float = 0.0
 
 
 class GFNAlgorithm:
@@ -157,7 +195,7 @@ class GFNTrainer:
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
         self.sampling_model: nn.Module
-        self.replay_buffer: ReplayBuffer
+        self.replay_buffer: Optional[ReplayBuffer]
         self.mb_size: int
         self.env: GraphBuildingEnv
         self.ctx: GraphBuildingEnvContext
@@ -168,8 +206,10 @@ class GFNTrainer:
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
         #   - The values passed in the constructor, typically what is called by the used
-        # This is the final config, obtained by merging the three sources:
-        self.cfg = config_from_dict({**self.default_hps(), **hps})
+        # The final config is obtained by merging the three sources
+        self.cfg = make_config()
+        self.set_default_hps(self.cfg)
+        update_config(self.cfg, hps)
         self.device = device
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
@@ -183,7 +223,7 @@ class GFNTrainer:
 
         self.setup()
 
-    def default_hps(self) -> Dict[str, Any]:
+    def set_default_hps(self, base: Config):
         raise NotImplementedError()
 
     def setup(self):
