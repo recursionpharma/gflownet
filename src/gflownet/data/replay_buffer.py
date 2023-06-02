@@ -3,11 +3,20 @@ from typing import List
 import numpy as np
 import torch
 
+from gflownet.config import Config, config_class
+
+
+@config_class("replay")
+class ReplayConfig:
+    capacity: int
+    warmup: int
+    hindsight_ratio: float = 0
+
 
 class ReplayBuffer(object):
-    def __init__(self, capacity: int = 100000, warmup: int = 0, rng: np.random.Generator = None):
-        self.capacity = capacity
-        self.warmup = warmup
+    def __init__(self, cfg: Config, rng: np.random.Generator = None):
+        self.capacity = cfg.replay.capacity
+        self.warmup = cfg.replay.warmup
         assert self.warmup <= self.capacity, "ReplayBuffer warmup must be smaller than capacity"
 
         self.buffer: List[tuple] = []

@@ -14,9 +14,19 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
+from gflownet.train import GFNTask
 from gflownet.models.graph_transformer import GraphTransformer, mlp
-
+from gflownet.config import config_class, Config
 from .graph_sampling import GraphSampler
+
+
+@config_class("algo.moql")
+class MOQLConfig:
+    gamma: float = 1
+    num_omega_samples: int = 32
+    num_objectives: int = 2
+    lambda_decay: int = 10_000
+    penalty: float = -10
 
 
 # Custom models are necessary for envelope Q Learning
@@ -165,10 +175,9 @@ class EnvelopeQLearning:
         self,
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
+        task: GFNTask,
         rng: np.random.RandomState,
-        hps: Dict[str, Any],
-        max_len=None,
-        max_nodes=None,
+        cfg: Config,
     ):
         """Envelope Q-Learning implementation, see
         A Generalized Algorithm for Multi-Objective Reinforcement Learning and Policy Adaptation,
@@ -187,31 +196,28 @@ class EnvelopeQLearning:
             A context.
         rng: np.random.RandomState
             rng used to take random actions
-        hps: Dict[str, Any]
-            Hyperparameter dictionary, see above for used keys.
-        max_len: int
-            If not None, ends trajectories of more than max_len steps.
-        max_nodes: int
-            If not None, ends trajectories of graphs with more than max_nodes steps (illegal action).
+        cfg: Config
+            The experiment configuration
         """
         self.ctx = ctx
         self.env = env
+        self.task = task
         self.rng = rng
-        self.max_len = max_len
-        self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps["illegal_action_logreward"]
-        self.gamma = hps.get("moql_gamma", 1)
-        self.num_objectives = len(hps["objectives"])
-        self.num_omega_samples = hps.get("moql_num_omega_samples", 32)
-        self.Lambda_decay = hps.get("moql_lambda_decay", 10_000)
-        self.invalid_penalty = hps.get("moql_penalty", -10)
+        self.max_len = cfg.algo.max_len
+        self.max_nodes = cfg.algo.max_nodes
+        self.illegal_action_logreward = cfg.algo.illegal_action_logreward
+        self.gamma = cfg.algo.moql.gamma
+        self.num_objectives = cfg.algo.moql.num_objectives
+        self.num_omega_samples = cfg.algo.moql.num_omega_samples
+        self.lambda_decay = cfg.algo.moql.lambda_decay
+        self.invalid_penalty = cfg.algo.moql.penalty
         self._num_updates = 0
         assert self.gamma == 1
         self.bootstrap_own_reward = False
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
-        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
+        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, rng, self.sample_temp)
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
@@ -396,7 +402,7 @@ class EnvelopeQLearning:
         # and L_B
         loss_B = abs((w * y).sum(1) - (w * Q_saw).sum(1))
 
-        Lambda = 1 - self.Lambda_decay / (self.Lambda_decay + self._num_updates)
+        Lambda = 1 - self.lambda_decay / (self.lambda_decay + self._num_updates)
         losses = (1 - Lambda) * loss_A + Lambda * loss_B
         self._num_updates += 1
 

@@ -10,6 +10,7 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from gflownet.config import Config, config_class, config_from_dict
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
@@ -24,11 +25,66 @@ FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
 RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
 
 
+@config_class("@base")
+class BaseConfig:
+    """Base configuration for training
+
+    Attributes
+    ----------
+    log_dir : str
+        The directory where to store logs, checkpoints, and samples.
+    """
+
+    log_dir: str
+    validate_every: int = 1000
+    checkpoint_every: Optional[int] = None
+    start_at_step: int = 0
+    num_final_gen_steps: Optional[int] = None
+    num_training_steps: int = 10_000
+    num_workers: int = 0
+    hostname: Optional[str] = None
+    pickle_mp_messages: bool = False
+
+
+@config_class("algo")
+class AlgoConfig:
+    """Generic configuration for algorithms
+
+    Attributes
+    ----------
+    method : str
+        The name of the algorithm to use (e.g. "TB")
+    max_len : int
+        The maximum length of a trajectory
+    max_nodes : int
+        The maximum number of nodes in a generated graph
+    max_edges : int
+        The maximum number of edges in a generated graph
+    illegal_action_logreward : float
+        The log reward an agent gets for illegal actions
+    offline_ratio: float
+        The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
+        `self.sampling_model`
+    """
+
+    method: str = "TB"
+    global_batch_size: int = 64
+    max_len: int = 128
+    max_nodes: int = 128
+    max_edges: int = 128
+    illegal_action_logreward: float = -100
+    offline_ratio: float = 0.5
+    train_random_action_prob: float = 0.0
+    valid_random_action_prob: float = 0.0
+    valid_sample_cond_info: bool = True
+
+
 class GFNAlgorithm:
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
         """Computes the loss for a batch of data, and proves logging informations
+
         Parameters
         ----------
         model: nn.Module
@@ -37,6 +93,7 @@ class GFNAlgorithm:
             A batch of graphs
         num_bootstrap: Optional[int]
             The number of trajectories with reward targets in the batch (if applicable).
+
         Returns
         -------
         loss: Tensor
@@ -107,14 +164,13 @@ class GFNTrainer:
         self.task: GFNTask
         self.algo: GFNAlgorithm
 
-        # Override default hyperparameters with the constructor arguments
-        self.hps = {**self.default_hps(), **hps}
+        # There are three sources of config values
+        #   - The default values specified in individual config classes
+        #   - The default values specified in the `default_hps` method, typically what is defined by a task
+        #   - The values passed in the constructor, typically what is called by the used
+        # This is the final config, obtained by merging the three sources:
+        self.cfg = config_from_dict({**self.default_hps(), **hps})
         self.device = device
-        # The number of processes spawned to sample object and do CPU work
-        self.num_workers: int = self.hps.get("num_data_loader_workers", 0)
-        # The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
-        # `self.sampling_model`.
-        self.offline_ratio = self.hps.get("offline_ratio", 0.5)
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1
         # Print the loss every `self.print_every` iterations
@@ -124,8 +180,6 @@ class GFNTrainer:
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
-        # Pickle messages to reduce load on shared memory (conversely, increases load on CPU)
-        self.pickle_messages = hps.get("mp_pickle_messages", False)
 
         self.setup()
 
@@ -143,12 +197,12 @@ class GFNTrainer:
         data worker process (only if the number of workers is non-zero)."""
         if send_to_device:
             obj.to(self.device)
-        if self.num_workers > 0 and obj is not None:
+        if self.cfg.num_workers > 0 and obj is not None:
             placeholder = mp_object_wrapper(
                 obj,
-                self.num_workers,
+                self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical),
-                pickle_messages=self.pickle_messages,
+                pickle_messages=self.cfg.pickle_mp_messages,
             )
             return placeholder, torch.device("cpu")
         else:
@@ -163,27 +217,27 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.training_data,
             model,
-            self.mb_size,
+            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
             replay_buffer=replay_buffer,
-            ratio=self.offline_ratio,
-            log_dir=os.path.join(self.hps["log_dir"], "train"),
-            random_action_prob=self.hps.get("random_action_prob", 0.0),
-            hindsight_ratio=self.hps.get("hindsight_ratio", 0.0),
+            ratio=self.cfg.algo.offline_ratio,
+            log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
+            random_action_prob=self.cfg.algo.train_random_action_prob,
+            hindsight_ratio=self.cfg.replay.hindsight_ratio,
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(
             iterator,
             batch_size=None,
-            num_workers=self.num_workers,
-            persistent_workers=self.num_workers > 0,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
             # The 2 here is an odd quirk of torch 1.10, it is fixed and
             # replaced by None in torch 2.
-            prefetch_factor=1 if self.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else 2,
         )
 
     def build_validation_data_loader(self) -> DataLoader:
@@ -191,25 +245,25 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.test_data,
             model,
-            self.mb_size,
+            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
             ratio=self.valid_offline_ratio,
-            log_dir=os.path.join(self.hps["log_dir"], "valid"),
-            sample_cond_info=self.hps.get("valid_sample_cond_info", True),
+            log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
+            sample_cond_info=self.cfg.algo.valid_sample_cond_info,
             stream=False,
-            random_action_prob=self.hps.get("valid_random_action_prob", 0.0),
+            random_action_prob=self.cfg.algo.valid_random_action_prob,
         )
         for hook in self.valid_sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(
             iterator,
             batch_size=None,
-            num_workers=self.num_workers,
-            persistent_workers=self.num_workers > 0,
-            prefetch_factor=1 if self.num_workers else 2,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            prefetch_factor=1 if self.cfg.num_workers else 2,
         )
 
     def build_final_data_loader(self) -> DataLoader:
@@ -217,26 +271,26 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.training_data,
             model,
-            self.mb_size,
+            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
             replay_buffer=None,
             ratio=0.0,
-            log_dir=os.path.join(self.hps["log_dir"], "final"),
+            log_dir=os.path.join(self.cfg.log_dir, "final"),
             random_action_prob=0.0,
             hindsight_ratio=0.0,
-            init_train_iter=self.hps["num_training_steps"],
+            init_train_iter=self.cfg.num_training_steps,
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
         return torch.utils.data.DataLoader(
             iterator,
             batch_size=None,
-            num_workers=self.num_workers,
-            persistent_workers=self.num_workers > 0,
-            prefetch_factor=1 if self.num_workers else 2,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            prefetch_factor=1 if self.cfg.num_workers else 2,
         )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
@@ -248,8 +302,8 @@ class GFNTrainer:
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
         except ValueError as e:
-            os.makedirs(self.hps["log_dir"], exist_ok=True)
-            torch.save([self.model.state_dict(), batch, loss, info], open(self.hps["log_dir"] + "/dump.pkl", "wb"))
+            os.makedirs(self.cfg.log_dir, exist_ok=True)
+            torch.save([self.model.state_dict(), batch, loss, info], open(self.cfg.log_dir + "/dump.pkl", "wb"))
             raise e
 
         if step_info is not None:
@@ -269,21 +323,22 @@ class GFNTrainer:
         validation every `validate_every` minibatches.
         """
         if logger is None:
-            logger = create_logger(logfile=self.hps["log_dir"] + "/train.log")
+            logger = create_logger(logfile=self.cfg.log_dir + "/train.log")
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         epoch_length = max(len(self.training_data), 1)
-        valid_freq = self.hps.get("validate_every", 0)
+        valid_freq = self.cfg.validate_every
         # If checkpoint_every is not specified, checkpoint at every validation epoch
-        ckpt_freq = self.hps.get("checkpoint_every", valid_freq)
+        ckpt_freq = self.cfg.checkpoint_every if self.cfg.checkpoint_every is not None else valid_freq
         train_dl = self.build_training_data_loader()
         valid_dl = self.build_validation_data_loader()
-        if self.hps.get("num_final_gen_steps", 0) > 0:
+        if self.cfg.num_final_gen_steps:
             final_dl = self.build_final_data_loader()
         callbacks = self.build_callbacks()
-        start = self.hps.get("start_at_step", 0) + 1
+        start = self.cfg.start_at_step + 1
+        num_training_steps = self.cfg.num_training_steps
         logger.info("Starting training")
-        for it, batch in zip(range(start, 1 + self.hps["num_training_steps"]), cycle(train_dl)):
+        for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
@@ -308,13 +363,13 @@ class GFNTrainer:
                 self.log(end_metrics, it, "valid_end")
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
-        self._save_state(self.hps["num_training_steps"])
+        self._save_state(num_training_steps)
 
-        num_final_gen_steps = self.hps.get("num_final_gen_steps", 0)
-        if num_final_gen_steps > 0:
+        num_final_gen_steps = self.cfg.num_final_gen_steps
+        if num_final_gen_steps:
             logger.info(f"Generating final {num_final_gen_steps} batches ...")
             for it, batch in zip(
-                range(self.hps["num_training_steps"], self.hps["num_training_steps"] + num_final_gen_steps + 1),
+                range(num_training_steps, num_training_steps + num_final_gen_steps + 1),
                 cycle(final_dl),
             ):
                 pass
@@ -324,15 +379,15 @@ class GFNTrainer:
         torch.save(
             {
                 "models_state_dict": [self.model.state_dict()],
-                "hps": self.hps,
+                "cfg": self.cfg,
                 "step": it,
             },
-            open(pathlib.Path(self.hps["log_dir"]) / "model_state.pt", "wb"),
+            open(pathlib.Path(self.cfg.log_dir) / "model_state.pt", "wb"),
         )
 
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
-            self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.hps["log_dir"])
+            self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
 

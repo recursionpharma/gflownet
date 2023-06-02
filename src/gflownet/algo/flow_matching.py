@@ -16,6 +16,16 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
 )
 
+from gflownet.config import config_class, Config
+
+
+@config_class("algo.fm")
+class FMConfig:
+    espilon: float = 1e-38
+    balanced_loss: bool = False
+    leaf_coef: float = 10
+    correct_idempotent: bool = False
+
 
 def relabel(ga: GraphAction, g: Graph):
     """Relabel the nodes for g to 0-N, and the graph action ga applied to g.
@@ -41,17 +51,15 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         rng: np.random.RandomState,
-        hps: Dict[str, Any],
-        max_len=None,
-        max_nodes=None,
+        cfg: Config,
     ):
-        super().__init__(env, ctx, rng, hps, max_len=max_len, max_nodes=max_nodes)
-        self.fm_epsilon = torch.as_tensor(hps.get("fm_epsilon", 1e-38)).log()
+        super().__init__(env, ctx, rng, cfg)
+        self.fm_epsilon = torch.as_tensor(cfg.algo.fm.epsilon).log()
         # We include the "balanced loss" as a possibility to reproduce results from the FM paper, but
         # in a number of settings the regular loss is more stable.
-        self.fm_balanced_loss = hps.get("fm_balanced_loss", False)
-        self.fm_leaf_coef = hps.get("fm_leaf_coef", 10)
-        self.correct_idempotent = self.correct_idempotent or hps.get("fm_correct_idempotent", False)
+        self.fm_balanced_loss = cfg.algo.fm.balanced_loss
+        self.fm_leaf_coef = cfg.algo.fm.leaf_coef
+        self.correct_idempotent = self.correct_idempotent or cfg.algo.fm.correct_idempotent
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information

@@ -12,6 +12,7 @@ from rdkit import Chem, RDLogger
 from torch.utils.data import Dataset, IterableDataset
 
 from gflownet.data.replay_buffer import ReplayBuffer
+from gflownet.config import Config, config_class
 
 
 class SamplingIterator(IterableDataset):
@@ -28,7 +29,7 @@ class SamplingIterator(IterableDataset):
         self,
         dataset: Dataset,
         model: nn.Module,
-        batch_size: int,
+        cfg: Config,
         ctx,
         algo,
         task,
@@ -69,12 +70,13 @@ class SamplingIterator(IterableDataset):
             If False, then the dataset is a dataset of preferences (e.g. used to validate the model)
 
         """
+        self.cfg = cfg
         self.data = dataset
         self.model = model
         self.replay_buffer = replay_buffer
-        self.batch_size = batch_size
-        self.offline_batch_size = int(np.ceil(batch_size * ratio))
-        self.online_batch_size = int(np.floor(batch_size * (1 - ratio)))
+        self.batch_size = self.cfg.algo.global_batch_size
+        self.offline_batch_size = int(np.ceil(self.batch_size * ratio))
+        self.online_batch_size = int(np.floor(self.batch_size * (1 - ratio)))
         self.ratio = ratio
         self.ctx = ctx
         self.algo = algo
@@ -92,7 +94,7 @@ class SamplingIterator(IterableDataset):
         # then "offline" now refers to cond info and online to x, so no duplication and we don't end
         # up with 2*batch_size accidentally
         if not sample_cond_info:
-            self.offline_batch_size = self.online_batch_size = batch_size
+            self.offline_batch_size = self.online_batch_size = self.batch_size
 
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes

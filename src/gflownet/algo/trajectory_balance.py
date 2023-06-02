@@ -1,4 +1,4 @@
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -18,18 +18,18 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
-from gflownet.config import config_class, _name_to_config
+from gflownet.config import config_class, Config
 
 
 @config_class("algo.tb")
 class TBConfig:
-    illegal_action_logreward: float = -100.0
     bootstrap_own_reward: bool = False
-    epsilon: float = None
-
-
-print("Hello from TB")
-print(_name_to_config)
+    epsilon: Union[float, None] = None
+    reward_loss_multiplier: float = 1.0
+    do_subtb: bool = False
+    do_correct_idempotent: bool = False
+    do_parameterize_p_b: bool = False
+    subtb_max_len: int = 128
 
 
 class TrajectoryBalanceModel(nn.Module):
@@ -48,20 +48,12 @@ class TrajectoryBalance:
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         rng: np.random.RandomState,
-        hps: Dict[str, Any],
-        max_len=None,
-        max_nodes=None,
+        cfg: Config,
     ):
         """TB implementation, see
         "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
         Emmanuel Bengio, Chen Sun, Yoshua Bengio"
         https://arxiv.org/abs/2201.13259
-
-        Hyperparameters used:
-        illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
-        bootstrap_own_reward: bool, if True, uses the .reward batch data to predict rewards for sampled data
-        tb_epsilon: float, if not None, adds this epsilon in the numerator and denominator of the log-ratio
-        reward_loss_multiplier: float, multiplying constant for the bootstrap loss.
 
         Parameters
         ----------
@@ -71,22 +63,16 @@ class TrajectoryBalance:
             A context.
         rng: np.random.RandomState
             rng used to take random actions
-        hps: Dict[str, Any]
-            Hyperparameter dictionary, see above for used keys.
-        max_len: int
-            If not None, ends trajectories of more than max_len steps.
-        max_nodes: int
-            If not None, ends trajectories of graphs with more than max_nodes steps (illegal action).
+        hps: Config
+            Hyperparameters
         """
         self.ctx = ctx
         self.env = env
         self.rng = rng
-        self.max_len = max_len
-        self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps["illegal_action_logreward"]
-        self.bootstrap_own_reward = hps["bootstrap_own_reward"]
-        self.epsilon = hps["tb_epsilon"]
-        self.reward_loss_multiplier = hps.get("reward_loss_multiplier", 1)
+        self.global_cfg = cfg
+        self.cfg = cfg.algo.tb
+        self.max_len = cfg.algo.max_len
+        self.max_nodes = cfg.algo.max_nodes
         # Experimental flags
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = False
@@ -95,22 +81,19 @@ class TrajectoryBalance:
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
-        self.is_doing_subTB = hps.get("tb_do_subtb", False)
-        self.correct_idempotent = hps.get("tb_correct_idempotent", False)
-        self.p_b_is_parameterized = hps.get("tb_p_b_is_parameterized", False)
 
         self.graph_sampler = GraphSampler(
             ctx,
             env,
-            max_len,
-            max_nodes,
+            cfg.algo.max_len,
+            cfg.algo.max_nodes,
             rng,
             self.sample_temp,
-            correct_idempotent=self.correct_idempotent,
-            pad_with_terminal_state=self.p_b_is_parameterized,
+            correct_idempotent=self.cfg.do_correct_idempotent,
+            pad_with_terminal_state=self.cfg.do_parameterize_p_b,
         )
-        if self.is_doing_subTB:
-            self._subtb_max_len = hps.get("tb_subtb_max_len", max_len + 2 if max_len is not None else 128)
+        if self.cfg.do_subtb:
+            self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(
@@ -164,7 +147,7 @@ class TrajectoryBalance:
         trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [
-                self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
+                self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)
                 for gp, _ in traj["traj"][1:]
             ] + [1]
             traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(self.ctx.device)
@@ -240,7 +223,7 @@ class TrajectoryBalance:
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
         batch.actions = torch.tensor(actions)
-        if self.p_b_is_parameterized:
+        if self.cfg.do_parameterize_p_b:
             batch.bck_actions = torch.tensor(
                 [
                     self.ctx.GraphAction_to_aidx(g, a)
@@ -251,7 +234,7 @@ class TrajectoryBalance:
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
-        if self.correct_idempotent:
+        if self.cfg.do_correct_idempotent:
             # Every timestep is a (graph_a, action, graph_b) triple
             agraphs = [i[0] for tj in trajs for i in tj["traj"]]
             # Here we start at the 1th timestep and append the result
@@ -263,7 +246,7 @@ class TrajectoryBalance:
             ]
             batch.ip_actions = torch.tensor(sum(ipa, []))
             batch.ip_lens = torch.tensor([len(i) for i in ipa])
-            if self.p_b_is_parameterized:
+            if self.cfg.do_parameterize_p_b:
                 # Here we start at the 0th timestep and prepend None (it will be unused)
                 bgraphs = sum([[None] + [i[0] for i in tj["traj"][:-1]] for tj in trajs], [])
                 gactions = [i for tj in trajs for i in tj["bck_a"]]
@@ -294,7 +277,9 @@ class TrajectoryBalance:
         log_rewards = batch.log_rewards
         # Clip rewards
         assert log_rewards.ndim == 1
-        clip_log_R = torch.maximum(log_rewards, torch.tensor(self.illegal_action_logreward, device=dev)).float()
+        clip_log_R = torch.maximum(
+            log_rewards, torch.tensor(self.global_cfg.illegal_action_logreward, device=dev)
+        ).float()
         cond_info = batch.cond_info
         invalid_mask = 1 - batch.is_valid
 
@@ -307,7 +292,7 @@ class TrajectoryBalance:
 
         # Forward pass of the model, returns a GraphActionCategorical representing the forward
         # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
-        if self.p_b_is_parameterized:
+        if self.cfg.do_parameterize_p_b:
             fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
         else:
             fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
@@ -318,7 +303,7 @@ class TrajectoryBalance:
         # Compute trajectory balance objective
         log_Z = model.logZ(cond_info)[:, 0]
         # Compute the log prob of each action in the trajectory
-        if self.correct_idempotent:
+        if self.cfg.do_correct_idempotent:
             # If we want to correct for idempotent actions, we need to sum probabilities
             # i.e. to compute P(s' | s) = sum_{a that lead to s'} P(a|s)
             # here we compute the indices of the graph that each action corresponds to, ip_lens
@@ -334,7 +319,7 @@ class TrajectoryBalance:
             # scatter(small number) = 0 on CUDA
             log_p_F = p.clamp(1e-30).log()
 
-            if self.p_b_is_parameterized:
+            if self.cfg.do_parameterize_p_b:
                 # Now we repeat this but for the backward policy
                 bck_ip_batch_idces = torch.arange(batch.bck_ip_lens.shape[0], device=dev).repeat_interleave(
                     batch.bck_ip_lens
@@ -347,14 +332,14 @@ class TrajectoryBalance:
         else:
             # Else just naively take the logprob of the actions we took
             log_p_F = fwd_cat.log_prob(batch.actions)
-            if self.p_b_is_parameterized:
+            if self.cfg.do_parameterize_p_b:
                 log_p_B = bck_cat.log_prob(batch.bck_actions)
 
-        if self.p_b_is_parameterized:
+        if self.cfg.do_parameterize_p_b:
             # If we're modeling P_B then trajectories are padded with a virtual terminal state sF,
             # zero-out the logP_F of those states
             log_p_F[final_graph_idx] = 0
-            if self.is_doing_subTB:
+            if self.cfg.do_subtb:
                 # Force the pad states' F(s) prediction to be R
                 per_graph_out[final_graph_idx, 0] = clip_log_R
 
@@ -377,7 +362,7 @@ class TrajectoryBalance:
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
-        if self.is_doing_subTB:
+        if self.cfg.do_subtb:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
             # The position of the first graph of each trajectory
@@ -396,9 +381,9 @@ class TrajectoryBalance:
                 # (thus the `numerator - 1`). Why 1? Intuition?
                 denominator = denominator * (1 - invalid_mask) + invalid_mask * (numerator.detach() - 1)
 
-            if self.epsilon is not None:
+            if self.cfg.epsilon is not None:
                 # Numerical stability epsilon
-                epsilon = torch.tensor([self.epsilon], device=dev).float()
+                epsilon = torch.tensor([self.cfg.epsilon], device=dev).float()
                 numerator = torch.logaddexp(numerator, epsilon)
                 denominator = torch.logaddexp(denominator, epsilon)
             if self.tb_loss_is_mae:
@@ -421,7 +406,7 @@ class TrajectoryBalance:
             # undercount (by 2N) the contribution of each loss
             traj_losses = factor * traj_losses * num_trajs
 
-        if self.bootstrap_own_reward:
+        if self.cfg.bootstrap_own_reward:
             num_bootstrap = num_bootstrap or len(log_rewards)
             if self.reward_loss_is_mae:
                 reward_losses = abs(log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap])
@@ -521,7 +506,7 @@ class TrajectoryBalance:
         for ep in range(traj_lengths.shape[0]):
             offset = cumul_lens[ep]
             T = int(traj_lengths[ep])
-            if self.p_b_is_parameterized:
+            if self.cfg.do_parameterize_p_b:
                 # The length of the trajectory is the padded length, reduce by 1
                 T -= 1
             idces, dests = self._precomp[T - 1]

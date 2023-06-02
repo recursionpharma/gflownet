@@ -6,6 +6,7 @@ import torch_geometric.data as gd
 from torch_scatter import scatter
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance, TrajectoryBalanceModel
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext
 
 
@@ -19,11 +20,9 @@ class MultiObjectiveReinforce(TrajectoryBalance):
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         rng: np.random.RandomState,
-        hps: Dict[str, Any],
-        max_len=None,
-        max_nodes=None,
+        cfg: Config,
     ):
-        super().__init__(env, ctx, rng, hps, max_len, max_nodes)
+        super().__init__(env, ctx, rng, cfg)
 
     def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
         """Compute  multi objective REINFORCE loss over trajectories contained in the batch"""
