@@ -65,7 +65,7 @@ class TrajectoryBalance:
             A context.
         rng: np.random.RandomState
             rng used to take random actions
-        hps: Config
+        cfg: Config
             Hyperparameters
         """
         self.ctx = ctx

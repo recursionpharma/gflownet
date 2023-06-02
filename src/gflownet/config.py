@@ -91,7 +91,7 @@ class Visitor(ast.NodeVisitor):
         def f(name, d, indentlevel):
             s = ""
             s += "    " * indentlevel + f"class {name}:\n"
-            for k, v in sorted(d.items()):
+            for k, v in sorted(d.items(), key=lambda x: "_" + x[0] if not isinstance(x[1], dict) else x[0]):
                 if isinstance(v, dict):
                     s += f(k, v, indentlevel + 1)
                 else:
