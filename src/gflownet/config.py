@@ -217,7 +217,7 @@ if __name__ == "__main__":
     repo = subprocess.check_output("git rev-parse --show-toplevel", shell=True).decode().strip()  # nosec
     print("Working in repo", repo)
     files = (
-        subprocess.check_output(f'git ls-files | grep -e ".py$"', shell=True, cwd=repo)  # nosec
+        subprocess.check_output('git ls-files | grep -e ".py$"', shell=True, cwd=repo)  # nosec
         .decode()
         .strip()
         .splitlines()

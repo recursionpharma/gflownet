@@ -41,7 +41,7 @@ class Config:
         class fm:
             balanced_loss: bool
             correct_idempotent: bool
-            espilon: float
+            epsilon: float
             leaf_coef: float
 
         class moql:

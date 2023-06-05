@@ -280,7 +280,7 @@ class TrajectoryBalance:
         # Clip rewards
         assert log_rewards.ndim == 1
         clip_log_R = torch.maximum(
-            log_rewards, torch.tensor(self.global_cfg.illegal_action_logreward, device=dev)
+            log_rewards, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
         ).float()
         cond_info = batch.cond_info
         invalid_mask = 1 - batch.is_valid
