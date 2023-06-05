@@ -9,8 +9,13 @@ from typing import Any
 
 from numpydoc.docscrape import NumpyDocString
 
-_recursive_dd = lambda: defaultdict(_recursive_dd)
-_recursive_dd_get = lambda d, keys: _recursive_dd_get(d[keys[0]], keys[1:]) if len(keys) else d
+
+def _recursive_dd():
+    return defaultdict(_recursive_dd)
+
+
+def _recursive_dd_get(d, keys):
+    return _recursive_dd_get(d[keys[0]], keys[1:]) if len(keys) else d
 
 
 def _recursive_creative_setattr(o, keys, default, value):
@@ -209,10 +214,13 @@ else:
 
 if __name__ == "__main__":
     __main__sentinel = True
-    repo = subprocess.check_output("git rev-parse --show-toplevel", shell=True).decode().strip()
+    repo = subprocess.check_output("git rev-parse --show-toplevel", shell=True).decode().strip()  # nosec
     print("Working in repo", repo)
     files = (
-        subprocess.check_output(f'git ls-files | grep -e ".py$"', shell=True, cwd=repo).decode().strip().splitlines()
+        subprocess.check_output(f'git ls-files | grep -e ".py$"', shell=True, cwd=repo)  # nosec
+        .decode()
+        .strip()
+        .splitlines()
     )
 
     visitor = Visitor()
