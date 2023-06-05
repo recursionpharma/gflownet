@@ -9,6 +9,7 @@ from torch import Tensor
 from torch_scatter import scatter, scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
+from gflownet.config import Config, config_class
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
@@ -18,7 +19,6 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
-from gflownet.config import config_class, Config
 
 
 @config_class("algo.tb")

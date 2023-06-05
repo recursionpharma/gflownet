@@ -19,10 +19,10 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from gflownet.algo.advantage_actor_critic import A2C
+from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.algo.flow_matching import FlowMatching
-from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import Config, config_class, config_to_dict
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
@@ -30,7 +30,6 @@ from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
-from gflownet.config import config_class, Config, config_to_dict
 
 
 @config_class("task.seh")

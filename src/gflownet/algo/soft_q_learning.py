@@ -8,7 +8,7 @@ from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.config import config_class, Config
+from gflownet.config import Config, config_class
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 
 

@@ -6,8 +6,9 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from torch import Tensor
 
+from gflownet.config import Config, config_class
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
-from gflownet.config import config_class, Config
+
 from .graph_sampling import GraphSampler
 
 

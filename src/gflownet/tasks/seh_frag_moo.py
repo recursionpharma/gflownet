@@ -3,7 +3,7 @@ import os
 import pathlib
 import shutil
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Tuple, Union, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -15,9 +15,9 @@ from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
 from torch.utils.data import Dataset
 
-
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
+from gflownet.config import Config, config_class, config_to_dict
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
@@ -27,7 +27,6 @@ from gflownet.utils import metrics, sascore
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import thermometer
-from gflownet.config import config_class, Config, config_to_dict
 
 
 @config_class("task.seh_moo")

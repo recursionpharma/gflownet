@@ -1,11 +1,12 @@
-import json
-from pathlib import Path
-import subprocess
 import ast
-from collections import defaultdict, namedtuple
 import importlib.util
+import json
+import subprocess
 import sys
+from collections import defaultdict, namedtuple
+from pathlib import Path
 from typing import Any
+
 from numpydoc.docscrape import NumpyDocString
 
 _recursive_dd = lambda: defaultdict(_recursive_dd)

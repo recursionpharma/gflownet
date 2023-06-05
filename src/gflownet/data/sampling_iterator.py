@@ -11,8 +11,8 @@ import torch.nn as nn
 from rdkit import Chem, RDLogger
 from torch.utils.data import Dataset, IterableDataset
 
-from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.config import Config, config_class
+from gflownet.data.replay_buffer import ReplayBuffer
 
 
 class SamplingIterator(IterableDataset):

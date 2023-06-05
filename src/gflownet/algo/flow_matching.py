@@ -8,6 +8,7 @@ import torch_geometric.data as gd
 from torch_scatter import scatter
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import Config, config_class
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
@@ -15,8 +16,6 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnv,
     GraphBuildingEnvContext,
 )
-
-from gflownet.config import config_class, Config
 
 
 @config_class("algo.fm")
