@@ -5,7 +5,7 @@ import subprocess
 import sys
 from collections import defaultdict, namedtuple
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Union
 
 from numpydoc.docscrape import NumpyDocString
 
@@ -33,10 +33,59 @@ def _recursive_getattr(o, keys):
     return _recursive_getattr(getattr(o, keys[0]), keys[1:])
 
 
+def get_typing_imports(ann: Any) -> List[str]:
+    if hasattr(ann, "__origin__"):
+        origin = ann.__origin__
+        if origin is Union:
+            args = ann.__args__
+            return (["Optional"] if type(None) in args and len(args) == 2 else ["Union"]) + sum(
+                [get_typing_imports(arg) for arg in args], []
+            )
+        elif origin is Dict:
+            args = ann.__args__
+            return ["Dict"] + get_typing_imports(args[0]) + get_typing_imports(args[1])
+        else:
+            elements = ann.__args__
+            ann_import = [origin.__name__] if origin.__module__ != "builtins" else []
+            return ann_import + sum([get_typing_imports(e) for e in elements], [])
+    elif ann is Any:
+        return ["Any"]
+    return []
+
+
+def type_to_code_str(typing_instance: Any) -> str:
+    if hasattr(typing_instance, "__origin__"):
+        origin = typing_instance.__origin__
+        if origin is Union:
+            args = typing_instance.__args__
+            which = "Optional" if type(None) in args and len(args) == 2 else "Union"
+            str_ann = (
+                f"{which}["
+                + ", ".join([type_to_code_str(arg) for arg in args if which == "Union" or arg is not type(None)])
+                + "]"
+            )
+        elif origin is Dict:
+            key, value = typing_instance.__args__
+            str_ann = f"Dict[{type_to_code_str(key)}, {type_to_code_str(value)}]"
+        elif origin is Any:
+            str_ann = "Any"
+        else:
+            elements = typing_instance.__args__
+            str_ann = origin.__name__ + "[" + ", ".join([type_to_code_str(e) for e in elements]) + "]"
+    elif typing_instance is type(None):
+        str_ann = "None"
+    elif hasattr(typing_instance, "_name"):
+        str_ann = typing_instance._name
+    else:
+        str_ann = typing_instance.__name__
+
+    return str_ann
+
+
 ConfigAttr = namedtuple("ConfigAttr", ["type", "docstring"])
 
 
-class Visitor(ast.NodeVisitor):
+class StubMaker(ast.NodeVisitor):
     def __init__(self):
         self.config = _recursive_dd()
 
@@ -58,7 +107,8 @@ class Visitor(ast.NodeVisitor):
             spec.loader.exec_module(mod)
 
     def output_stub(self):
-        imports = ["from typing import *"]
+        imports = []
+        typing_imports = []
         for cname, cobj in _name_to_config.items():
             # We first extract possible docstrings for the attributes
             docstrings = defaultdict(lambda: "")
@@ -86,7 +136,8 @@ class Visitor(ast.NodeVisitor):
                 else:
                     tstr = str(t)
                     if tstr.startswith("typing."):
-                        tname = tstr[len("typing.") :]
+                        typing_imports += get_typing_imports(t)
+                        tname = type_to_code_str(t)
                         iname = None
                     else:
                         tname = iname = tstr
@@ -110,7 +161,13 @@ class Visitor(ast.NodeVisitor):
                 s += "    " * (indentlevel + 1) + "...\n"
             return s
 
-        s = "\n".join(sorted(set(imports))) + "\n\n"
+        print(typing_imports)
+        s = """# This file was generated automatically
+# Do not edit by hand, your changes will be lost
+# Regenerate by running `python -m gflownet.config`
+"""
+        s += f"from typing import {', '.join(list(set(typing_imports)))}\n"
+        s += "\n".join(sorted(set(imports))) + "\n\n"
         s += f("Config", self.config, 0)
         s += """def config_class(name): ...
 def config_from_dict(config_dict: dict[str, Any]) -> Config: ...
@@ -118,7 +175,8 @@ def make_config() -> Config: ...
 def update_config(config: Config, config_dict: dict[str, Any]) -> Config: ...
 def config_to_dict(config: Config) -> dict[str, Any]: ...
 """
-        with open(Path(__file__).parent / "config.pyi", "w") as f:
+        self.stub_path = Path(__file__).parent / "config.pyi"
+        with open(self.stub_path, "w") as f:
             f.write(s)
 
     def visit_ClassDef(self, node):
@@ -223,17 +281,19 @@ if __name__ == "__main__":
         .splitlines()
     )
 
-    visitor = Visitor()
+    stub_maker = StubMaker()
     for f in files:
         if not f.startswith("src/"):  # Only package files in src/
             continue
         path = Path(repo) / f
         print("Processing", f)
         root = ast.parse(open(path, "r").read())
-        visitor.start_module(path, f)
-        visitor.visit(root)
-        visitor.finalize_module()
-    visitor.output_stub()
-    print("Default config:")
-    d = config_to_dict(make_config())
-    print(json.dumps(d, indent=2, sort_keys=True))
+        stub_maker.start_module(path, f)
+        stub_maker.visit(root)
+        stub_maker.finalize_module()
+    stub_maker.output_stub()
+    subprocess.check_output(f"black {stub_maker.stub_path}", shell=True)
+    if 0:
+        print("Default config:")
+        d = config_to_dict(make_config())
+        print(json.dumps(d, indent=2, sort_keys=True))

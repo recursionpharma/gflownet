@@ -1,4 +1,3 @@
-import ast
 import copy
 import os
 from typing import Any, Callable, Dict, List, Tuple, Union
@@ -41,7 +40,7 @@ class QM9GapTask(GFNTask):
         self,
         dataset: Dataset,
         temperature_distribution: str,
-        temperature_parameters: Tuple[float, float],
+        temperature_parameters: List[float],
         num_thermometer_dim: int,
         rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
@@ -188,7 +187,7 @@ class QM9GapTrainer(GFNTrainer):
             self.sampling_model = copy.deepcopy(model)
         else:
             self.sampling_model = self.model
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, cfg)
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.cfg)
 
         self.task = QM9GapTask(
             dataset=self.training_data,
