@@ -1,4 +1,3 @@
-import ast
 import copy
 import json
 import os
@@ -164,6 +163,8 @@ class SEHFragTrainer(GFNTrainer):
             algo = FlowMatching
         elif algo == "A2C":
             algo = A2C
+        elif algo == "SQL":
+            algo = SoftQLearning
         else:
             raise ValueError(algo)
         self.algo = algo(self.env, self.ctx, self.rng, self.cfg)

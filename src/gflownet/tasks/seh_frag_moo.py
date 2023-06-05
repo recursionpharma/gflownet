@@ -20,7 +20,6 @@ from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config, config_class, config_to_dict
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
-from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
@@ -391,18 +390,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         if type(tcfg.focus_type) is list and len(tcfg.focus_type) > 1:
             n_valid = len(tcfg.focus_type)
+        else:
+            n_valid = tcfg.n_valid
 
         # preference vectors
         if tcfg.preference_type is None:
-            valid_preferences = np.ones((tcfg.n_valid, n_obj))
+            valid_preferences = np.ones((n_valid, n_obj))
         elif tcfg.preference_type == "dirichlet":
-            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=tcfg.n_valid, normalisation="l1")
+            valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
         elif tcfg.preference_type == "seeded_single":
-            seeded_prefs = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, tcfg.n_valid)
+            seeded_prefs = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
         elif tcfg.preference_type == "seeded_many":
-            valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, tcfg.n_valid)
+            valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
             raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
 
@@ -413,9 +414,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
             json.dump(hps, f)
         assert self.task.valid_focus_dirs.shape == (
-            tcfg.n_valid,
+            n_valid,
             n_obj,
-        ), f"Invalid shape for valid_preferences, {self.task.valid_focus_dirs.shape} != ({tcfg.n_valid}, {n_obj})"
+        ), f"Invalid shape for valid_preferences, {self.task.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
 
         # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
         # TODO: this relies on positional assumptions, should have something cleaner
