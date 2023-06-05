@@ -32,7 +32,7 @@ from gflownet.utils.transforms import thermometer
 class SEHMOOTaskConfig:
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str
-    temperature_parameters: Tuple[float, float]
+    temperature_parameters: List[Any]
     num_thermometer_dim: int
     use_steer_thermometer: bool = False
     preference_type: Optional[str] = "dirichlet"

@@ -16,12 +16,22 @@ from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import Config, config_class
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
+
+
+@config_class("task.qm9")
+class QM9TaskConfig:
+    # TODO: a proper class for temperature-conditional sampling
+    temperature_sample_dist: str = "uniform"
+    temperature_dist_params: List[Any] = [0.5, 32]
+    num_thermometer_dim: int = 32
+    h5_path = "/data/chem/qm9/qm9.h5"
 
 
 class QM9GapTask(GFNTask):
@@ -127,79 +137,73 @@ class QM9GapTask(GFNTask):
 
 
 class QM9GapTrainer(GFNTrainer):
-    def set_default_hps(self) -> Dict[str, Any]:
-        return {
-            "bootstrap_own_reward": False,
-            "learning_rate": 1e-4,
-            "global_batch_size": 64,
-            "num_emb": 128,
-            "num_layers": 4,
-            "tb_epsilon": None,
-            "illegal_action_logreward": -75,
-            "reward_loss_multiplier": 1,
-            "temperature_sample_dist": "uniform",
-            "temperature_dist_params": (0.5, 32.0),
-            "weight_decay": 1e-8,
-            "num_data_loader_workers": 8,
-            "momentum": 0.9,
-            "adam_eps": 1e-8,
-            "lr_decay": 20000,
-            "Z_lr_decay": 20000,
-            "clip_grad_type": "norm",
-            "clip_grad_param": 10,
-            "random_action_prob": 0.001,
-            "sampling_tau": 0.0,
-            "num_thermometer_dim": 32,
-        }
+    def set_default_hps(self, cfg: Config):
+        cfg.num_workers = 8
+        cfg.num_training_steps = 100000
+        cfg.opt.learning_rate = 1e-4
+        cfg.opt.weight_decay = 1e-8
+        cfg.opt.momentum = 0.9
+        cfg.opt.adam_eps = 1e-8
+        cfg.opt.lr_decay = 20000
+        cfg.opt.clip_grad_type = "norm"
+        cfg.opt.clip_grad_param = 10
+        cfg.algo.global_batch_size = 64
+        cfg.algo.train_random_action_prob = 0.001
+        cfg.algo.illegal_action_logreward = -75
+        cfg.algo.sampling_tau = 0.0
+        cfg.model.num_emb = 128
+        cfg.model.num_layers = 4
+        cfg.task.qm9.temperature_sample_dist = "uniform"
+        cfg.task.qm9.temperature_dist_params = [0.5, 32.0]
+        cfg.task.qm9.num_thermometer_dim = 32
 
     def setup(self):
-        hps = self.hps
         RDLogger.DisableLog("rdApp.*")
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
         self.ctx = MolBuildingEnvContext(["H", "C", "N", "F", "O"], num_cond_dim=32)
-        self.training_data = QM9Dataset(hps["qm9_h5_path"], train=True, target="gap")
-        self.test_data = QM9Dataset(hps["qm9_h5_path"], train=False, target="gap")
+        self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, target="gap")
+        self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, target="gap")
 
-        model = GraphTransformerGFN(self.ctx, num_emb=hps["num_emb"], num_layers=hps["num_layers"])
+        model = GraphTransformerGFN(self.ctx, self.cfg)
         self.model = model
         # Separate Z parameters from non-Z to allow for LR decay on the former
         Z_params = list(model.logZ.parameters())
         non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         self.opt = torch.optim.Adam(
             non_Z_params,
-            hps["learning_rate"],
-            (hps["momentum"], 0.999),
-            weight_decay=hps["weight_decay"],
-            eps=hps["adam_eps"],
+            self.cfg.opt.learning_rate,
+            (self.cfg.opt.momentum, 0.999),
+            weight_decay=self.cfg.opt.weight_decay,
+            eps=self.cfg.opt.adam_eps,
         )
-        self.opt_Z = torch.optim.Adam(Z_params, hps["learning_rate"], (0.9, 0.999))
-        self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / hps["lr_decay"]))
-        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(self.opt_Z, lambda steps: 2 ** (-steps / hps["Z_lr_decay"]))
+        self.opt_Z = torch.optim.Adam(Z_params, self.cfg.opt.learning_rate, (0.9, 0.999))
+        self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
+        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
+            self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay)
+        )
 
-        self.sampling_tau = hps["sampling_tau"]
+        self.sampling_tau = self.cfg.algo.sampling_tau
         if self.sampling_tau > 0:
             self.sampling_model = copy.deepcopy(model)
         else:
             self.sampling_model = self.model
-        eps = hps["tb_epsilon"]
-        hps["tb_epsilon"] = ast.literal_eval(eps) if isinstance(eps, str) else eps
-        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=9)
+        self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, cfg)
 
         self.task = QM9GapTask(
             dataset=self.training_data,
-            temperature_distribution=hps["temperature_sample_dist"],
-            temperature_parameters=hps["temperature_dist_params"],
-            num_thermometer_dim=hps["num_thermometer_dim"],
+            temperature_distribution=self.cfg.task.qm9.temperature_sample_dist,
+            temperature_parameters=self.cfg.task.qm9.temperature_dist_params,
+            num_thermometer_dim=self.cfg.task.qm9.num_thermometer_dim,
             wrap_model=self._wrap_for_mp,
         )
-        self.mb_size = hps["global_batch_size"]
-        self.clip_grad_param = hps["clip_grad_param"]
+        self.mb_size = self.cfg.algo.global_batch_size
+        self.clip_grad_param = self.cfg.opt.clip_grad_param
         self.clip_grad_callback = {
             "value": (lambda params: torch.nn.utils.clip_grad_value_(params, self.clip_grad_param)),
             "norm": (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
             "none": (lambda x: None),
-        }[hps["clip_grad_type"]]
+        }[self.cfg.opt.clip_grad_type]
 
     def step(self, loss: Tensor):
         loss.backward()

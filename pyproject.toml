@@ -33,6 +33,9 @@ strict_optional = false
 implicit_reexport = true
 allow_redefinition = true
 files = "src"
+exclude = [
+    '^config\.py$',
+]
 
 [[tool.mypy.overrides]]
 module = "tests.*"
