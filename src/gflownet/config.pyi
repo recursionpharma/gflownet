@@ -1,6 +1,6 @@
 # This file was generated automatically
 # Do not edit by hand, your changes will be lost
-# Regenerate by running `python -m foliconf`
+# Regenerate by running `python -m foliconf src/gflownet/config.py`
 from typing import Any, Optional, Union
 
 class Config:
