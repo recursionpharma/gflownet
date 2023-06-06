@@ -19,6 +19,7 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
+from gflownet.train import GFNAlgorithm
 
 
 @config_class("algo.tb")
@@ -42,7 +43,7 @@ class TrajectoryBalanceModel(nn.Module):
         raise NotImplementedError()
 
 
-class TrajectoryBalance:
+class TrajectoryBalance(GFNAlgorithm):
     """ """
 
     def __init__(
@@ -261,7 +262,9 @@ class TrajectoryBalance:
 
         return batch
 
-    def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
+    def compute_batch_losses(
+        self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0  # type: ignore[override]
+    ):
         """Compute the losses over trajectories contained in the batch
 
         Parameters

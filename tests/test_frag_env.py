@@ -1,11 +1,11 @@
 import base64
 import pickle
-from collections import defaultdict
 
 import networkx as nx
 import pytest
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import make_config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 
@@ -112,7 +112,9 @@ def test_backwards_mask_equivalence_ipa(two_node_states):
     """
     env = GraphBuildingEnv()
     ctx = FragMolBuildingEnvContext(max_frags=2)
-    algo = TrajectoryBalance(env, ctx, None, defaultdict(int), max_nodes=2)
+    cfg = make_config()
+    cfg.algo.max_nodes = 2
+    algo = TrajectoryBalance(env, ctx, None, cfg)
     for i in range(1, len(two_node_states)):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=True)
