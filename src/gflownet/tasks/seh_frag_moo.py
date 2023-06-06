@@ -30,6 +30,45 @@ from gflownet.utils.transforms import thermometer
 
 @config_class("task.seh_moo")
 class SEHMOOTaskConfig:
+    """Config for the SEHMOOTask
+
+    Attributes
+    ----------
+
+    temperature_sample_dist : str
+        The distribution to sample the inverse temperature from. Can be one of:
+        - "uniform": uniform distribution
+        - "loguniform": log-uniform distribution
+        - "gamma": gamma distribution
+        - "constant": constant temperature
+    temperature_parameters : List[Any]
+        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
+    num_thermometer_dim : int
+        The number of thermometer encoding dimensions to use.
+    use_steer_thermometer : bool
+        Whether to use a thermometer encoding for the steering.
+    preference_type : Optional[str]
+        The preference sampling distribution, defaults to "dirichlet".
+    focus_type : Union[list, str, None]
+        The type of focus distribtuion used, see SEHMOOTask.setup_focus_regions.
+    focus_cosim : float
+        The cosine similarity threshold for the focus distribution.
+    focus_limit_coef : float
+        The smoothing coefficient for the focus reward.
+    focus_model_training_limits : Optional[Tuple[int, int]]
+        The training limits for the focus sampling model (if used).
+    focus_model_state_space_res : Optional[int]
+        The state space resolution for the focus sampling model (if used).
+    max_train_it : Optional[int]
+        The maximum number of training iterations for the focus sampling model (if used).
+    n_valid : int
+        The number of valid cond_info tensors to sample
+    n_valid_repeats : int
+        The number of times to repeat the valid cond_info tensors
+    objectives : List[str]
+        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
+    """
+
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str
     temperature_parameters: List[Any]

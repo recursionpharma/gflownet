@@ -33,6 +33,28 @@ class BaseConfig:
     ----------
     log_dir : str
         The directory where to store logs, checkpoints, and samples.
+    seed : int
+        The random seed
+    validate_every : int
+        The number of training steps after which to validate the model
+    checkpoint_every : Optional[int]
+        The number of training steps after which to checkpoint the model
+    start_at_step : int
+        The training step to start at (default: 0)
+    num_final_gen_steps : Optional[int]
+        After training, the number of steps to generate graphs for
+    num_training_steps : int
+        The number of training steps
+    num_workers : int
+        The number of workers to use for creating minibatches (0 = no multiprocessing)
+    hostname : Optional[str]
+        The hostname of the machine on which the experiment is run
+    pickle_mp_messages : bool
+        Whether to pickle messages sent between processes (only relevant if num_workers > 0)
+    git_hash : Optional[str]
+        The git hash of the current commit
+    overwrite_existing_exp : bool
+        Whether to overwrite the contents of the log_dir if it already exists
     """
 
     log_dir: str
@@ -55,8 +77,22 @@ class OptimizerConfig:
 
     Attributes
     ----------
+    opt : str
+        The optimizer to use (either "adam" or "sgd")
     learning_rate : float
         The learning rate
+    lr_decay : float
+        The learning rate decay (in steps, f = 2 ** (-steps / self.cfg.opt.lr_decay))
+    weight_decay : float
+        The L2 weight decay
+    momentum : float
+        The momentum parameter value
+    clip_grad_type : str
+        The type of gradient clipping to use (either "norm" or "value")
+    clip_grad_param : float
+        The parameter for gradient clipping
+    adam_eps : float
+        The epsilon parameter for Adam
     """
 
     opt: str = "adam"
@@ -77,6 +113,8 @@ class ModelConfig:
     ----------
     num_layers : int
         The number of layers in the model
+    num_emb : int
+        The number of dimensions of the embedding
     """
 
     num_layers: int = 3
@@ -91,6 +129,8 @@ class AlgoConfig:
     ----------
     method : str
         The name of the algorithm to use (e.g. "TB")
+    global_batch_size : int
+        The batch size for training
     max_len : int
         The maximum length of a trajectory
     max_nodes : int
@@ -102,6 +142,14 @@ class AlgoConfig:
     offline_ratio: float
         The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
         `self.sampling_model`
+    train_random_action_prob : float
+        The probability of taking a random action during training
+    valid_random_action_prob : float
+        The probability of taking a random action during validation
+    valid_sample_cond_info : bool
+        Whether to sample conditioning information during validation (if False, expects a validation set of cond_info)
+    sampling_tau : float
+        The EMA factor for the sampling model (theta_sampler = tau * theta_sampler + (1-tau) * theta)
     """
 
     method: str = "TB"

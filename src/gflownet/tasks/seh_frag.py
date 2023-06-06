@@ -33,6 +33,23 @@ from gflownet.utils.transforms import thermometer
 
 @config_class("task.seh")
 class SEHTaskConfig:
+    """Config for the SEHTask
+
+    Attributes
+    ----------
+
+    temperature_sample_dist : str
+        The distribution to sample the inverse temperature from. Can be one of:
+        - "uniform": uniform distribution
+        - "loguniform": log-uniform distribution
+        - "gamma": gamma distribution
+        - "constant": constant temperature
+    temperature_dist_params : List[Any]
+        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
+    num_thermometer_dim : int
+        The number of thermometer encoding dimensions to use.
+    """
+
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str = "uniform"
     temperature_dist_params: List[Any] = [0.5, 32]
