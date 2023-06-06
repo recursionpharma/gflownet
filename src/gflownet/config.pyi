@@ -1,7 +1,7 @@
 # This file was generated automatically
 # Do not edit by hand, your changes will be lost
-# Regenerate by running `python -m gflownet.config`
-from typing import Optional, Any, Union
+# Regenerate by running `python -m foliconf`
+from typing import Any, Optional, Union
 
 class Config:
     checkpoint_every: Optional[int]
