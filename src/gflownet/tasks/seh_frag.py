@@ -87,14 +87,16 @@ class SEHTask(GFNTask):
                 beta = self.rng.gamma(loc, scale, n).astype(np.float32)
                 upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
             elif self.temperature_sample_dist == "uniform":
-                beta = self.rng.uniform(*self.temperature_dist_params, n).astype(np.float32)
+                a, b = float(self.temperature_dist_params[0]), float(self.temperature_dist_params[1])
+                beta = self.rng.uniform(a, b, n).astype(np.float32)
                 upper_bound = self.temperature_dist_params[1]
             elif self.temperature_sample_dist == "loguniform":
                 low, high = np.log(self.temperature_dist_params)
                 beta = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
                 upper_bound = self.temperature_dist_params[1]
             elif self.temperature_sample_dist == "beta":
-                beta = self.rng.beta(*self.temperature_dist_params, n).astype(np.float32)
+                a, b = float(self.temperature_dist_params[0]), float(self.temperature_dist_params[1])
+                beta = self.rng.beta(a, b, n).astype(np.float32)
                 upper_bound = 1
             beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
 
