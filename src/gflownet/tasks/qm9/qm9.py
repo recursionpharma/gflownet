@@ -20,7 +20,7 @@ from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
+from gflownet.trainer import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
 
 

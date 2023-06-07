@@ -19,7 +19,7 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
-from gflownet.train import GFNAlgorithm
+from gflownet.trainer import GFNAlgorithm
 
 
 @config_class("algo.tb")

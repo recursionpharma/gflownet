@@ -2,8 +2,23 @@
 # Do not edit by hand, your changes will be lost
 # Regenerate by running `python -m foliconf src/gflownet/config.py`
 from typing import Any, Optional, Union
+from gflownet.algo.advantage_actor_critic import A2CConfig
+from gflownet.algo.envelope_q_learning import MOQLConfig
+from gflownet.algo.flow_matching import FMConfig
+from gflownet.algo.soft_q_learning import SQLConfig
+from gflownet.algo.trajectory_balance import TBConfig
+from gflownet.data.replay_buffer import ReplayConfig
+from gflownet.models.graph_transformer import GraphTransformerConfig
+from gflownet.tasks.qm9.qm9 import QM9TaskConfig
+from gflownet.tasks.seh_frag import SEHTaskConfig
+from gflownet.tasks.seh_frag_moo import SEHMOOTaskConfig
+from gflownet.train import AlgoConfig
+from gflownet.train import BaseConfig
+from gflownet.train import ModelConfig
+from gflownet.train import OptimizerConfig
+from gflownet.utils.conditioning import TempCondConfig
 
-class Config:
+class Config(BaseConfig):
     checkpoint_every: Optional[int]
     """The number of training steps after which to checkpoint the model"""
     git_hash: Optional[str]
@@ -29,7 +44,7 @@ class Config:
     validate_every: int
     """The number of training steps after which to validate the model"""
 
-    class algo:
+    class algo(AlgoConfig):
         global_batch_size: int
         """The batch size for training"""
         illegal_action_logreward: float
@@ -52,30 +67,30 @@ class Config:
         valid_sample_cond_info: bool
         """Whether to sample conditioning information during validation (if False, expects a validation set of cond_info)"""
 
-        class a2c:
+        class a2c(A2CConfig):
             entropy: float
             gamma: float
             penalty: float
 
-        class fm:
+        class fm(FMConfig):
             balanced_loss: bool
             correct_idempotent: bool
             epsilon: float
             leaf_coef: float
 
-        class moql:
+        class moql(MOQLConfig):
             gamma: float
             lambda_decay: int
             num_objectives: int
             num_omega_samples: int
             penalty: float
 
-        class sql:
+        class sql(SQLConfig):
             alpha: float
             gamma: float
             penalty: float
 
-        class tb:
+        class tb(TBConfig):
             Z_learning_rate: float
             """The learning rate for the logZ parameter (only relevant when do_subtb is False)"""
             Z_lr_decay: float
@@ -95,18 +110,32 @@ class Config:
             subtb_max_len: int
             """The maximum length trajectories, used to cache subTB computation indices"""
 
-    class model:
+    class cond:
+        class temperature(TempCondConfig):
+            dist_params: list[Any]
+            """The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range."""
+            num_thermometer_dim: int
+            """The number of thermometer encoding dimensions to use."""
+            sample_dist: str
+            """The distribution to sample the inverse temperature from. Can be one of:
+- "uniform": uniform distribution
+- "loguniform": log-uniform distribution
+- "gamma": gamma distribution
+- "constant": constant temperature
+- "beta": beta distribution"""
+
+    class model(ModelConfig):
         num_emb: int
         """The number of dimensions of the embedding"""
         num_layers: int
         """The number of layers in the model"""
 
-        class graph_transformer:
+        class graph_transformer(GraphTransformerConfig):
             ln_type: str
             num_heads: int
             num_mlp_layers: int
 
-    class opt:
+    class opt(OptimizerConfig):
         adam_eps: float
         """The epsilon parameter for Adam"""
         clip_grad_param: float
@@ -124,7 +153,7 @@ class Config:
         weight_decay: float
         """The L2 weight decay"""
 
-    class replay:
+    class replay(ReplayConfig):
         capacity: int
         """The capacity of the replay buffer"""
         hindsight_ratio: float
@@ -135,25 +164,18 @@ class Config:
         """The number of samples to collect before starting to sample from the replay buffer"""
 
     class task:
-        class qm9:
+        class qm9(QM9TaskConfig):
             h5_path: str
             num_thermometer_dim: int
             temperature_dist_params: list[Any]
             temperature_sample_dist: str
 
-        class seh:
+        class seh(SEHTaskConfig):
             num_thermometer_dim: int
-            """The number of thermometer encoding dimensions to use."""
             temperature_dist_params: list[Any]
-            """The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range."""
             temperature_sample_dist: str
-            """The distribution to sample the inverse temperature from. Can be one of:
-- "uniform": uniform distribution
-- "loguniform": log-uniform distribution
-- "gamma": gamma distribution
-- "constant": constant temperature"""
 
-        class seh_moo:
+        class seh_moo(SEHMOOTaskConfig):
             focus_cosim: float
             """The cosine similarity threshold for the focus distribution."""
             focus_limit_coef: float

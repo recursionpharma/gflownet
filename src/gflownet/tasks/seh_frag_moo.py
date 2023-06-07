@@ -21,7 +21,7 @@ from gflownet.config import Config, config_class, config_to_dict
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
-from gflownet.train import FlatRewards, RewardScalar
+from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
@@ -70,9 +70,6 @@ class SEHMOOTaskConfig:
     """
 
     # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str
-    temperature_dist_params: List[Any]
-    num_thermometer_dim: int
     use_steer_thermometer: bool = False
     preference_type: Optional[str] = "dirichlet"
     focus_type: Union[list, str, None] = None

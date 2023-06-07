@@ -14,7 +14,7 @@ from gflownet.envs.graph_building_env import (
     generate_forward_trajectory,
 )
 from gflownet.models.graph_transformer import GraphTransformer, mlp
-from gflownet.train import GFNTask
+from gflownet.trainer import GFNTask
 
 from .graph_sampling import GraphSampler
 

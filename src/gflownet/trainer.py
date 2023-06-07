@@ -1,3 +1,5 @@
+import copy
+import json
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
@@ -6,11 +8,14 @@ import torch
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
+from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+import numpy as np
 
-from gflownet.config import Config, config_class, make_config, update_config
+
+from gflownet.config import Config, config_class, make_config, update_config, config_to_dict
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
@@ -274,11 +279,26 @@ class GFNTrainer:
     def set_default_hps(self, base: Config):
         raise NotImplementedError()
 
-    def setup(self):
+    def setup_env_context(self):
         raise NotImplementedError()
 
-    def step(self, loss: Tensor):
+    def setup_task(self):
         raise NotImplementedError()
+
+    def setup_model(self):
+        raise NotImplementedError()
+
+    def setup_algo(self):
+        raise NotImplementedError()
+
+    def setup(self):
+        RDLogger.DisableLog("rdApp.*")
+        self.rng = np.random.default_rng(142857)
+        self.env = GraphBuildingEnv()
+        self.setup_env_context()
+        self.setup_algo()
+        self.setup_task()
+        self.setup_model()
 
     def _wrap_for_mp(self, obj, send_to_device=False):
         """Wraps an object in a placeholder whose reference can be sent to a
