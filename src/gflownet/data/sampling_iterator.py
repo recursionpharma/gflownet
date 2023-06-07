@@ -224,7 +224,7 @@ class SamplingIterator(IterableDataset):
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
             log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
-            log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
+            log_rewards[torch.logical_not(is_valid)] = self.cfg.algo.illegal_action_logreward
 
             # Computes some metrics
             if not self.sample_cond_info:
@@ -295,7 +295,7 @@ class SamplingIterator(IterableDataset):
                 cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(
                     cond_info, log_rewards, flat_rewards, hindsight_idxs
                 )
-                log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
+                log_rewards[torch.logical_not(is_valid)] = self.cfg.algo.illegal_action_logreward
 
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info["encoding"], log_rewards)

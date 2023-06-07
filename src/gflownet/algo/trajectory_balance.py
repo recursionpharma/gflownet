@@ -108,6 +108,7 @@ class TrajectoryBalance(GFNAlgorithm):
         self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
+        self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
 
         self.graph_sampler = GraphSampler(
             ctx,

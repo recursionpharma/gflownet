@@ -155,6 +155,7 @@ class SEHFragTrainer(GFNTrainer):
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
         cfg.algo.global_batch_size = 64
+        cfg.algo.offline_ratio = 0
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 
@@ -257,10 +258,11 @@ class SEHFragTrainer(GFNTrainer):
         self.cfg.git_hash = git_hash
 
         os.makedirs(self.cfg.log_dir, exist_ok=True)
-        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(self.hps.items())])
+        cd = config_to_dict(self.cfg)
+        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(cd.items())])
         print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
         with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
-            json.dump(config_to_dict(self.cfg), f)
+            json.dump(cd, f)
 
     def step(self, loss: Tensor):
         loss.backward()

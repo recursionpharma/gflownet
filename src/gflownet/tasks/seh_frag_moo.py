@@ -71,7 +71,7 @@ class SEHMOOTaskConfig:
 
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str
-    temperature_parameters: List[Any]
+    temperature_dist_params: List[Any]
     num_thermometer_dim: int
     use_steer_thermometer: bool = False
     preference_type: Optional[str] = "dirichlet"
@@ -112,7 +112,7 @@ class SEHMOOTask(SEHTask):
         self.objectives = cfg.task.seh_moo.objectives
         self.dataset = dataset
         self.temperature_sample_dist = mcfg.temperature_sample_dist
-        self.temperature_dist_params = mcfg.temperature_parameters
+        self.temperature_dist_params = mcfg.temperature_dist_params
         self.num_thermometer_dim = mcfg.num_thermometer_dim
         self.use_steer_thermometer = mcfg.use_steer_thermometer
         self.preference_type = mcfg.preference_type
@@ -520,19 +520,19 @@ def main():
         "seed": 0,
         "num_training_steps": 20_000,
         "num_final_gen_steps": 500,
-        "validate_every": 10,
+        "validate_every": 500,
         "num_workers": 0,
         "algo.global_batch_size": 64,
         "algo.method": "TB",
         "model.num_layers": 2,
         "model.num_emb": 256,
-        "task_seh_moo.objectives": ["seh", "qed"],
+        "task.seh_moo.objectives": ["seh", "qed"],
         "opt.learning_rate": 1e-4,
         "algo.tb.Z_learning_rate": 1e-3,
         "opt.lr_decay": 20000,
         "algo.tb.Z_lr_decay": 50000,
         "algo.sampling_tau": 0.95,
-        "algo.train_random_action_prob": 0.1,
+        "algo.train_random_action_prob": 0.01,
         "task.seh_moo.temperature_sample_dist": "constant",
         "task.seh_moo.temperature_dist_params": 60.0,
         "task.seh_moo.num_thermometer_dim": 32,
@@ -544,10 +544,11 @@ def main():
         "task.seh_moo.n_valid": 15,
         "task.seh_moo.n_valid_repeats": 128,
         "replay.use": True,
-        "replay.warmup": 0,
+        "replay.warmup": 1000,
         "replay.hindsight_ratio": 0.3,
         "task.seh_moo.focus_model_training_limits": [0.25, 0.75],
-        "task.seh_moo.focus_model_state_space_res": 10,
+        "task.seh_moo.focus_model_state_space_res": 30,
+        "task.seh_moo.max_train_it": 20_000,
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

@@ -176,8 +176,7 @@ class Config:
             """The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"]."""
             preference_type: Optional[str]
             """The preference sampling distribution, defaults to "dirichlet"."""
-            temperature_parameters: list[Any]
-            """The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range."""
+            temperature_dist_params: list[Any]
             temperature_sample_dist: str
             """The distribution to sample the inverse temperature from. Can be one of:
 - "uniform": uniform distribution
