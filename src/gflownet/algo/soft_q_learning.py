@@ -182,7 +182,7 @@ class SoftQLearning:
                 # avoid duplicate if not needed
                 hat_Q = self.calc_targets(batch, rewards, final_graph_idx, Q)
             else:
-                hat_Q, _ = self.tree_backup(batch, rewards, final_graph_idx, Q.duplicate())
+                hat_Q, _ = self.tree_backup(batch, rewards, final_graph_idx, Q.clone())
 
         # Here were are again hijacking the GraphActionCategorical machinery to get Q[s,a], but
         # instead of logprobs we're just going to use the logits, i.e. the Q values.

@@ -521,7 +521,7 @@ class GraphActionCategorical:
             self.masks = [i.to(device) for i in self.masks]
         return self
 
-    def duplicate(self):
+    def clone(self):
         new = copy.copy(self)
         new.logits = [torch.clone(i) for i in new.logits]
         new.logprobs = None
