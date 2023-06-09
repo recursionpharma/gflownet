@@ -34,17 +34,6 @@ class SEHMOOTaskConfig:
 
     Attributes
     ----------
-
-    temperature_sample_dist : str
-        The distribution to sample the inverse temperature from. Can be one of:
-        - "uniform": uniform distribution
-        - "loguniform": log-uniform distribution
-        - "gamma": gamma distribution
-        - "constant": constant temperature
-    temperature_parameters : List[Any]
-        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
-    num_thermometer_dim : int
-        The number of thermometer encoding dimensions to use.
     use_steer_thermometer : bool
         Whether to use a thermometer encoding for the steering.
     preference_type : Optional[str]
@@ -183,19 +172,6 @@ class SEHMOOTask(SEHTask):
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
 
-        if self.preference_type is None:
-            preferences = torch.ones((n, len(self.objectives)))
-        else:
-            if self.seeded_preference is not None:
-                preferences = torch.tensor([self.seeded_preference] * n).float()
-            elif self.experimental_dirichlet:
-                a = np.random.dirichlet([1] * len(self.objectives), n)
-                b = np.random.exponential(1, n)[:, None]
-                preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
-            else:
-                m = Dirichlet(torch.FloatTensor([1.0] * len(self.objectives)))
-                preferences = m.sample([n])
-
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
                 np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32)
@@ -284,10 +260,6 @@ class SEHMOOTask(SEHTask):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
-        scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30).log()
-        assert len(scalar_logreward.shape) == len(
-            cond_info["beta"].shape
-        ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
 
         if self.focus_type is not None:
             focus_coef, in_focus_mask = metrics.compute_focus_coef(

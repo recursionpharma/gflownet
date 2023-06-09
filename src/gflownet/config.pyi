@@ -10,12 +10,12 @@ from gflownet.algo.trajectory_balance import TBConfig
 from gflownet.data.replay_buffer import ReplayConfig
 from gflownet.models.graph_transformer import GraphTransformerConfig
 from gflownet.tasks.qm9.qm9 import QM9TaskConfig
-from gflownet.tasks.seh_frag import SEHTaskConfig
 from gflownet.tasks.seh_frag_moo import SEHMOOTaskConfig
-from gflownet.train import AlgoConfig
-from gflownet.train import BaseConfig
-from gflownet.train import ModelConfig
-from gflownet.train import OptimizerConfig
+from gflownet.trainer import AlgoConfig
+from gflownet.trainer import BaseConfig
+from gflownet.trainer import ModelConfig
+from gflownet.trainer import OptimizerConfig
+from gflownet.utils.conditioning import MOWPConfig
 from gflownet.utils.conditioning import TempCondConfig
 
 class Config(BaseConfig):
@@ -111,6 +111,11 @@ class Config(BaseConfig):
             """The maximum length trajectories, used to cache subTB computation indices"""
 
     class cond:
+        class mowp(MOWPConfig):
+            num_objectives: int
+            num_thermometer_dim: int
+            preference_type: Optional[str]
+
         class temperature(TempCondConfig):
             dist_params: list[Any]
             """The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range."""
@@ -170,11 +175,6 @@ class Config(BaseConfig):
             temperature_dist_params: list[Any]
             temperature_sample_dist: str
 
-        class seh(SEHTaskConfig):
-            num_thermometer_dim: int
-            temperature_dist_params: list[Any]
-            temperature_sample_dist: str
-
         class seh_moo(SEHMOOTaskConfig):
             focus_cosim: float
             """The cosine similarity threshold for the focus distribution."""
@@ -192,19 +192,10 @@ class Config(BaseConfig):
             """The number of valid cond_info tensors to sample"""
             n_valid_repeats: int
             """The number of times to repeat the valid cond_info tensors"""
-            num_thermometer_dim: int
-            """The number of thermometer encoding dimensions to use."""
             objectives: list[str]
             """The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"]."""
             preference_type: Optional[str]
             """The preference sampling distribution, defaults to "dirichlet"."""
-            temperature_dist_params: list[Any]
-            temperature_sample_dist: str
-            """The distribution to sample the inverse temperature from. Can be one of:
-- "uniform": uniform distribution
-- "loguniform": log-uniform distribution
-- "gamma": gamma distribution
-- "constant": constant temperature"""
             use_steer_thermometer: bool
             """Whether to use a thermometer encoding for the steering."""
 

@@ -14,8 +14,8 @@ from torch.utils.data import Dataset
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
-from gflownet.trainer import FlatRewards, GFNTask, GFNTrainer, RewardScalar
-from gflownet.utils.transforms import thermometer
+from gflownet.online_trainer import StandardOnlineTrainer
+from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
 
 
@@ -57,7 +57,7 @@ class SEHTask(GFNTask):
         return self.conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.conditional.compute_reward(cond_info, flat_reward))
+        return RewardScalar(self.conditional.compute_logreward(cond_info, flat_reward))
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -72,7 +72,9 @@ class SEHTask(GFNTask):
         return FlatRewards(preds), is_valid
 
 
-class SEHFragTrainer(GFNTrainer):
+class SEHFragTrainer(StandardOnlineTrainer):
+    task: SEHTask
+
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
@@ -115,7 +117,7 @@ class SEHFragTrainer(GFNTrainer):
 
     def setup_env_context(self):
         self.ctx = FragMolBuildingEnvContext(
-            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.cfg.task.seh.num_thermometer_dim
+            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.conditional.embedding_size()
         )
 
 
@@ -128,7 +130,7 @@ def main():
         "num_workers": 8,
         "opt.lr_decay": 20000,
         "algo.sampling_tau": 0.99,
-        "task.seh.temperature_dist_params": (0.0, 64.0),
+        "cond.temperature.dist_params": (0.0, 64.0),
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

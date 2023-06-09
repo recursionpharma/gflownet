@@ -1,9 +1,8 @@
-import copy
-import json
 import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.tensorboard
@@ -12,10 +11,8 @@ from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
-import numpy as np
 
-
-from gflownet.config import Config, config_class, make_config, update_config, config_to_dict
+from gflownet.config import Config, config_class, make_config, update_config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
@@ -289,6 +286,9 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def setup_algo(self):
+        raise NotImplementedError()
+
+    def step(self, loss: Tensor):
         raise NotImplementedError()
 
     def setup(self):
