@@ -144,7 +144,8 @@ class SamplingIterator(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = worker_info.id if worker_info is not None else 0
         # Now that we know we are in a worker instance, we can initialize per-worker things
-        self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
+        # self.rng = self.algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
+        self.rng = self.algo.rng = np.random.default_rng(142857 + self._wid)
         self.ctx.device = self.device
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
