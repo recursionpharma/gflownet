@@ -57,7 +57,7 @@ class SEHTask(GFNTask):
         return self.conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.conditional.compute_logreward(cond_info, flat_reward))
+        return RewardScalar(self.conditional.transform(cond_info, flat_reward))
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]

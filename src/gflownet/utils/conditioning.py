@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from scipy import stats
 from torch import Tensor
+import torch.nn as nn
 from torch.distributions.dirichlet import Dirichlet
 
 from gflownet.config import Config, config_class
@@ -14,7 +15,7 @@ class Conditional:
     def sample(self, n):
         raise NotImplementedError()
 
-    def compute_logreward(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], properties: Tensor) -> Tensor:
         raise NotImplementedError()
 
     def embedding_size(self):
@@ -81,8 +82,8 @@ class TemperatureConditional(Conditional):
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
         return {"beta": torch.tensor(beta), "encoding": beta_enc}
 
-    def compute_logreward(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
-        scalar_logreward = flat_reward.squeeze().clamp(min=1e-30).log()
+    def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
+        scalar_logreward = linear_reward.squeeze().clamp(min=1e-30).log()
         assert len(scalar_logreward.shape) == len(
             cond_info["beta"].shape
         ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
@@ -123,10 +124,78 @@ class MultiObjectiveWeightedPreferences(Conditional):
             enc = preferences.unsqueeze(1)
         return {"preferences": preferences, "encoding": enc}
 
-    def compute_logreward(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
         scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30).log()
         assert len(scalar_logreward.shape) == 1, f"scalar_logreward should be a 1D array, got {scalar_logreward.shape}"
         return scalar_logreward
 
     def embedding_size(self):
         return max(1, self.cfg.num_thermometer_dim)
+
+
+from gflownet.utils.focus_model import FocusModel, TabularFocusModel
+
+
+@config_class("cond.focus_region")
+class FocusRegionConfig:
+    focus_type: Optional[str] = "learned-tabular"
+    use_steer_thermomether: bool = False
+    focus_cosim: float = 0.98
+    focus_limit_coef: float = 0.1
+    focus_model_training_limits: tuple[float, float] = (0.25, 0.75)
+    focus_model_state_space_res: int = 30
+
+
+class FocusRegionConditional(Conditional):
+    def __init__(self, cfg: Config, n_valid: int, n_objectives: int):
+        self.cfg = cfg.cond.focus_region
+        self.n_valid = n_valid
+        self.n_objectives = n_objectives
+        self.ocfg = cfg
+
+        focus_type = self.cfg.focus_type
+        if focus_type is not None and "learned" in focus_type:
+            if focus_type == "learned-tabular":
+                self.focus_model = TabularFocusModel(
+                    device=self.device,
+                    n_objectives=len(self.cfg.task.seh_moo.objectives),
+                    state_space_res=self.cfg.task.seh_moo.focus_model_state_space_res,
+                )
+            else:
+                raise NotImplementedError("Unknown focus model type {self.focus_type}")
+        else:
+            self.focus_model = None
+        self.setup_focus_regions()
+
+    def setup_focus_regions(self):
+        n_valid = self.ocfg.n_valid
+        n_obj = len(self.objectives)
+        # focus regions
+        if self.cfg.focus_type is None:
+            valid_focus_dirs = np.zeros((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif self.cfg.focus_type == "centered":
+            valid_focus_dirs = np.ones((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif self.cfg.focus_type == "partitioned":
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif self.cfg.focus_type in ["dirichlet", "learned-gfn"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
+            self.fixed_focus_dirs = None
+        elif self.cfg.focus_type in ["hyperspherical", "learned-tabular"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = None
+        elif type(self.cfg.focus_type) is list:
+            if len(self.cfg.focus_type) == 1:
+                valid_focus_dirs = np.array([self.cfg.focus_type[0]] * n_valid)
+                self.fixed_focus_dirs = valid_focus_dirs
+            else:
+                valid_focus_dirs = np.array(self.cfg.focus_type)
+                self.fixed_focus_dirs = valid_focus_dirs
+        else:
+            raise NotImplementedError(
+                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
+                f"focus_type, but here: {self.cfg.focus_type}"
+            )
+        self.valid_focus_dirs = valid_focus_dirs

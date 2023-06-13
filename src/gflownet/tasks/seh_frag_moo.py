@@ -24,6 +24,7 @@ from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
+from gflownet.utils.conditioning import FocusRegionConditional
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import thermometer
 
@@ -97,6 +98,8 @@ class SEHMOOTask(SEHTask):
         self.models = self._load_task_models()
         self.objectives = cfg.task.seh_moo.objectives
         self.dataset = dataset
+        if self.cfg.cond.focus_region.focus_type != None:
+            self.focus_cond = FocusRegionConditional(self.cfg)
         self.temperature_sample_dist = mcfg.temperature_sample_dist
         self.temperature_dist_params = mcfg.temperature_dist_params
         self.num_thermometer_dim = mcfg.num_thermometer_dim
@@ -104,10 +107,6 @@ class SEHMOOTask(SEHTask):
         self.preference_type = mcfg.preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
-        self.focus_type = mcfg.focus_type
-        self.focus_cosim = mcfg.focus_cosim
-        self.focus_limit_coef = mcfg.focus_limit_coef
-        self.focus_model = focus_model
         self.illegal_action_logreward = cfg.algo.illegal_action_logreward
         self.focus_model_training_limits = mcfg.focus_model_training_limits
         self.max_train_it = mcfg.max_train_it
@@ -326,24 +325,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             super().setup_algo()
 
-        focus_type = self.cfg.task.seh_moo.focus_type
-        if focus_type is not None and "learned" in focus_type:
-            if focus_type == "learned-tabular":
-                self.focus_model = TabularFocusModel(
-                    device=self.device,
-                    n_objectives=len(self.cfg.task.seh_moo.objectives),
-                    state_space_res=self.cfg.task.seh_moo.focus_model_state_space_res,
-                )
-            else:
-                raise NotImplementedError("Unknown focus model type {self.focus_type}")
-        else:
-            self.focus_model = None
-
     def setup_task(self):
         self.task = SEHMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            focus_model=self.focus_model,
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )

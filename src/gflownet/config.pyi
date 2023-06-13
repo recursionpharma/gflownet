@@ -15,6 +15,7 @@ from gflownet.trainer import AlgoConfig
 from gflownet.trainer import BaseConfig
 from gflownet.trainer import ModelConfig
 from gflownet.trainer import OptimizerConfig
+from gflownet.utils.conditioning import FocusRegionConfig
 from gflownet.utils.conditioning import MOWPConfig
 from gflownet.utils.conditioning import TempCondConfig
 
@@ -111,6 +112,14 @@ class Config(BaseConfig):
             """The maximum length trajectories, used to cache subTB computation indices"""
 
     class cond:
+        class focus_region(FocusRegionConfig):
+            focus_cosim: float
+            focus_limit_coef: float
+            focus_model_state_space_res: int
+            focus_model_training_limits: tuple
+            focus_type: Optional[str]
+            use_steer_thermomether: bool
+
         class mowp(MOWPConfig):
             num_objectives: int
             num_thermometer_dim: int
