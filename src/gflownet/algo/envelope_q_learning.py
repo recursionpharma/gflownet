@@ -6,7 +6,7 @@ import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter
 
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import (
     GraphActionCategorical,
     GraphBuildingEnv,
@@ -17,15 +17,6 @@ from gflownet.models.graph_transformer import GraphTransformer, mlp
 from gflownet.train import GFNTask
 
 from .graph_sampling import GraphSampler
-
-
-@config_class("algo.moql")
-class MOQLConfig:
-    gamma: float = 1
-    num_omega_samples: int = 32
-    num_objectives: int = 2
-    lambda_decay: int = 10_000
-    penalty: float = -10
 
 
 # Custom models are necessary for envelope Q Learning

@@ -12,6 +12,7 @@ import scipy.stats as stats
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+from omegaconf import OmegaConf
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
@@ -21,7 +22,7 @@ from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.config import Config, config_class, config_to_dict
+from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
@@ -29,31 +30,6 @@ from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
-
-
-@config_class("task.seh")
-class SEHTaskConfig:
-    """Config for the SEHTask
-
-    Attributes
-    ----------
-
-    temperature_sample_dist : str
-        The distribution to sample the inverse temperature from. Can be one of:
-        - "uniform": uniform distribution
-        - "loguniform": log-uniform distribution
-        - "gamma": gamma distribution
-        - "constant": constant temperature
-    temperature_dist_params : List[Any]
-        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
-    num_thermometer_dim : int
-        The number of thermometer encoding dimensions to use.
-    """
-
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = [0.5, 32]
-    num_thermometer_dim: int = 32
 
 
 class SEHTask(GFNTask):
@@ -258,11 +234,11 @@ class SEHFragTrainer(GFNTrainer):
         self.cfg.git_hash = git_hash
 
         os.makedirs(self.cfg.log_dir, exist_ok=True)
-        cd = config_to_dict(self.cfg)
-        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(cd.items())])
-        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
-            json.dump(cd, f)
+        print(f"\n\nHyperparameters:\n")
+        yaml = OmegaConf.to_yaml(self.cfg)
+        print(yaml)
+        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
+            f.write(yaml)
 
     def step(self, loss: Tensor):
         loss.backward()

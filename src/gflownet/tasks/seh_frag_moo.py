@@ -17,7 +17,7 @@ from torch.utils.data import Dataset
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.config import Config, config_class, config_to_dict
+from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
@@ -26,64 +26,6 @@ from gflownet.utils import metrics, sascore
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import thermometer
-
-
-@config_class("task.seh_moo")
-class SEHMOOTaskConfig:
-    """Config for the SEHMOOTask
-
-    Attributes
-    ----------
-
-    temperature_sample_dist : str
-        The distribution to sample the inverse temperature from. Can be one of:
-        - "uniform": uniform distribution
-        - "loguniform": log-uniform distribution
-        - "gamma": gamma distribution
-        - "constant": constant temperature
-    temperature_parameters : List[Any]
-        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
-    num_thermometer_dim : int
-        The number of thermometer encoding dimensions to use.
-    use_steer_thermometer : bool
-        Whether to use a thermometer encoding for the steering.
-    preference_type : Optional[str]
-        The preference sampling distribution, defaults to "dirichlet".
-    focus_type : Union[list, str, None]
-        The type of focus distribtuion used, see SEHMOOTask.setup_focus_regions.
-    focus_cosim : float
-        The cosine similarity threshold for the focus distribution.
-    focus_limit_coef : float
-        The smoothing coefficient for the focus reward.
-    focus_model_training_limits : Optional[Tuple[int, int]]
-        The training limits for the focus sampling model (if used).
-    focus_model_state_space_res : Optional[int]
-        The state space resolution for the focus sampling model (if used).
-    max_train_it : Optional[int]
-        The maximum number of training iterations for the focus sampling model (if used).
-    n_valid : int
-        The number of valid cond_info tensors to sample
-    n_valid_repeats : int
-        The number of times to repeat the valid cond_info tensors
-    objectives : List[str]
-        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
-    """
-
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str
-    temperature_dist_params: List[Any]
-    num_thermometer_dim: int
-    use_steer_thermometer: bool = False
-    preference_type: Optional[str] = "dirichlet"
-    focus_type: Union[list, str, None] = None
-    focus_cosim: float = 0.0
-    focus_limit_coef: float = 1.0
-    focus_model_training_limits: Optional[Tuple[int, int]] = None
-    focus_model_state_space_res: Optional[int] = None
-    max_train_it: Optional[int] = None
-    n_valid: int = 15
-    n_valid_repeats: int = 128
-    objectives: List[str] = ["seh", "qed", "sa", "wt"]
 
 
 class SEHMOOTask(SEHTask):
@@ -446,12 +388,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
 
-        hps = config_to_dict(self.cfg)
-        hps["fixed_focus_dirs"] = (
-            np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
-        )
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
-            json.dump(hps, f)
+        # TODO: this was previously reported, would be nice to serialize it
+        # hps["fixed_focus_dirs"] = (
+        #    np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
+        # )
         assert self.task.valid_focus_dirs.shape == (
             n_valid,
             n_obj,

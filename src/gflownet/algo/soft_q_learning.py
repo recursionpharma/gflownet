@@ -6,15 +6,8 @@ from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
-
-
-@config_class("algo.sql")
-class SQLConfig:
-    alpha: float = 0.01
-    gamma: float = 1
-    penalty: float = -10
 
 
 class SoftQLearning:

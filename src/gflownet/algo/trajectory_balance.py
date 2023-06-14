@@ -9,7 +9,7 @@ from torch import Tensor
 from torch_scatter import scatter, scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
@@ -20,43 +20,6 @@ from gflownet.envs.graph_building_env import (
     generate_forward_trajectory,
 )
 from gflownet.train import GFNAlgorithm
-
-
-@config_class("algo.tb")
-class TBConfig:
-    """Trajectory Balance config.
-
-    Attributes
-    ----------
-    bootstrap_own_reward : bool
-        Whether to bootstrap the reward with the own reward. (deprecated)
-    epsilon : Optional[float]
-        The epsilon parameter in log-flow smoothing (see paper)
-    reward_loss_multiplier : float
-        The multiplier for the reward loss when bootstrapping the reward. (deprecated)
-    do_subtb : bool
-        Whether to use the full N^2 subTB loss
-    do_correct_idempotent : bool
-        Whether to correct for idempotent actions
-    do_parameterize_p_b : bool
-        Whether to parameterize the P_B distribution (otherwise it is uniform)
-    subtb_max_len : int
-        The maximum length trajectories, used to cache subTB computation indices
-    Z_learning_rate : float
-        The learning rate for the logZ parameter (only relevant when do_subtb is False)
-    Z_lr_decay : float
-        The learning rate decay for the logZ parameter (only relevant when do_subtb is False)
-    """
-
-    bootstrap_own_reward: bool = False
-    epsilon: Optional[float] = None
-    reward_loss_multiplier: float = 1.0
-    do_subtb: bool = False
-    do_correct_idempotent: bool = False
-    do_parameterize_p_b: bool = False
-    subtb_max_len: int = 128
-    Z_learning_rate: float = 1e-4
-    Z_lr_decay: float = 50_000
 
 
 class TrajectoryBalanceModel(nn.Module):

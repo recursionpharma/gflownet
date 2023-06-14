@@ -6,15 +6,8 @@ import torch_geometric.data as gd
 import torch_geometric.nn as gnn
 from torch_geometric.utils import add_self_loops
 
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
-
-
-@config_class("model.graph_transformer")
-class GraphTransformerConfig:
-    num_heads: int = 2
-    ln_type: str = "pre"
-    num_mlp_layers: int = 0
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
