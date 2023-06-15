@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+
 from omegaconf import MISSING
 
 from gflownet.algo.config import AlgoConfig

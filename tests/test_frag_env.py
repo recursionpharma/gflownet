@@ -3,9 +3,10 @@ import pickle
 
 import networkx as nx
 import pytest
+from omegaconf import OmegaConf
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.config import make_config
+from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 
@@ -112,7 +113,7 @@ def test_backwards_mask_equivalence_ipa(two_node_states):
     """
     env = GraphBuildingEnv()
     ctx = FragMolBuildingEnvContext(max_frags=2)
-    cfg = make_config()
+    cfg: Config = OmegaConf.structured(Config)
     cfg.algo.max_nodes = 2
     algo = TrajectoryBalance(env, ctx, None, cfg)
     for i in range(1, len(two_node_states)):

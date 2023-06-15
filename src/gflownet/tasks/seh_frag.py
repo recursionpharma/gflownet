@@ -1,10 +1,9 @@
 import copy
-import json
 import os
 import pathlib
 import shutil
 import socket
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 import git
 import numpy as np
@@ -234,7 +233,7 @@ class SEHFragTrainer(GFNTrainer):
         self.cfg.git_hash = git_hash
 
         os.makedirs(self.cfg.log_dir, exist_ok=True)
-        print(f"\n\nHyperparameters:\n")
+        print("\n\nHyperparameters:\n")
         yaml = OmegaConf.to_yaml(self.cfg)
         print(yaml)
         with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
