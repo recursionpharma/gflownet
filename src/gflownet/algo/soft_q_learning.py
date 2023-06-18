@@ -8,7 +8,12 @@ from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
-from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
+from gflownet.envs.graph_building_env import (
+    GraphActionCategorical,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
+    generate_forward_trajectory,
+)
 
 
 class SoftQLearning:
@@ -51,6 +56,7 @@ class SoftQLearning:
         self.illegal_action_logreward = hps["illegal_action_logreward"]
         self.alpha = hps.get("sql_alpha", 0.01)
         self.gamma = hps.get("sql_gamma", 1)
+        self.n_tree = hps.get("sql_tree", 0)  # 1 corresponds to not doing tree backup
         self.invalid_penalty = hps.get("sql_penalty", -10)
         self.bootstrap_own_reward = False
         # Experimental flags
@@ -157,6 +163,7 @@ class SoftQLearning:
 
         # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
         # Here we will interpret the logits of the fwd_cat as Q values
+        Q: GraphActionCategorical
         Q, per_state_preds = model(batch, cond_info[batch_idx])
 
         if self.do_q_prime_correction:
@@ -167,24 +174,21 @@ class SoftQLearning:
             soft_expectation = [Q_sa / self.alpha - logprob for Q_sa, logprob in zip(Q.logits, log_policy)]
             # This allows us to more neatly just call logsumexp on the logits, and then multiply by alpha
             V_soft = self.alpha * Q.logsumexp(soft_expectation).detach()  # shape: (num_graphs,)
+
+            hat_Q = self.calc_targets(batch, rewards, final_graph_idx, Q, V_soft)
         else:
-            V_soft = Q.logsumexp(Q.logits).detach()
             rewards = rewards / self.alpha
+            if self.n_tree == 0:
+                # avoid duplicate if not needed
+                hat_Q = self.calc_targets(batch, rewards, final_graph_idx, Q)
+            else:
+                hat_Q, _ = self.tree_backup(batch, rewards, final_graph_idx, Q.clone())
 
         # Here were are again hijacking the GraphActionCategorical machinery to get Q[s,a], but
         # instead of logprobs we're just going to use the logits, i.e. the Q values.
         Q_sa = Q.log_prob(batch.actions, logprobs=Q.logits)
 
-        # We now need to compute the target, \hat Q = R_t + V_soft(s_t+1)
-        # Shift t+1-> t, pad last state with a 0, multiply by gamma
-        shifted_V_soft = self.gamma * torch.cat([V_soft[1:], torch.zeros_like(V_soft[:1])])
-        # Replace V(s_T) with R(tau). Since we've shifted the values in the array, V(s_T) is V(s_0)
-        # of the next trajectory in the array, and rewards are terminal (0 except at s_T).
-        shifted_V_soft[final_graph_idx] = rewards + (1 - batch.is_valid) * self.invalid_penalty
-        # The result is \hat Q = R_t + gamma V(s_t+1)
-        hat_Q = shifted_V_soft
-
-        losses = (Q_sa - hat_Q).pow(2)
+        losses = (Q_sa - hat_Q.detach()).pow(2)
         traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         loss = losses.mean()
         invalid_mask = 1 - batch.is_valid
@@ -199,3 +203,31 @@ class SoftQLearning:
         if not torch.isfinite(traj_losses).all():
             raise ValueError("loss is not finite")
         return loss, info
+
+    def calc_targets(self, batch, rewards, final_graph_idx, Q: GraphActionCategorical, V_soft=None):
+        if V_soft is None:
+            V_soft = Q.logsumexp()
+        # We now need to compute the target, \hat Q = R_t + V_soft(s_t+1)
+        # Shift t+1-> t, pad last state with a 0, multiply by gamma
+        shifted_V_soft = self.gamma * torch.cat([V_soft[1:], torch.zeros_like(V_soft[:1])])
+        # Replace V(s_T) with R(target_tau). Since we've shifted the values in the array, V(s_T) is V(s_0)
+        # of the next trajectory in the array, and rewards are terminal (0 except at s_T).
+        shifted_V_soft[final_graph_idx] = rewards + (1 - batch.is_valid) * self.invalid_penalty
+        return shifted_V_soft
+
+    def tree_backup(self, batch, rewards, final_graph_idx, Q):
+        first_v = self.calc_targets(batch, rewards, final_graph_idx, Q)
+
+        n = batch.traj_lens.max().item()
+        n = min(n, self.n_tree)
+        for _ in range(n):
+            shifted_V_soft = self.calc_targets(batch, rewards, final_graph_idx, Q)
+            new = Q.inv_log_prob(batch.actions, shifted_V_soft)
+            val = Q.inv_log_prob(batch.actions, torch.full_like(shifted_V_soft, True, dtype=torch.bool))
+            Q.logits = [o * ~v + n for o, n, v in zip(Q.logits, new, val)]
+            Q.logprobs = None
+        if n > 0:
+            shifted_V_soft = self.calc_targets(batch, rewards, final_graph_idx, Q)
+        else:
+            shifted_V_soft = first_v
+        return first_v, shifted_V_soft
