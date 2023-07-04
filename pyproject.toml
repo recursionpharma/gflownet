@@ -75,7 +75,7 @@ dependencies = [
     "botorch",
     "pyro-ppl",
     "gpytorch",
-    "foliconf",
+    "omegaconf",
 ]
 
 [project.optional-dependencies]
