@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Any, List, Optional, Tuple
 
 
 @dataclass
@@ -23,7 +23,7 @@ class SEHTaskConfig:
 
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = [0.5, 32]
+    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
 
 
@@ -59,11 +59,12 @@ class SEHMOOTaskConfig:
 
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = [0.5, 32]
+    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
     use_steer_thermometer: bool = False
     preference_type: Optional[str] = "dirichlet"
-    focus_type: Union[list, str, None] = None
+    focus_type: Optional[str] = None
+    focus_dirs_listed: Optional[List[List[float]]] = None
     focus_cosim: float = 0.0
     focus_limit_coef: float = 1.0
     focus_model_training_limits: Optional[Tuple[int, int]] = None
@@ -71,14 +72,14 @@ class SEHMOOTaskConfig:
     max_train_it: Optional[int] = None
     n_valid: int = 15
     n_valid_repeats: int = 128
-    objectives: List[str] = ["seh", "qed", "sa", "wt"]
+    objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "wt"])
 
 
 @dataclass
 class QM9TaskConfig:
     # TODO: a proper class for temperature-conditional sampling
     temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = [0.5, 32]
+    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
     h5_path = "/data/chem/qm9/qm9.h5"
 

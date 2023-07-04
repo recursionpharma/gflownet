@@ -113,7 +113,7 @@ def test_backwards_mask_equivalence_ipa(two_node_states):
     """
     env = GraphBuildingEnv()
     ctx = FragMolBuildingEnvContext(max_frags=2)
-    cfg: Config = OmegaConf.structured(Config)
+    cfg = OmegaConf.structured(Config)
     cfg.algo.max_nodes = 2
     algo = TrajectoryBalance(env, ctx, None, cfg)
     for i in range(1, len(two_node_states)):

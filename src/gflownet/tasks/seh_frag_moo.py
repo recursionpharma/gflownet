@@ -89,12 +89,12 @@ class SEHMOOTask(SEHTask):
         elif mcfg.focus_type in ["hyperspherical", "learned-tabular"]:
             valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
             self.fixed_focus_dirs = None
-        elif type(mcfg.focus_type) is list:
+        elif mcfg.focus_type == "listed":
             if len(mcfg.focus_type) == 1:
-                valid_focus_dirs = np.array([mcfg.focus_type[0]] * n_valid)
+                valid_focus_dirs = np.array([mcfg.focus_dirs_listed[0]] * n_valid)
                 self.fixed_focus_dirs = valid_focus_dirs
             else:
-                valid_focus_dirs = np.array(mcfg.focus_type)
+                valid_focus_dirs = np.array(mcfg.focus_dirs_listed)
                 self.fixed_focus_dirs = valid_focus_dirs
         else:
             raise NotImplementedError(
