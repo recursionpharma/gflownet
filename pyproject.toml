@@ -75,7 +75,7 @@ dependencies = [
     "botorch",
     "pyro-ppl",
     "gpytorch",
-    "foliconf",
+    "omegaconf",
 ]
 
 [project.optional-dependencies]
@@ -101,4 +101,3 @@ email = "devs@recursionpharma.com"
 
 [tool.ruff]
 line-length = 120
-exclude = ["src/gflownet/config.pyi"]

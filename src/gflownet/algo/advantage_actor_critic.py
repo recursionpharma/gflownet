@@ -4,17 +4,10 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from torch import Tensor
 
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 
 from .graph_sampling import GraphSampler
-
-
-@config_class("algo.a2c")
-class A2CConfig:
-    entropy: float = 0.01
-    gamma: float = 1
-    penalty: float = -10
 
 
 class A2C:

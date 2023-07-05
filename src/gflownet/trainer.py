@@ -8,16 +8,18 @@ import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
 from rdkit import RDLogger
+from omegaconf import OmegaConf
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-from gflownet.config import Config, config_class, make_config, update_config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.utils.misc import create_logger
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
+
+from .config import Config
 
 # This type represents an unprocessed list of reward signals/conditioning information
 FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
@@ -25,146 +27,6 @@ FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
 # This type represents the outcome for a multi-objective task of
 # converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
 RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
-
-
-@config_class("@base")
-class BaseConfig:
-    """Base configuration for training
-
-    Attributes
-    ----------
-    log_dir : str
-        The directory where to store logs, checkpoints, and samples.
-    seed : int
-        The random seed
-    validate_every : int
-        The number of training steps after which to validate the model
-    checkpoint_every : Optional[int]
-        The number of training steps after which to checkpoint the model
-    start_at_step : int
-        The training step to start at (default: 0)
-    num_final_gen_steps : Optional[int]
-        After training, the number of steps to generate graphs for
-    num_training_steps : int
-        The number of training steps
-    num_workers : int
-        The number of workers to use for creating minibatches (0 = no multiprocessing)
-    hostname : Optional[str]
-        The hostname of the machine on which the experiment is run
-    pickle_mp_messages : bool
-        Whether to pickle messages sent between processes (only relevant if num_workers > 0)
-    git_hash : Optional[str]
-        The git hash of the current commit
-    overwrite_existing_exp : bool
-        Whether to overwrite the contents of the log_dir if it already exists
-    """
-
-    log_dir: str
-    seed: int = 0
-    validate_every: int = 1000
-    checkpoint_every: Optional[int] = None
-    start_at_step: int = 0
-    num_final_gen_steps: Optional[int] = None
-    num_training_steps: int = 10_000
-    num_workers: int = 0
-    hostname: Optional[str] = None
-    pickle_mp_messages: bool = False
-    git_hash: Optional[str] = None
-    overwrite_existing_exp: bool = True
-
-
-@config_class("opt")
-class OptimizerConfig:
-    """Generic configuration for optimizers
-
-    Attributes
-    ----------
-    opt : str
-        The optimizer to use (either "adam" or "sgd")
-    learning_rate : float
-        The learning rate
-    lr_decay : float
-        The learning rate decay (in steps, f = 2 ** (-steps / self.cfg.opt.lr_decay))
-    weight_decay : float
-        The L2 weight decay
-    momentum : float
-        The momentum parameter value
-    clip_grad_type : str
-        The type of gradient clipping to use (either "norm" or "value")
-    clip_grad_param : float
-        The parameter for gradient clipping
-    adam_eps : float
-        The epsilon parameter for Adam
-    """
-
-    opt: str = "adam"
-    learning_rate: float = 1e-4
-    lr_decay: float = 20_000
-    weight_decay: float = 1e-8
-    momentum: float = 0.9
-    clip_grad_type: str = "norm"
-    clip_grad_param: float = 10.0
-    adam_eps: float = 1e-8
-
-
-@config_class("model")
-class ModelConfig:
-    """Generic configuration for models
-
-    Attributes
-    ----------
-    num_layers : int
-        The number of layers in the model
-    num_emb : int
-        The number of dimensions of the embedding
-    """
-
-    num_layers: int = 3
-    num_emb: int = 128
-
-
-@config_class("algo")
-class AlgoConfig:
-    """Generic configuration for algorithms
-
-    Attributes
-    ----------
-    method : str
-        The name of the algorithm to use (e.g. "TB")
-    global_batch_size : int
-        The batch size for training
-    max_len : int
-        The maximum length of a trajectory
-    max_nodes : int
-        The maximum number of nodes in a generated graph
-    max_edges : int
-        The maximum number of edges in a generated graph
-    illegal_action_logreward : float
-        The log reward an agent gets for illegal actions
-    offline_ratio: float
-        The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
-        `self.sampling_model`
-    train_random_action_prob : float
-        The probability of taking a random action during training
-    valid_random_action_prob : float
-        The probability of taking a random action during validation
-    valid_sample_cond_info : bool
-        Whether to sample conditioning information during validation (if False, expects a validation set of cond_info)
-    sampling_tau : float
-        The EMA factor for the sampling model (theta_sampler = tau * theta_sampler + (1-tau) * theta)
-    """
-
-    method: str = "TB"
-    global_batch_size: int = 64
-    max_len: int = 128
-    max_nodes: int = 128
-    max_edges: int = 128
-    illegal_action_logreward: float = -100
-    offline_ratio: float = 0.5
-    train_random_action_prob: float = 0.0
-    valid_random_action_prob: float = 0.0
-    valid_sample_cond_info: bool = True
-    sampling_tau: float = 0.0
 
 
 class GFNAlgorithm:
@@ -257,9 +119,10 @@ class GFNTrainer:
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
         #   - The values passed in the constructor, typically what is called by the used
         # The final config is obtained by merging the three sources
-        self.cfg = make_config()
+        self.cfg = OmegaConf.structured(Config())
         self.set_default_hps(self.cfg)
-        update_config(self.cfg, hps)
+        OmegaConf.merge(self.cfg, hps)
+
         self.device = device
         # idem, but from `self.test_data` during validation.
         self.valid_offline_ratio = 1

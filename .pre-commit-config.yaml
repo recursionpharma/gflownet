@@ -49,8 +49,7 @@ repos:
         name: mypy
         entry: "mypy --config-file=pyproject.toml"
         language: system
-        # mypy will find all files to check from pyproject.toml, passing them here induces incorrect behavior
-        pass_filenames: false
+        types: [python]
         require_serial: true
       - id: bandit
         name: bandit

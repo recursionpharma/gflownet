@@ -14,8 +14,6 @@ cvxopt==1.3.0
     # via gflownet (pyproject.toml)
 cython==0.29.33
     # via tables
-foliconf==0.1
-    # via gflownet (pyproject.toml)
 gitdb==4.0.10
     # via gitpython
 gitpython==3.1.31
@@ -76,6 +74,8 @@ numpy==1.24.1
     #   torch-geometric
 oauthlib==3.2.2
     # via requests-oauthlib
+omegaconf==2.3.0
+    # via gflownet
 opt-einsum==3.3.0
     # via pyro-ppl
 packaging==23.0

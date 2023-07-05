@@ -86,11 +86,11 @@ class StandardOnlineTrainer(GFNTrainer):
         self.cfg.git_hash = git_hash
 
         os.makedirs(self.cfg.log_dir, exist_ok=True)
-        cd = config_to_dict(self.cfg)
-        fmt_hps = "\n".join([f"{f'{k}':40}:\t{f'({type(v).__name__})':10}\t{v}" for k, v in sorted(cd.items())])
-        print(f"\n\nHyperparameters:\n{'-'*50}\n{fmt_hps}\n{'-'*50}\n\n")
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.json", "w") as f:
-            json.dump(cd, f)
+        print("\n\nHyperparameters:\n")
+        yaml = OmegaConf.to_yaml(self.cfg)
+        print(yaml)
+        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
+            f.write(yaml)
 
     def step(self, loss: Tensor):
         loss.backward()

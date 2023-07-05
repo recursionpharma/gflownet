@@ -1,6 +1,6 @@
 import copy
 import os
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import scipy.stats as stats
@@ -15,22 +15,13 @@ from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.config import Config, config_class
+from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.trainer import FlatRewards, GFNTask, GFNTrainer, RewardScalar
 from gflownet.utils.transforms import thermometer
-
-
-@config_class("task.qm9")
-class QM9TaskConfig:
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = [0.5, 32]
-    num_thermometer_dim: int = 32
-    h5_path = "/data/chem/qm9/qm9.h5"
 
 
 class QM9GapTask(GFNTask):
