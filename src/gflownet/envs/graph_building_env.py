@@ -511,9 +511,11 @@ class GraphActionCategorical:
         self.logprobs = None
 
         if deduplicate_edge_index and "edge_index" in keys:
-            idx = keys.index("edge_index")
-            self.batch[idx] = self.batch[idx][::2]
-            self.slice[idx] = self.slice[idx].div(2, rounding_mode="floor")
+            for idx, k in enumerate(keys):
+                if k != "edge_index":
+                    continue
+                self.batch[idx] = self.batch[idx][::2]
+                self.slice[idx] = self.slice[idx].div(2, rounding_mode="floor")
 
     def detach(self):
         new = copy.copy(self)
