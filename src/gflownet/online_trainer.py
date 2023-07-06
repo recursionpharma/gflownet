@@ -5,13 +5,13 @@ import pathlib
 
 import git
 import torch
+from omegaconf import OmegaConf
 from torch import Tensor
 
 from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
-from gflownet.config import config_to_dict
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.models.graph_transformer import GraphTransformerGFN
 

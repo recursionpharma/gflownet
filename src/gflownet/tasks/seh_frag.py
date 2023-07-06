@@ -43,7 +43,7 @@ class SEHTask(GFNTask):
         self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
-        self.conditional = TemperatureConditional(cfg)
+        self.temperature_conditional = TemperatureConditional(cfg)
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -57,10 +57,10 @@ class SEHTask(GFNTask):
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        return self.conditional.sample(n)
+        return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.conditional.transform(cond_info, flat_reward))
+        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -120,7 +120,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
     def setup_env_context(self):
         self.ctx = FragMolBuildingEnvContext(
-            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.conditional.embedding_size()
+            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.temperature_conditional.encoding_size()
         )
 
 
