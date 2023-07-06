@@ -41,9 +41,9 @@ class StandardOnlineTrainer(GFNTrainer):
         self.algo = algo(self.env, self.ctx, self.rng, self.cfg)
 
     def setup(self):
-        super().setup()
         self.training_data = []
         self.test_data = []
+        super().setup()
         self.offline_ratio = 0
         self.valid_offline_ratio = 0
         self.replay_buffer = ReplayBuffer(self.cfg, self.rng) if self.cfg.replay.use else None

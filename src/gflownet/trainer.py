@@ -121,7 +121,7 @@ class GFNTrainer:
         # The final config is obtained by merging the three sources
         self.cfg = OmegaConf.structured(Config())
         self.set_default_hps(self.cfg)
-        OmegaConf.merge(self.cfg, hps)
+        self.cfg = OmegaConf.merge(self.cfg, hps)
 
         self.device = device
         # idem, but from `self.test_data` during validation.

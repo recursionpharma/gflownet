@@ -31,29 +31,29 @@ class Conditional(abc.ABC):
 
 
 class TemperatureConditional(Conditional):
-    def __init__(self, xcfg: Config):
-        self.cfg = xcfg
-        cfg = self.cfg.cond.temperature
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        tmp_cfg = self.cfg.cond.temperature
         self.upper_bound = 1024
-        if cfg.sample_dist == "gamma":
-            loc, scale = cfg.dist_params
+        if tmp_cfg.sample_dist == "gamma":
+            loc, scale = tmp_cfg.dist_params
             self.upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-        elif cfg.sample_dist == "uniform":
-            self.upper_bound = cfg.dist_params[1]
-        elif cfg.sample_dist == "loguniform":
-            self.upper_bound = cfg.dist_params[1]
-        elif cfg.sample_dist == "beta":
+        elif tmp_cfg.sample_dist == "uniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "loguniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "beta":
             self.upper_bound = 1
 
     def encoding_size(self):
-        return self.cfg.cond.moo.num_thermometer_dim
+        return self.cfg.cond.temperature.num_thermometer_dim
 
     def sample(self, n):
         cfg = self.cfg.cond.temperature
         beta = None
         if cfg.sample_dist == "constant":
-            assert type(cfg.dist_params) is float
-            beta = np.array(cfg.dist_params).repeat(n).astype(np.float32)
+            assert type(cfg.dist_params[0]) is float
+            beta = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
             beta_enc = torch.zeros((n, cfg.num_thermometer_dim))
         else:
             if cfg.sample_dist == "gamma":
@@ -110,11 +110,7 @@ class MultiObjectiveWeightedPreferences(Conditional):
         else:
             raise ValueError(f"Unknown preference type {self.cfg.preference_type}")
         preferences = torch.as_tensor(preferences).float()
-        if self.cfg.num_thermometer_dim > 0:
-            enc = thermometer(preferences, self.num_thermometer_dim, 0, 1).reshape(n, -1)
-        else:
-            enc = preferences.unsqueeze(1)
-        return {"preferences": preferences, "encoding": enc}
+        return {"preferences": preferences, "encoding": self.encode(preferences)}
 
     def transform(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
         scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30).log()
@@ -123,6 +119,12 @@ class MultiObjectiveWeightedPreferences(Conditional):
 
     def encoding_size(self):
         return max(1, self.num_thermometer_dim * self.num_objectives)
+
+    def encode(self, conditional: Tensor) -> Tensor:
+        if self.num_thermometer_dim > 0:
+            return thermometer(conditional, self.num_thermometer_dim, 0, 1).reshape(conditional.shape[0], -1)
+        else:
+            return conditional.unsqueeze(1)
 
 
 from gflownet.utils.focus_model import FocusModel, TabularFocusModel
@@ -189,6 +191,7 @@ class FocusRegionConditional(Conditional):
         self.valid_focus_dirs = valid_focus_dirs
 
     def sample(self, n: int, train_it: int = None):
+        train_it = train_it or 0
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
                 np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32)
@@ -213,12 +216,14 @@ class FocusRegionConditional(Conditional):
         else:
             raise NotImplementedError(f"Unsupported focus_type={type(self.cfg.focus_type)}")
 
-        return {
-            "focus_dir": focus_dir,
-            "encoding": thermometer(focus_dir, self.ocfg.cond.moo.num_thermometer_dim, 0, 1).reshape(n, -1)
+        return {"focus_dir": focus_dir, "encoding": self.encode(focus_dir)}
+
+    def encode(self, conditional: Tensor) -> Tensor:
+        return (
+            thermometer(conditional, self.ocfg.cond.moo.num_thermometer_dim, 0, 1).reshape(conditional.shape[0], -1)
             if self.cfg.use_steer_thermomether
-            else focus_dir,
-        }
+            else conditional
+        )
 
     def transform(self, cond_info: Dict[str, Tensor], flat_rewards: Tensor, scalar_logreward: Tensor = None) -> Tensor:
         focus_coef, in_focus_mask = metrics.compute_focus_coef(

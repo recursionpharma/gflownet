@@ -40,14 +40,11 @@ class SEHMOOTask(SEHTask):
         dataset: Dataset,
         cfg: Config,
         rng: np.random.Generator = None,
-        focus_model: Optional[FocusModel] = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
-        self._wrap_model = wrap_model
+        super().__init__(dataset, cfg, rng, wrap_model)
         self.cfg = cfg
         mcfg = self.cfg.task.seh_moo
-        self.rng = rng
-        self.models = self._load_task_models()
         self.objectives = cfg.task.seh_moo.objectives
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type != None:
@@ -58,13 +55,11 @@ class SEHMOOTask(SEHTask):
         self.temperature_sample_dist = mcfg.temperature_sample_dist
         self.temperature_dist_params = mcfg.temperature_dist_params
         self.num_thermometer_dim = mcfg.num_thermometer_dim
-        self.use_steer_thermometer = mcfg.use_steer_thermometer
-        self.preference_type = mcfg.preference_type
-        self.seeded_preference = None
-        self.experimental_dirichlet = False
-        self.illegal_action_logreward = cfg.algo.illegal_action_logreward
-        self.focus_model_training_limits = mcfg.focus_model_training_limits
-        self.max_train_it = mcfg.max_train_it
+        self.num_cond_dim = (
+            self.temperature_conditional.encoding_size()
+            + self.pref_cond.encoding_size()
+            + self.focus_cond.encoding_size()
+        )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -73,15 +68,10 @@ class SEHMOOTask(SEHTask):
     def inverse_flat_reward_transform(self, rp):
         return rp
 
-    def _load_task_models(self):
-        model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
-        return {"seh": model}
-
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
         pref_ci = self.pref_cond.sample(n)
-        focus_ci = self.focus_cond.sample(n)
+        focus_ci = self.focus_cond.sample(n, train_it)
         cond_info = {
             **cond_info,
             **pref_ci,
@@ -205,6 +195,7 @@ class SEHMOOTask(SEHTask):
 
 class SEHMOOFragTrainer(SEHFragTrainer):
     task: SEHMOOTask
+    ctx: FragMolBuildingEnvContext
 
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
@@ -227,14 +218,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
+        self.ctx.num_cond_dim = self.task.num_cond_dim
 
     def setup_env_context(self):
-        if self.cfg.task.seh_moo.use_steer_thermometer:
-            ncd = self.cfg.task.seh_moo.num_thermometer_dim * (1 + 2 * len(self.cfg.task.seh_moo.objectives))
-        else:
-            # 1 for prefs and 1 for focus region
-            ncd = self.cfg.task.seh_moo.num_thermometer_dim + 2 * len(self.cfg.task.seh_moo.objectives)
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=ncd)
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=0)
 
     def setup_model(self):
         if self.cfg.algo.method == "MOQL":
@@ -299,14 +286,14 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # hps["fixed_focus_dirs"] = (
         #    np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
         # )
-        assert self.task.valid_focus_dirs.shape == (
+        assert self.task.focus_cond.valid_focus_dirs.shape == (
             n_valid,
             n_obj,
-        ), f"Invalid shape for valid_preferences, {self.task.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+        ), f"Invalid shape for valid_preferences, {self.task.focus_cond.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
 
         # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
         # TODO: this relies on positional assumptions, should have something cleaner
-        valid_cond_vector = np.concatenate([valid_preferences, self.task.valid_focus_dirs], axis=1)
+        valid_cond_vector = np.concatenate([valid_preferences, self.task.focus_cond.valid_focus_dirs], axis=1)
 
         self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, len(valid_cond_vector))
         self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
@@ -362,33 +349,54 @@ def main():
         "num_final_gen_steps": 500,
         "validate_every": 500,
         "num_workers": 0,
-        "algo.global_batch_size": 64,
-        "algo.method": "TB",
-        "model.num_layers": 2,
-        "model.num_emb": 256,
-        "task.seh_moo.objectives": ["seh", "qed"],
-        "opt.learning_rate": 1e-4,
-        "algo.tb.Z_learning_rate": 1e-3,
-        "opt.lr_decay": 20000,
-        "algo.tb.Z_lr_decay": 50000,
-        "algo.sampling_tau": 0.95,
-        "algo.train_random_action_prob": 0.01,
-        "task.seh_moo.temperature_sample_dist": "constant",
-        "task.seh_moo.temperature_dist_params": 60.0,
-        "task.seh_moo.num_thermometer_dim": 32,
-        "task.seh_moo.use_steer_thermometer": False,
-        "task.seh_moo.preference_type": None,
-        "task.seh_moo.focus_type": "learned-tabular",
-        "task.seh_moo.focus_cosim": 0.98,
-        "task.seh_moo.focus_limit_coef": 1e-1,
-        "task.seh_moo.n_valid": 15,
-        "task.seh_moo.n_valid_repeats": 128,
-        "replay.use": True,
-        "replay.warmup": 1000,
-        "replay.hindsight_ratio": 0.3,
-        "task.seh_moo.focus_model_training_limits": [0.25, 0.75],
-        "task.seh_moo.focus_model_state_space_res": 30,
-        "task.seh_moo.max_train_it": 20_000,
+        "algo": {
+            "global_batch_size": 64,
+            "method": "TB",
+            "sampling_tau": 0.95,
+            "train_random_action_prob": 0.01,
+            "tb": {
+                "Z_learning_rate": 1e-3,
+                "Z_lr_decay": 50000,
+            },
+        },
+        "model": {
+            "num_layers": 2,
+            "num_emb": 256,
+        },
+        "task": {
+            "seh_moo": {
+                "objectives": ["seh", "qed"],
+                "n_valid": 15,
+                "n_valid_repeats": 128,
+            },
+        },
+        "opt": {
+            "learning_rate": 1e-4,
+            "lr_decay": 20000,
+        },
+        "cond": {
+            "temperature": {
+                "sample_dist": "constant",
+                "dist_params": [60.0],
+                "num_thermometer_dim": 32,
+            },
+            "weighted_prefs": {
+                "preference_type": None,
+            },
+            "focus_region": {
+                "focus_type": "learned-tabular",
+                "focus_cosim": 0.98,
+                "focus_limit_coef": 1e-1,
+                "focus_model_training_limits": (0.25, 0.75),
+                "focus_model_state_space_res": 30,
+                "max_train_it": 20_000,
+            },
+        },
+        "replay": {
+            "use": True,
+            "warmup": 1000,
+            "hindsight_ratio": 0.3,
+        },
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

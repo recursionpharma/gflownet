@@ -72,7 +72,7 @@ class SEHMOOTaskConfig:
     max_train_it: Optional[int] = None
     n_valid: int = 15
     n_valid_repeats: int = 128
-    objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "wt"])
+    objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
 
 
 @dataclass
