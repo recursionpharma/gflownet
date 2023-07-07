@@ -1,4 +1,3 @@
-import copy
 import os
 import shutil
 import socket
@@ -8,8 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from omegaconf import OmegaConf
-from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset

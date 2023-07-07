@@ -1,10 +1,9 @@
 import abc
 from copy import deepcopy
-from typing import Any, Dict, List, Optional
+from typing import Dict
 
 import numpy as np
 import torch
-import torch.nn as nn
 from scipy import stats
 from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
@@ -12,6 +11,7 @@ from torch_geometric import data as gd
 
 from gflownet.config import Config
 from gflownet.utils import metrics
+from gflownet.utils.focus_model import TabularFocusModel
 from gflownet.utils.transforms import thermometer
 
 
@@ -125,9 +125,6 @@ class MultiObjectiveWeightedPreferences(Conditional):
             return thermometer(conditional, self.num_thermometer_dim, 0, 1).reshape(conditional.shape[0], -1)
         else:
             return conditional.unsqueeze(1)
-
-
-from gflownet.utils.focus_model import FocusModel, TabularFocusModel
 
 
 class FocusRegionConditional(Conditional):

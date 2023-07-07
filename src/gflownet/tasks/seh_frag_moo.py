@@ -1,7 +1,7 @@
 import os
 import pathlib
 import shutil
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -21,7 +21,6 @@ from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
-from gflownet.utils.focus_model import FocusModel
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 
 
@@ -47,7 +46,7 @@ class SEHMOOTask(SEHTask):
         mcfg = self.cfg.task.seh_moo
         self.objectives = cfg.task.seh_moo.objectives
         self.dataset = dataset
-        if self.cfg.cond.focus_region.focus_type != None:
+        if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
         else:
             self.focus_cond = None
