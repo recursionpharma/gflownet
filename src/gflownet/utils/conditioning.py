@@ -31,9 +31,10 @@ class Conditional(abc.ABC):
 
 
 class TemperatureConditional(Conditional):
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, rng: np.random.Generator):
         self.cfg = cfg
         tmp_cfg = self.cfg.cond.temperature
+        self.rng = rng
         self.upper_bound = 1024
         if tmp_cfg.sample_dist == "gamma":
             loc, scale = tmp_cfg.dist_params

@@ -40,7 +40,7 @@ class SEHTask(GFNTask):
         self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg)
+        self.temperature_conditional = TemperatureConditional(cfg, rng)
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -114,23 +114,31 @@ class SEHFragTrainer(StandardOnlineTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
+        self.ctx.num_cond_dim = self.task.temperature_conditional.encoding_size()
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(
-            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.temperature_conditional.encoding_size()
-        )
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=0)
 
 
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": "./logs/debug_run",
+        "log_dir": "./logs/debug_run_seh_frag",
         "overwrite_existing_exp": True,
         "num_training_steps": 10_000,
         "num_workers": 8,
-        "opt.lr_decay": 20000,
-        "algo.sampling_tau": 0.99,
-        "cond.temperature.dist_params": (0.0, 64.0),
+        "opt": {
+            "lr_decay": 20000,
+        },
+        "algo": {
+            "sampling_tau": 0.99,
+        },
+        "cond": {
+            "temperature": {
+                "sample_dist": "uniform",
+                "dist_params": [0, 64.0],
+            }
+        },
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

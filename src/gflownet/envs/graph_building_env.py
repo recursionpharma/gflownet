@@ -777,6 +777,7 @@ class GraphBuildingEnvContext:
     """A context class defines what the graphs are, how they map to and from data"""
 
     device: torch.device
+    num_cond_dim: int = 0
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction

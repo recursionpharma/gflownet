@@ -319,8 +319,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         return super().train_batch(batch, epoch_idx, batch_idx, train_it)
 
     def _save_state(self, it):
-        if self.focus_model is not None:
-            self.focus_model.save(pathlib.Path(self.cfg.log_dir))
+        if self.task.focus_cond is not None and self.task.focus_cond.focus_model is not None:
+            self.task.focus_cond.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
 
 
@@ -344,7 +344,7 @@ def main():
         "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,
-        "num_training_steps": 20_000,
+        "num_training_steps": 5_000,
         "num_final_gen_steps": 500,
         "validate_every": 500,
         "num_workers": 0,
@@ -388,7 +388,7 @@ def main():
                 "focus_limit_coef": 1e-1,
                 "focus_model_training_limits": (0.25, 0.75),
                 "focus_model_state_space_res": 30,
-                "max_train_it": 20_000,
+                "max_train_it": 5_000,
             },
         },
         "replay": {
