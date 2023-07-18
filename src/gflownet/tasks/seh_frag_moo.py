@@ -1,9 +1,8 @@
-import json
 import os
 import pathlib
 import shutil
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -15,14 +14,11 @@ from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
 from torch.utils.data import Dataset
 
-from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.algo.soft_q_learning import SoftQLearning
-from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
-from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.train import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
@@ -43,45 +39,69 @@ class SEHMOOTask(SEHTask):
 
     def __init__(
         self,
-        objectives: List[str],
         dataset: Dataset,
-        temperature_sample_dist: str,
-        temperature_parameters: Tuple[float, float],
-        num_thermometer_dim: int,
-        use_steer_thermometer: bool = False,
-        preference_type: str = None,
-        focus_type: Union[list, str] = None,
-        focus_cosim: float = 0.0,
-        focus_limit_coef: float = 1.0,
-        fixed_focus_dirs: torch.Tensor = None,
-        illegal_action_logreward: float = None,
-        focus_model: FocusModel = None,
-        focus_model_training_limits: Tuple[int, int] = None,
-        max_train_it: int = None,
+        cfg: Config,
         rng: np.random.Generator = None,
+        focus_model: Optional[FocusModel] = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self._wrap_model = wrap_model
+        self.cfg = cfg
+        mcfg = self.cfg.task.seh_moo
         self.rng = rng
         self.models = self._load_task_models()
-        self.objectives = objectives
+        self.objectives = cfg.task.seh_moo.objectives
         self.dataset = dataset
-        self.temperature_sample_dist = temperature_sample_dist
-        self.temperature_dist_params = temperature_parameters
-        self.num_thermometer_dim = num_thermometer_dim
-        self.use_steer_thermometer = use_steer_thermometer
-        self.preference_type = preference_type
+        self.temperature_sample_dist = mcfg.temperature_sample_dist
+        self.temperature_dist_params = mcfg.temperature_dist_params
+        self.num_thermometer_dim = mcfg.num_thermometer_dim
+        self.use_steer_thermometer = mcfg.use_steer_thermometer
+        self.preference_type = mcfg.preference_type
         self.seeded_preference = None
         self.experimental_dirichlet = False
-        self.focus_type = focus_type
-        self.focus_cosim = focus_cosim
-        self.focus_limit_coef = focus_limit_coef
-        self.fixed_focus_dirs = fixed_focus_dirs
-        self.illegal_action_logreward = illegal_action_logreward
+        self.focus_type = mcfg.focus_type
+        self.focus_cosim = mcfg.focus_cosim
+        self.focus_limit_coef = mcfg.focus_limit_coef
         self.focus_model = focus_model
-        self.focus_model_training_limits = focus_model_training_limits
-        self.max_train_it = max_train_it
-        assert set(objectives) <= {"seh", "qed", "sa", "mw"} and len(objectives) == len(set(objectives))
+        self.illegal_action_logreward = cfg.algo.illegal_action_logreward
+        self.focus_model_training_limits = mcfg.focus_model_training_limits
+        self.max_train_it = mcfg.max_train_it
+        self.setup_focus_regions()
+        assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
+
+    def setup_focus_regions(self):
+        mcfg = self.cfg.task.seh_moo
+        n_valid = mcfg.n_valid
+        n_obj = len(self.objectives)
+        # focus regions
+        if mcfg.focus_type is None:
+            valid_focus_dirs = np.zeros((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type == "centered":
+            valid_focus_dirs = np.ones((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type == "partitioned":
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type in ["dirichlet", "learned-gfn"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
+            self.fixed_focus_dirs = None
+        elif mcfg.focus_type in ["hyperspherical", "learned-tabular"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = None
+        elif mcfg.focus_type == "listed":
+            if len(mcfg.focus_type) == 1:
+                valid_focus_dirs = np.array([mcfg.focus_dirs_listed[0]] * n_valid)
+                self.fixed_focus_dirs = valid_focus_dirs
+            else:
+                valid_focus_dirs = np.array(mcfg.focus_dirs_listed)
+                self.fixed_focus_dirs = valid_focus_dirs
+        else:
+            raise NotImplementedError(
+                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
+                f"focus_type, but here: {mcfg.focus_type}"
+            )
+        self.valid_focus_dirs = valid_focus_dirs
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))
@@ -262,44 +282,29 @@ class SEHMOOTask(SEHTask):
 
 
 class SEHMOOFragTrainer(SEHFragTrainer):
-    def default_hps(self) -> Dict[str, Any]:
-        return {
-            **super().default_hps(),
-            "use_fixed_weight": False,
-            "objectives": ["seh", "qed", "sa", "mw"],
-            "sampling_tau": 0.95,
-            "valid_sample_cond_info": False,
-            "n_valid": 15,
-            "n_valid_repeats": 128,
-            "preference_type": "dirichlet",
-            "focus_type": None,
-            "focus_cosim": None,
-            "focus_limit_coef": 1.0,
-            "hindsight_ratio": 0.0,
-            "focus_model_training_limits": None,
-            "focus_model_state_space_res": None,
-            "use_steer_thermometer": False,
-        }
+    task: SEHMOOTask
+
+    def set_default_hps(self, cfg: Config):
+        super().set_default_hps(cfg)
+        cfg.algo.sampling_tau = 0.95
+        cfg.algo.valid_sample_cond_info = False
 
     def setup_algo(self):
-        hps = self.hps
-        if hps["algo"] == "TB":
-            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
-        elif hps["algo"] == "SQL":
-            self.algo = SoftQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
-        elif hps["algo"] == "A2C":
-            self.algo = A2C(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
-        elif hps["algo"] == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
-        elif hps["algo"] == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.rng, hps, max_nodes=self.hps["max_nodes"])
+        algo = self.cfg.algo.method
+        if algo == "MOREINFORCE":
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
+        elif algo == "MOQL":
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
+        else:
+            super().setup_algo()
 
-        if hps["focus_type"] is not None and "learned" in hps["focus_type"]:
-            if hps["focus_type"] == "learned-tabular":
+        focus_type = self.cfg.task.seh_moo.focus_type
+        if focus_type is not None and "learned" in focus_type:
+            if focus_type == "learned-tabular":
                 self.focus_model = TabularFocusModel(
                     device=self.device,
-                    n_objectives=len(hps["objectives"]),
-                    state_space_res=hps["focus_model_state_space_res"],
+                    n_objectives=len(self.cfg.task.seh_moo.objectives),
+                    state_space_res=self.cfg.task.seh_moo.focus_model_state_space_res,
                 )
             else:
                 raise NotImplementedError("Unknown focus model type {self.focus_type}")
@@ -308,143 +313,95 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup_task(self):
         self.task = SEHMOOTask(
-            objectives=self.hps["objectives"],
             dataset=self.training_data,
-            temperature_sample_dist=self.hps["temperature_sample_dist"],
-            temperature_parameters=self.hps["temperature_dist_params"],
-            num_thermometer_dim=self.hps["num_thermometer_dim"],
-            use_steer_thermometer=self.hps["use_steer_thermometer"],
-            preference_type=self.hps["preference_type"],
-            focus_type=self.hps["focus_type"],
-            focus_cosim=self.hps["focus_cosim"],
-            focus_limit_coef=self.hps["focus_limit_coef"],
-            illegal_action_logreward=self.hps["illegal_action_logreward"],
+            cfg=self.cfg,
             focus_model=self.focus_model,
-            focus_model_training_limits=self.hps["focus_model_training_limits"],
-            max_train_it=self.hps["num_training_steps"],
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 
-    def setup_model(self):
-        if self.hps["algo"] == "MOQL":
-            model = GraphTransformerFragEnvelopeQL(
-                self.ctx,
-                num_emb=self.hps["num_emb"],
-                num_layers=self.hps["num_layers"],
-                num_objectives=len(self.hps["objectives"]),
-            )
-        else:
-            model = GraphTransformerGFN(
-                self.ctx,
-                num_emb=self.hps["num_emb"],
-                num_layers=self.hps["num_layers"],
-                do_bck=self.hps["tb_p_b_is_parameterized"],
-            )
-
-        if self.hps["algo"] in ["A2C", "MOQL"]:
-            model.do_mask = False
-        self.model = model
-
     def setup_env_context(self):
-        if self.hps.get("use_steer_thermometer", False):
-            ncd = self.hps["num_thermometer_dim"] * (1 + 2 * len(self.hps["objectives"]))
+        if self.cfg.task.seh_moo.use_steer_thermometer:
+            ncd = self.cfg.task.seh_moo.num_thermometer_dim * (1 + 2 * len(self.cfg.task.seh_moo.objectives))
         else:
-            ncd = self.hps["num_thermometer_dim"] + 2 * len(
-                self.hps["objectives"]
-            )  # 1 for prefs and 1 for focus region
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.hps["max_nodes"], num_cond_dim=ncd)
+            # 1 for prefs and 1 for focus region
+            ncd = self.cfg.task.seh_moo.num_thermometer_dim + 2 * len(self.cfg.task.seh_moo.objectives)
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=ncd)
+
+    def setup_model(self):
+        if self.cfg.algo.method == "MOQL":
+            self.model = GraphTransformerFragEnvelopeQL(
+                self.ctx,
+                num_emb=self.cfg.model.num_emb,
+                num_layers=self.cfg.model.num_layers,
+                num_heads=self.cfg.model.graph_transformer.num_heads,
+                num_objectives=len(self.cfg.task.seh_moo.objectives),
+            )
+        else:
+            super().setup_model()
 
     def setup(self):
         super().setup()
         self.sampling_hooks.append(
             MultiObjectiveStatsHook(
                 256,
-                self.hps["log_dir"],
+                self.cfg.log_dir,
                 compute_igd=True,
                 compute_pc_entropy=True,
-                compute_focus_accuracy=True if self.hps["focus_type"] is not None else False,
-                focus_cosim=self.hps["focus_cosim"],
+                compute_focus_accuracy=True if self.cfg.task.seh_moo.focus_type is not None else False,
+                focus_cosim=self.cfg.task.seh_moo.focus_cosim,
             )
         )
         # instantiate preference and focus conditioning vectors for validation
 
-        n_obj = len(self.hps["objectives"])
-        n_valid = self.hps["n_valid"]
+        tcfg = self.cfg.task.seh_moo
+        n_obj = len(tcfg.objectives)
 
         # making sure hyperparameters for preferences and focus regions are consistent
         if not (
-            self.hps["focus_type"] is None
-            or self.hps["focus_type"] == "centered"
-            or (type(self.hps["focus_type"]) is list and len(self.hps["focus_type"]) == 1)
+            tcfg.focus_type is None
+            or tcfg.focus_type == "centered"
+            or (type(tcfg.focus_type) is list and len(tcfg.focus_type) == 1)
         ):
-            assert self.hps["preference_type"] is None, (
-                f"Cannot use preferences with multiple focus regions, here focus_type={self.hps['focus_type']} "
-                f"and preference_type={self.hps['preference_type']}"
+            assert tcfg.preference_type is None, (
+                f"Cannot use preferences with multiple focus regions, here focus_type={tcfg.focus_type} "
+                f"and preference_type={tcfg.preference_type}"
             )
 
-        if type(self.hps["focus_type"]) is list and len(self.hps["focus_type"]) > 1:
-            n_valid = len(self.hps["focus_type"])
+        if type(tcfg.focus_type) is list and len(tcfg.focus_type) > 1:
+            n_valid = len(tcfg.focus_type)
+        else:
+            n_valid = tcfg.n_valid
 
         # preference vectors
-        if self.hps["preference_type"] is None:
+        if tcfg.preference_type is None:
             valid_preferences = np.ones((n_valid, n_obj))
-        elif self.hps["preference_type"] == "dirichlet":
+        elif tcfg.preference_type == "dirichlet":
             valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
-        elif self.hps["preference_type"] == "seeded_single":
-            seeded_prefs = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet([1] * n_obj, n_valid)
+        elif tcfg.preference_type == "seeded_single":
+            seeded_prefs = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
-        elif self.hps["preference_type"] == "seeded_many":
-            valid_preferences = np.random.default_rng(142857 + int(self.hps["seed"])).dirichlet([1] * n_obj, n_valid)
+        elif tcfg.preference_type == "seeded_many":
+            valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
-            raise NotImplementedError(f"Unknown preference type {self.hps['preference_type']}")
+            raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
 
-        # focus regions
-        if self.hps["focus_type"] is None:
-            valid_focus_dirs = np.zeros((n_valid, n_obj))
-            self.task.fixed_focus_dirs = valid_focus_dirs
-        elif self.hps["focus_type"] == "centered":
-            valid_focus_dirs = np.ones((n_valid, n_obj))
-            self.task.fixed_focus_dirs = valid_focus_dirs
-        elif self.hps["focus_type"] == "partitioned":
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
-            self.task.fixed_focus_dirs = valid_focus_dirs
-        elif self.hps["focus_type"] in ["dirichlet", "learned-gfn"]:
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
-            self.task.fixed_focus_dirs = None
-        elif self.hps["focus_type"] in ["hyperspherical", "learned-tabular"]:
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
-            self.task.fixed_focus_dirs = None
-        elif type(self.hps["focus_type"]) is list:
-            if len(self.hps["focus_type"]) == 1:
-                valid_focus_dirs = np.array([self.hps["focus_type"][0]] * n_valid)
-                self.task.fixed_focus_dirs = valid_focus_dirs
-            else:
-                valid_focus_dirs = np.array(self.hps["focus_type"])
-                self.task.fixed_focus_dirs = valid_focus_dirs
-        else:
-            raise NotImplementedError(
-                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
-                f"focus_type, but here: {self.hps['focus_type']}"
-            )
-
-        self.hps["fixed_focus_dirs"] = (
-            np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
-        )
-        with open(pathlib.Path(self.hps["log_dir"]) / "hps.json", "w") as f:
-            json.dump(self.hps, f)
-        assert valid_focus_dirs.shape == (
+        # TODO: this was previously reported, would be nice to serialize it
+        # hps["fixed_focus_dirs"] = (
+        #    np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
+        # )
+        assert self.task.valid_focus_dirs.shape == (
             n_valid,
             n_obj,
-        ), f"Invalid shape for valid_preferences, {valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+        ), f"Invalid shape for valid_preferences, {self.task.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
 
         # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
         # TODO: this relies on positional assumptions, should have something cleaner
-        valid_cond_vector = np.concatenate([valid_preferences, valid_focus_dirs], axis=1)
+        valid_cond_vector = np.concatenate([valid_preferences, self.task.valid_focus_dirs], axis=1)
 
-        self._top_k_hook = TopKHook(10, self.hps["n_valid_repeats"], len(valid_cond_vector))
-        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.hps["n_valid_repeats"])
+        self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, len(valid_cond_vector))
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
@@ -464,8 +421,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         return {"topk": TopKMetricCB()}
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
-        focus_model_training_limits = self.hps["focus_model_training_limits"]
-        max_train_it = self.hps["num_training_steps"]
+        focus_model_training_limits = self.cfg.task.seh_moo.focus_model_training_limits
+        max_train_it = self.cfg.num_training_steps
         if (
             self.focus_model is not None
             and train_it >= focus_model_training_limits[0] * max_train_it
@@ -476,7 +433,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def _save_state(self, it):
         if self.focus_model is not None:
-            self.focus_model.save(pathlib.Path(self.hps["log_dir"]))
+            self.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
 
 
@@ -497,39 +454,40 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         "log_dir": "./logs/debug_run",
+        "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,
-        "global_batch_size": 64,
         "num_training_steps": 20_000,
         "num_final_gen_steps": 500,
-        "validate_every": 10,
-        "num_layers": 2,
-        "num_emb": 256,
-        "algo": "TB",
-        "objectives": ["seh", "qed"],
-        "learning_rate": 1e-4,
-        "Z_learning_rate": 1e-3,
-        "lr_decay": 20000,
-        "Z_lr_decay": 50000,
-        "sampling_tau": 0.95,
-        "random_action_prob": 0.1,
-        "num_data_loader_workers": 0,
-        "temperature_sample_dist": "constant",
-        "temperature_dist_params": 60.0,
-        "num_thermometer_dim": 32,
-        "use_steer_thermometer": False,
-        "preference_type": None,
-        "focus_type": "learned-tabular",
-        "focus_cosim": 0.98,
-        "focus_limit_coef": 1e-1,
-        "n_valid": 15,
-        "n_valid_repeats": 128,
-        "use_replay_buffer": True,
-        "replay_buffer_warmup": 0,
-        "hindsight_ratio": 0.3,
-        "mp_pickle_messages": True,
-        "focus_model_training_limits": [0.25, 0.75],
-        "focus_model_state_space_res": 10,
+        "validate_every": 500,
+        "num_workers": 0,
+        "algo.global_batch_size": 64,
+        "algo.method": "TB",
+        "model.num_layers": 2,
+        "model.num_emb": 256,
+        "task.seh_moo.objectives": ["seh", "qed"],
+        "opt.learning_rate": 1e-4,
+        "algo.tb.Z_learning_rate": 1e-3,
+        "opt.lr_decay": 20000,
+        "algo.tb.Z_lr_decay": 50000,
+        "algo.sampling_tau": 0.95,
+        "algo.train_random_action_prob": 0.01,
+        "task.seh_moo.temperature_sample_dist": "constant",
+        "task.seh_moo.temperature_dist_params": 60.0,
+        "task.seh_moo.num_thermometer_dim": 32,
+        "task.seh_moo.use_steer_thermometer": False,
+        "task.seh_moo.preference_type": None,
+        "task.seh_moo.focus_type": "learned-tabular",
+        "task.seh_moo.focus_cosim": 0.98,
+        "task.seh_moo.focus_limit_coef": 1e-1,
+        "task.seh_moo.n_valid": 15,
+        "task.seh_moo.n_valid_repeats": 128,
+        "replay.use": True,
+        "replay.warmup": 1000,
+        "replay.hindsight_ratio": 0.3,
+        "task.seh_moo.focus_model_training_limits": [0.25, 0.75],
+        "task.seh_moo.focus_model_state_space_res": 30,
+        "task.seh_moo.max_train_it": 20_000,
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:

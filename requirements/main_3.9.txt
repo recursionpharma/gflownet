@@ -74,6 +74,8 @@ numpy==1.24.1
     #   torch-geometric
 oauthlib==3.2.2
     # via requests-oauthlib
+omegaconf==2.3.0
+    # via gflownet
 opt-einsum==3.3.0
     # via pyro-ppl
 packaging==23.0

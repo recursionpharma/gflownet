@@ -28,11 +28,12 @@ class SamplingIterator(IterableDataset):
         self,
         dataset: Dataset,
         model: nn.Module,
-        batch_size: int,
         ctx,
         algo,
         task,
         device,
+        batch_size: int = 1,
+        illegal_action_logreward: float = -50,
         ratio: float = 0.5,
         stream: bool = True,
         replay_buffer: ReplayBuffer = None,
@@ -49,14 +50,21 @@ class SamplingIterator(IterableDataset):
         model: nn.Module
             The model we sample from (must be on CUDA already or share_memory() must be called so that
             parameters are synchronized between each worker)
+        ctx:
+            The context for the environment, e.g. a MolBuildingEnvContext instance
+        algo:
+            The training algorithm, e.g. a TrajectoryBalance instance
+        task: GFNTask
+            A Task instance, e.g. a MakeRingsTask instance
+        device: torch.device
+            The device the model is on
         replay_buffer: ReplayBuffer
             The replay buffer for training on past data
         batch_size: int
             The number of trajectories, each trajectory will be comprised of many graphs, so this is
             _not_ the batch size in terms of the number of graphs (that will depend on the task)
-        algo:
-            The training algorithm, e.g. a TrajectoryBalance instance
-        task: ConditionalTask
+        illegal_action_logreward: float
+            The logreward for invalid trajectories
         ratio: float
             The ratio of offline trajectories in the batch.
         stream: bool
@@ -67,14 +75,18 @@ class SamplingIterator(IterableDataset):
         sample_cond_info: bool
             If True (default), then the dataset is a dataset of points used in offline training.
             If False, then the dataset is a dataset of preferences (e.g. used to validate the model)
-
+        random_action_prob: float
+            The probability of taking a random action, passed to the graph sampler
+        init_train_iter: int
+            The initial training iteration, incremented and passed to task.sample_conditional_information
         """
         self.data = dataset
         self.model = model
         self.replay_buffer = replay_buffer
         self.batch_size = batch_size
-        self.offline_batch_size = int(np.ceil(batch_size * ratio))
-        self.online_batch_size = int(np.floor(batch_size * (1 - ratio)))
+        self.illegal_action_logreward = illegal_action_logreward
+        self.offline_batch_size = int(np.ceil(self.batch_size * ratio))
+        self.online_batch_size = int(np.floor(self.batch_size * (1 - ratio)))
         self.ratio = ratio
         self.ctx = ctx
         self.algo = algo
@@ -92,7 +104,7 @@ class SamplingIterator(IterableDataset):
         # then "offline" now refers to cond info and online to x, so no duplication and we don't end
         # up with 2*batch_size accidentally
         if not sample_cond_info:
-            self.offline_batch_size = self.online_batch_size = batch_size
+            self.offline_batch_size = self.online_batch_size = self.batch_size
 
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
@@ -222,7 +234,7 @@ class SamplingIterator(IterableDataset):
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
             log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
-            log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
+            log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
 
             # Computes some metrics
             if not self.sample_cond_info:
@@ -293,7 +305,7 @@ class SamplingIterator(IterableDataset):
                 cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(
                     cond_info, log_rewards, flat_rewards, hindsight_idxs
                 )
-                log_rewards[torch.logical_not(is_valid)] = self.algo.illegal_action_logreward
+                log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
 
             # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info["encoding"], log_rewards)

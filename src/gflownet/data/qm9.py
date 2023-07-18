@@ -40,3 +40,19 @@ class QM9Dataset(Dataset):
 
     def __getitem__(self, idx):
         return (Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]]), self.df[self.target][self.idcs[idx]])
+
+
+def convert_h5():
+    # File obtained from
+    # https://figshare.com/collections/Quantum_chemistry_structures_and_properties_of_134_kilo_molecules/978904
+    # (from http://quantum-machine.org/datasets/)
+    f = tarfile.TarFile("qm9.xyz.tar", "r")
+    labels = ["rA", "rB", "rC", "mu", "alpha", "homo", "lumo", "gap", "r2", "zpve", "U0", "U", "H", "G", "Cv"]
+    all_mols = []
+    for pt in f:
+        pt = f.extractfile(pt)  # type: ignore
+        data = pt.read().decode().splitlines()  # type: ignore
+        all_mols.append(data[-2].split()[:1] + list(map(float, data[1].split()[2:])))
+    df = pd.DataFrame(all_mols, columns=["SMILES"] + labels)
+    store = pd.HDFStore("qm9.h5", "w")
+    store["df"] = df
