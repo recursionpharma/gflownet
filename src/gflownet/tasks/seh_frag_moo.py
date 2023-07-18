@@ -1,7 +1,8 @@
 import os
 import pathlib
 import shutil
-from typing import Any, Callable, Dict, List, Tuple, Union
+from copy import deepcopy
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -39,6 +40,7 @@ class SEHMOOTask(SEHTask):
         dataset: Dataset,
         cfg: Config,
         rng: np.random.Generator = None,
+        focus_model: Optional[FocusModel] = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         super().__init__(dataset, cfg, rng, wrap_model)
@@ -60,6 +62,40 @@ class SEHMOOTask(SEHTask):
             + self.focus_cond.encoding_size()
         )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
+
+    def setup_focus_regions(self):
+        mcfg = self.cfg.task.seh_moo
+        n_valid = mcfg.n_valid
+        n_obj = len(self.objectives)
+        # focus regions
+        if mcfg.focus_type is None:
+            valid_focus_dirs = np.zeros((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type == "centered":
+            valid_focus_dirs = np.ones((n_valid, n_obj))
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type == "partitioned":
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = valid_focus_dirs
+        elif mcfg.focus_type in ["dirichlet", "learned-gfn"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
+            self.fixed_focus_dirs = None
+        elif mcfg.focus_type in ["hyperspherical", "learned-tabular"]:
+            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
+            self.fixed_focus_dirs = None
+        elif mcfg.focus_type == "listed":
+            if len(mcfg.focus_type) == 1:
+                valid_focus_dirs = np.array([mcfg.focus_dirs_listed[0]] * n_valid)
+                self.fixed_focus_dirs = valid_focus_dirs
+            else:
+                valid_focus_dirs = np.array(mcfg.focus_dirs_listed)
+                self.fixed_focus_dirs = valid_focus_dirs
+        else:
+            raise NotImplementedError(
+                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
+                f"focus_type, but here: {mcfg.focus_type}"
+            )
+        self.valid_focus_dirs = valid_focus_dirs
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))

@@ -81,7 +81,7 @@ class QM9TaskConfig:
     temperature_sample_dist: str = "uniform"
     temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
-    h5_path = "/data/chem/qm9/qm9.h5"
+    h5_path = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
 
 
 @dataclass
