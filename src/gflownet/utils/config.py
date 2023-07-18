@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 
 @dataclass
@@ -22,7 +22,7 @@ class TempCondConfig:
         The number of thermometer encoding dimensions to use.
     """
 
-    sample_dist: str = "uniform"
+    sample_dist: Literal["uniform", "loguniform", "gamma", "constant", "beta"] = "uniform"
     dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
 
@@ -35,12 +35,14 @@ class MultiObjectiveConfig:
 
 @dataclass
 class WeightedPreferencesConfig:
-    preference_type: Optional[str] = "dirichlet"
+    preference_type: Literal["dirichlet", "dirichlet_exponential", "seeded", None] = "dirichlet"
 
 
 @dataclass
 class FocusRegionConfig:
-    focus_type: Optional[str] = "learned-tabular"
+    focus_type: Literal[
+        None, "centered", "partitioned", "dirichlet", "hyperspherical", "learned-gfn", "learned-tabular"
+    ] = "learned-tabular"
     use_steer_thermomether: bool = False
     focus_cosim: float = 0.98
     focus_limit_coef: float = 0.1

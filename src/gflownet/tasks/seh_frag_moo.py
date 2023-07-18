@@ -40,7 +40,6 @@ class SEHMOOTask(SEHTask):
         dataset: Dataset,
         cfg: Config,
         rng: np.random.Generator = None,
-        focus_model: Optional[FocusModel] = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         super().__init__(dataset, cfg, rng, wrap_model)
@@ -374,7 +373,7 @@ class RepeatedCondInfoDataset:
 
 
 def main():
-    """Example of how this model can be run outside of Determined"""
+    """Example of how this model can be run."""
     hps = {
         "log_dir": "./logs/debug_run",
         "pickle_mp_messages": True,

@@ -117,7 +117,7 @@ class GFNTrainer:
         # There are three sources of config values
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
-        #   - The values passed in the constructor, typically what is called by the used
+        #   - The values passed in the constructor, typically what is called by the user
         # The final config is obtained by merging the three sources
         self.cfg: Config = OmegaConf.structured(Config())
         self.set_default_hps(self.cfg)
