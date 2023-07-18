@@ -1,8 +1,7 @@
 import os
 import pathlib
 import shutil
-from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
