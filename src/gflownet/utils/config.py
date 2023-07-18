@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Optional
 
 
 @dataclass
@@ -22,7 +22,7 @@ class TempCondConfig:
         The number of thermometer encoding dimensions to use.
     """
 
-    sample_dist: Literal["uniform", "loguniform", "gamma", "constant", "beta"] = "uniform"
+    sample_dist: str = "uniform"
     dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
     num_thermometer_dim: int = 32
 
@@ -35,14 +35,32 @@ class MultiObjectiveConfig:
 
 @dataclass
 class WeightedPreferencesConfig:
-    preference_type: Literal["dirichlet", "dirichlet_exponential", "seeded", None] = "dirichlet"
+    """Config for the weighted preferences conditional.
+
+    Attributes
+    ----------
+    preference_type : str
+        The preference sampling distribution, defaults to "dirichlet". Can be one of:
+        - "dirichlet": Dirichlet distribution
+        - "dirichlet_exponential": Dirichlet distribution with exponential temperature
+        - "seeded": Enumerated preferences
+        - None: All rewards equally weighted"""
+
+    preference_type: Optional[str] = "dirichlet"
 
 
 @dataclass
 class FocusRegionConfig:
-    focus_type: Literal[
-        None, "centered", "partitioned", "dirichlet", "hyperspherical", "learned-gfn", "learned-tabular"
-    ] = "learned-tabular"
+    """Config for the focus region conditional.
+
+    Attributes
+    ----------
+    focus_type : str
+        The type of focus distribtuion used, see FocusRegionConditon.setup_focus_regions. Can be one of:
+        [None, "centered", "partitioned", "dirichlet", "hyperspherical", "learned-gfn", "learned-tabular"]
+    """
+
+    focus_type: Optional[str] = "learned-tabular"
     use_steer_thermomether: bool = False
     focus_cosim: float = 0.98
     focus_limit_coef: float = 0.1
