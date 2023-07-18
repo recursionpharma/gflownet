@@ -94,7 +94,7 @@ class GFNTrainer:
         Parameters
         ----------
         hps: Dict[str, Any]
-            A dictionary of hyperparameters. These override default values obtained by the `default_hps` method.
+            A dictionary of hyperparameters. These override default values obtained by the `set_default_hps` method.
         device: torch.device
             The torch device of the main worker.
         """
@@ -115,9 +115,9 @@ class GFNTrainer:
         # There are three sources of config values
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
-        #   - The values passed in the constructor, typically what is called by the used
+        #   - The values passed in the constructor, typically what is called by the user
         # The final config is obtained by merging the three sources
-        self.cfg = OmegaConf.structured(Config())
+        self.cfg: Config = OmegaConf.structured(Config())
         self.set_default_hps(self.cfg)
         OmegaConf.merge(self.cfg, hps)
 
@@ -168,11 +168,12 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.training_data,
             model,
-            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
+            batch_size=self.cfg.algo.global_batch_size,
+            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
             replay_buffer=replay_buffer,
             ratio=self.cfg.algo.offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
@@ -196,11 +197,12 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.test_data,
             model,
-            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
+            batch_size=self.cfg.algo.global_batch_size,
+            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
             ratio=self.valid_offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
             sample_cond_info=self.cfg.algo.valid_sample_cond_info,
@@ -222,11 +224,12 @@ class GFNTrainer:
         iterator = SamplingIterator(
             self.training_data,
             model,
-            self.cfg,
             self.ctx,
             self.algo,
             self.task,
             dev,
+            batch_size=self.cfg.algo.global_batch_size,
+            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
             replay_buffer=None,
             ratio=0.0,
             log_dir=os.path.join(self.cfg.log_dir, "final"),

@@ -31,7 +31,10 @@ class TrajectoryBalanceModel(nn.Module):
 
 
 class TrajectoryBalance(GFNAlgorithm):
-    """ """
+    """TB implementation, see
+    "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
+    Emmanuel Bengio, Chen Sun, Yoshua Bengio"
+    https://arxiv.org/abs/2201.13259"""
 
     def __init__(
         self,

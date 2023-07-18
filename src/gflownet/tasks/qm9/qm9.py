@@ -192,9 +192,9 @@ class QM9GapTrainer(GFNTrainer):
         self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_param = self.cfg.opt.clip_grad_param
         self.clip_grad_callback = {
-            "value": (lambda params: torch.nn.utils.clip_grad_value_(params, self.clip_grad_param)),
-            "norm": (lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param)),
-            "none": (lambda x: None),
+            "value": lambda params: torch.nn.utils.clip_grad_value_(params, self.clip_grad_param),
+            "norm": lambda params: torch.nn.utils.clip_grad_norm_(params, self.clip_grad_param),
+            "none": lambda x: None,
         }[self.cfg.opt.clip_grad_type]
 
     def step(self, loss: Tensor):
