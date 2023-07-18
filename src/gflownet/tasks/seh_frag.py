@@ -41,6 +41,7 @@ class SEHTask(GFNTask):
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.num_cond_dim = self.temperature_conditional.encoding_size()
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -114,10 +115,9 @@ class SEHFragTrainer(StandardOnlineTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
-        self.ctx.num_cond_dim = self.task.temperature_conditional.encoding_size()
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=0)
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
 
 
 def main():

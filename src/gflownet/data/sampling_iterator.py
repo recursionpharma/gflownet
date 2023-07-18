@@ -81,7 +81,6 @@ class SamplingIterator(IterableDataset):
         init_train_iter: int
             The initial training iteration, incremented and passed to task.sample_conditional_information
         """
-        self.cfg = cfg
         self.data = dataset
         self.model = model
         self.replay_buffer = replay_buffer
@@ -308,7 +307,10 @@ class SamplingIterator(IterableDataset):
                     cond_info, log_rewards, flat_rewards, hindsight_idxs
                 )
                 log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
+
+            # Construct batch
             batch = self.algo.construct_batch(trajs, cond_info["encoding"], log_rewards)
+            batch.num_offline = num_offline
             batch.num_online = num_online
             batch.flat_rewards = flat_rewards
             batch.preferences = cond_info.get("preferences", None)

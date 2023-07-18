@@ -252,10 +252,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
-        self.ctx.num_cond_dim = self.task.num_cond_dim
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=0)
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
 
     def setup_model(self):
         if self.cfg.algo.method == "MOQL":

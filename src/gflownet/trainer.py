@@ -159,9 +159,9 @@ class GFNTrainer:
         RDLogger.DisableLog("rdApp.*")
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
+        self.setup_task()
         self.setup_env_context()
         self.setup_algo()
-        self.setup_task()
         self.setup_model()
 
     def _wrap_for_mp(self, obj, send_to_device=False):
