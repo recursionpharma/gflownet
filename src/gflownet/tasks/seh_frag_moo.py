@@ -302,6 +302,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             # combine preferences and focus directions (fixed focus cosim) since they could be used together
             # (not either/or). TODO: this relies on positional assumptions, should have something cleaner
             valid_cond_vector = np.concatenate([valid_preferences, self.task.focus_cond.valid_focus_dirs], axis=1)
+        else:
+            valid_cond_vector = valid_preferences
 
         self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, n_valid)
         self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
@@ -324,7 +326,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         return {"topk": TopKMetricCB()}
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
-        self.task.focus_cond.step_focus_model(batch, train_it)
+        if self.task.focus_cond is not None:
+            self.task.focus_cond.step_focus_model(batch, train_it)
         return super().train_batch(batch, epoch_idx, batch_idx, train_it)
 
     def _save_state(self, it):
@@ -349,7 +352,7 @@ class RepeatedCondInfoDataset:
 def main():
     """Example of how this model can be run."""
     hps = {
-        "log_dir": "./logs/debug_run",
+        "log_dir": "./logs/debug_run_sfm",
         "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,
@@ -389,10 +392,10 @@ def main():
                 "num_thermometer_dim": 32,
             },
             "weighted_prefs": {
-                "preference_type": None,
+                "preference_type": "dirichlet",
             },
             "focus_region": {
-                "focus_type": "learned-tabular",
+                "focus_type": None,  # "learned-tabular",
                 "focus_cosim": 0.98,
                 "focus_limit_coef": 1e-1,
                 "focus_model_training_limits": (0.25, 0.75),
@@ -401,9 +404,9 @@ def main():
             },
         },
         "replay": {
-            "use": True,
+            "use": False,
             "warmup": 1000,
-            "hindsight_ratio": 0.3,
+            "hindsight_ratio": 0.0,
         },
     }
     if os.path.exists(hps["log_dir"]):
