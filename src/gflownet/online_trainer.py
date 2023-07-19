@@ -39,9 +39,11 @@ class StandardOnlineTrainer(GFNTrainer):
             raise ValueError(algo)
         self.algo = algo(self.env, self.ctx, self.rng, self.cfg)
 
-    def setup(self):
+    def setup_data(self):
         self.training_data = []
         self.test_data = []
+
+    def setup(self):
         super().setup()
         self.offline_ratio = 0
         self.valid_offline_ratio = 0

@@ -3,5 +3,6 @@ opt:
 task:
   qm9:
     h5_path: /data/chem/qm9/qm9.h5
+    model_path: /data/chem/qm9/mxmnet_gap_model.pt
 num_training_steps: 100000
 validate_every: 100
