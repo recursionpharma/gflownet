@@ -57,43 +57,9 @@ class SEHMOOTask(SEHTask):
         self.num_cond_dim = (
             self.temperature_conditional.encoding_size()
             + self.pref_cond.encoding_size()
-            + self.focus_cond.encoding_size()
+            + (self.focus_cond.encoding_size() if self.focus_cond is not None else 0)
         )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
-
-    def setup_focus_regions(self):
-        mcfg = self.cfg.task.seh_moo
-        n_valid = mcfg.n_valid
-        n_obj = len(self.objectives)
-        # focus regions
-        if mcfg.focus_type is None:
-            valid_focus_dirs = np.zeros((n_valid, n_obj))
-            self.fixed_focus_dirs = valid_focus_dirs
-        elif mcfg.focus_type == "centered":
-            valid_focus_dirs = np.ones((n_valid, n_obj))
-            self.fixed_focus_dirs = valid_focus_dirs
-        elif mcfg.focus_type == "partitioned":
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
-            self.fixed_focus_dirs = valid_focus_dirs
-        elif mcfg.focus_type in ["dirichlet", "learned-gfn"]:
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
-            self.fixed_focus_dirs = None
-        elif mcfg.focus_type in ["hyperspherical", "learned-tabular"]:
-            valid_focus_dirs = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l2")
-            self.fixed_focus_dirs = None
-        elif mcfg.focus_type == "listed":
-            if len(mcfg.focus_type) == 1:
-                valid_focus_dirs = np.array([mcfg.focus_dirs_listed[0]] * n_valid)
-                self.fixed_focus_dirs = valid_focus_dirs
-            else:
-                valid_focus_dirs = np.array(mcfg.focus_dirs_listed)
-                self.fixed_focus_dirs = valid_focus_dirs
-        else:
-            raise NotImplementedError(
-                f"focus_type should be None, a list of fixed_focus_dirs, or a string describing one of the supported "
-                f"focus_type, but here: {mcfg.focus_type}"
-            )
-        self.valid_focus_dirs = valid_focus_dirs
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))
@@ -104,7 +70,9 @@ class SEHMOOTask(SEHTask):
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
         pref_ci = self.pref_cond.sample(n)
-        focus_ci = self.focus_cond.sample(n, train_it)
+        focus_ci = (
+            self.focus_cond.sample(n, train_it) if self.focus_cond is not None else {"encoding": torch.zeros(n, 0)}
+        )
         cond_info = {
             **cond_info,
             **pref_ci,
@@ -152,6 +120,8 @@ class SEHMOOTask(SEHTask):
         self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: FlatRewards, hindsight_idxs: Tensor
     ):
         # TODO: we seem to be relabeling tensors in place, could that cause a problem?
+        if self.focus_cond is None:
+            raise NotImplementedError("Hindsight relabeling only implemented for focus conditioning")
         if self.focus_cond.cfg.focus_type is None:
             return cond_info, log_rewards
         # only keep hindsight_idxs that actually correspond to a violated constraint
@@ -180,12 +150,14 @@ class SEHMOOTask(SEHTask):
             else:
                 flat_reward = torch.tensor(flat_reward)
 
-        return RewardScalar(
-            self.temperature_conditional.transform(
-                cond_info,
-                self.focus_cond.transform(cond_info, flat_reward, self.pref_cond.transform(cond_info, flat_reward)),
-            )
+        scalarized_reward = self.pref_cond.transform(cond_info, flat_reward)
+        focused_reward = (
+            self.focus_cond.transform(cond_info, flat_reward, scalarized_reward)
+            if self.focus_cond is not None
+            else scalarized_reward
         )
+        tempered_reward = self.temperature_conditional.transform(cond_info, focused_reward)
+        return RewardScalar(tempered_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -318,16 +290,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # hps["fixed_focus_dirs"] = (
         #    np.unique(self.task.fixed_focus_dirs, axis=0).tolist() if self.task.fixed_focus_dirs is not None else None
         # )
-        assert self.task.focus_cond.valid_focus_dirs.shape == (
-            n_valid,
-            n_obj,
-        ), f"Invalid shape for valid_preferences, {self.task.focus_cond.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+        if self.task.focus_cond is not None:
+            assert self.task.focus_cond.valid_focus_dirs.shape == (
+                n_valid,
+                n_obj,
+            ), (
+                "Invalid shape for valid_preferences, "
+                f"{self.task.focus_cond.valid_focus_dirs.shape} != ({n_valid}, {n_obj})"
+            )
 
-        # combine preferences and focus directions (fixed focus cosim) since they could be used together (not either/or)
-        # TODO: this relies on positional assumptions, should have something cleaner
-        valid_cond_vector = np.concatenate([valid_preferences, self.task.focus_cond.valid_focus_dirs], axis=1)
+            # combine preferences and focus directions (fixed focus cosim) since they could be used together
+            # (not either/or). TODO: this relies on positional assumptions, should have something cleaner
+            valid_cond_vector = np.concatenate([valid_preferences, self.task.focus_cond.valid_focus_dirs], axis=1)
 
-        self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, len(valid_cond_vector))
+        self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, n_valid)
         self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
         self.valid_sampling_hooks.append(self._top_k_hook)
 
