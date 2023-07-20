@@ -99,7 +99,7 @@ class SamplingIterator(IterableDataset):
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
-        self.do_validate_batch = True
+        self.do_validate_batch = False  # Turn this on for debugging
         self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env")  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
