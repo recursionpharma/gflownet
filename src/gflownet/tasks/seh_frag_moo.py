@@ -207,7 +207,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
         cfg.algo.sampling_tau = 0.95
+        # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
+        # sampling and set the offline ratio to 1
         cfg.algo.valid_sample_cond_info = False
+        cfg.algo.valid_offline_ratio = 1
 
     def setup_algo(self):
         algo = self.cfg.algo.method

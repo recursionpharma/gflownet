@@ -98,6 +98,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
+        cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
         cfg.algo.tb.Z_learning_rate = 1e-3
