@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -53,8 +53,8 @@ class SEHMOOTaskConfig:
 
 @dataclass
 class QM9TaskConfig:
-    h5_path = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
-    model_path = "./data/qm9/qm9_model.pt"
+    h5_path: str = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
+    model_path: str = "./data/qm9/qm9_model.pt"
 
 
 @dataclass

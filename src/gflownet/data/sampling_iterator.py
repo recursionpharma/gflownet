@@ -12,6 +12,7 @@ from rdkit import Chem, RDLogger
 from torch.utils.data import Dataset, IterableDataset
 
 from gflownet.data.replay_buffer import ReplayBuffer
+from gflownet.envs.graph_building_env import GraphActionCategorical
 
 
 class SamplingIterator(IterableDataset):
@@ -98,6 +99,7 @@ class SamplingIterator(IterableDataset):
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
+        self.do_validate_batch = True
         self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env")  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
@@ -130,6 +132,9 @@ class SamplingIterator(IterableDataset):
             if n == 0:
                 yield np.arange(0, 0)
                 return
+            assert (
+                self.offline_batch_size > 0
+            ), "offline_batch_size must be > 0 if not streaming and len(data) > 0 (have you set ratio=0?)"
             if worker_info is None:  # no multi-processing
                 start, end, wid = 0, n, -1
             else:  # split the data into chunks (per-worker)
@@ -237,6 +242,7 @@ class SamplingIterator(IterableDataset):
             log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
 
             # Computes some metrics
+            extra_info = {}
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
@@ -253,7 +259,6 @@ class SamplingIterator(IterableDataset):
                     {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
                 )
             if num_online > 0:
-                extra_info = {}
                 for hook in self.log_hooks:
                     extra_info.update(
                         hook(
@@ -318,8 +323,35 @@ class SamplingIterator(IterableDataset):
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
 
+            # Only activate for debugging your environment or dataset (e.g. the dataset could be
+            # generating trajectories with illegal actions)
+            if self.do_validate_batch:
+                self.validate_batch(batch, trajs)
+
             self.train_it += worker_info.num_workers if worker_info is not None else 1
             yield batch
+
+    def validate_batch(self, batch, trajs):
+        for actions, atypes in [
+            (batch.actions, self.ctx.action_type_order),
+            # (batch.bck_actions, self.ctx.bck_action_type_order),
+        ]:
+            mask_cat = GraphActionCategorical(
+                batch,
+                [self.model._action_type_to_mask(t, batch) for t in atypes],
+                [self.model._action_type_to_key[t] for t in atypes],
+                [None for _ in atypes],
+            )
+            masked_action_is_used = 1 - mask_cat.log_prob(actions, logprobs=mask_cat.logits)
+            num_trajs = len(trajs)
+            batch_idx = torch.arange(num_trajs, device=batch.x.device).repeat_interleave(batch.traj_lens)
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if masked_action_is_used.sum() != 0:
+                invalid_idx = masked_action_is_used.argmax().item()
+                traj_idx = batch_idx[invalid_idx].item()
+                timestep = invalid_idx - first_graph_idx[traj_idx].item()
+                raise ValueError("Found an action that was masked out", trajs[traj_idx]["traj"][timestep])
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
         if self.log_molecule_smis:

@@ -363,7 +363,7 @@ class TrajectoryBalance(GFNAlgorithm):
             traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
             # The position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
-            first_graph_idx = torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective

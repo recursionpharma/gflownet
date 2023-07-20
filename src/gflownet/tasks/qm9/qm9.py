@@ -1,28 +1,22 @@
-import copy
 import os
 from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
-import scipy.stats as stats
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
-from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
-from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.utils.conditioning import TemperatureConditional
-from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.online_trainer import StandardOnlineTrainer
+from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
+from gflownet.utils.conditioning import TemperatureConditional
 
 
 class QM9GapTask(GFNTask):
@@ -105,6 +99,7 @@ class QM9GapTrainer(StandardOnlineTrainer):
         cfg.opt.lr_decay = 20000
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
+        cfg.algo.max_nodes = 9
         cfg.algo.global_batch_size = 64
         cfg.algo.train_random_action_prob = 0.001
         cfg.algo.illegal_action_logreward = -75
@@ -116,7 +111,15 @@ class QM9GapTrainer(StandardOnlineTrainer):
         cfg.cond.temperature.num_thermometer_dim = 32
 
     def setup_env_context(self):
-        self.ctx = MolBuildingEnvContext(["H", "C", "N", "F", "O"], num_cond_dim=32)
+        self.ctx = MolBuildingEnvContext(
+            ["H", "C", "N", "F", "O"], expl_H_range=[0, 1, 2, 3], num_cond_dim=32, allow_5_valence_nitrogen=True
+        )
+        # Note: we only need the allow_5_valence_nitrogen flag because of how we generate trajectories
+        # from the dataset. For example, consider tue Nitrogen atom in this: C[NH+](C)C, when s=CN(C)C, if the action
+        # for setting the explicit hydrogen is used before the positive charge is set, it will be considered
+        # an invalid action. However, generate_forward_trajectory does not consider this implementation detail,
+        # it assumes that attribute-setting will always be valid. For the molecular environment, as of writing
+        # (PR #98) this edge case is the only case where the ordering in which attributes are set can matter.
 
     def setup_data(self):
         self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, target="gap")
@@ -137,7 +140,7 @@ def main():
     config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.yaml")
     with open(config_file, "r") as f:
         hps = yaml.load(f)
-    trial = QM9GapTrainer(hps, torch.device("cpu"))
+    trial = QM9GapTrainer(hps, torch.device("cuda"))
     trial.run()
 
 

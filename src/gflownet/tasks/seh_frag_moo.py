@@ -51,9 +51,9 @@ class SEHMOOTask(SEHTask):
         else:
             self.focus_cond = None
         self.pref_cond = MultiObjectiveWeightedPreferences(self.cfg)
-        self.temperature_sample_dist = mcfg.temperature_sample_dist
-        self.temperature_dist_params = mcfg.temperature_dist_params
-        self.num_thermometer_dim = mcfg.num_thermometer_dim
+        self.temperature_sample_dist = cfg.cond.temperature.sample_dist
+        self.temperature_dist_params = cfg.cond.temperature.dist_params
+        self.num_thermometer_dim = cfg.cond.temperature.num_thermometer_dim
         self.num_cond_dim = (
             self.temperature_conditional.encoding_size()
             + self.pref_cond.encoding_size()
@@ -93,7 +93,7 @@ class SEHMOOTask(SEHTask):
         """
         n = len(steer_info)
         if self.temperature_sample_dist == "constant":
-            beta = torch.ones(n) * self.temperature_dist_params
+            beta = torch.ones(n) * self.temperature_dist_params[0]
             beta_enc = torch.zeros((n, self.num_thermometer_dim))
         else:
             beta = torch.ones(n) * self.temperature_dist_params[-1]
@@ -106,9 +106,11 @@ class SEHMOOTask(SEHTask):
         focus_dir = steer_info[:, len(self.objectives) :].float()
 
         preferences_enc = self.pref_cond.encode(preferences)
-        focus_enc = self.focus_cond.encode(focus_dir)
-        encoding = torch.cat([beta_enc, preferences_enc, focus_enc], 1).float()
-
+        if self.focus_cond is not None:
+            focus_enc = self.focus_cond.encode(focus_dir)
+            encoding = torch.cat([beta_enc, preferences_enc, focus_enc], 1).float()
+        else:
+            encoding = torch.cat([beta_enc, preferences_enc], 1).float()
         return {
             "beta": beta,
             "encoding": encoding,
@@ -356,9 +358,9 @@ def main():
         "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,
-        "num_training_steps": 5_000,
-        "num_final_gen_steps": 500,
-        "validate_every": 500,
+        "num_training_steps": 500,
+        "num_final_gen_steps": 50,
+        "validate_every": 100,
         "num_workers": 0,
         "algo": {
             "global_batch_size": 64,

@@ -125,10 +125,8 @@ class GFNTrainer:
         self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
 
         self.device = device
-        # idem, but from `self.test_data` during validation.
-        self.valid_offline_ratio = 1
         # Print the loss every `self.print_every` iterations
-        self.print_every = 1000
+        self.print_every = 1
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
@@ -228,7 +226,7 @@ class GFNTrainer:
             dev,
             batch_size=self.cfg.algo.global_batch_size,
             illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
-            ratio=self.valid_offline_ratio,
+            ratio=self.cfg.algo.valid_offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
             sample_cond_info=self.cfg.algo.valid_sample_cond_info,
             stream=False,

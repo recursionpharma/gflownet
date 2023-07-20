@@ -28,6 +28,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         charges=[0, 1, -1],
         expl_H_range=[0, 1],
         allow_explicitly_aromatic=False,
+        allow_5_valence_nitrogen=False,
         num_rw_feat=8,
         max_nodes=None,
         max_edges=None,
@@ -118,9 +119,11 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             BondType.AROMATIC: 1.5,
         }
         pt = Chem.GetPeriodicTable()
+        self.allow_5_valence_nitrogen = allow_5_valence_nitrogen
         self._max_atom_valence = {
             **{a: max(pt.GetValenceList(a)) for a in atoms},
-            "N": 3,  # We'll handle nitrogen valence later explicitly in graph_to_Data
+            # We'll handle nitrogen valence later explicitly in graph_to_Data
+            "N": 3 if not allow_5_valence_nitrogen else 5,
             "*": 0,  # wildcard atoms have 0 valence until filled in
         }
 
@@ -231,9 +234,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             max_atom_valence = self._max_atom_valence[ad.get("fill_wildcard", None) or ad["v"]]
             # Special rule for Nitrogen
             if ad["v"] == "N" and ad.get("charge", 0) == 1:
-                # This is definitely a heuristic, but to keep things simple we'll limit Nitrogen's valence to 3 (as
+                # This is definitely a heuristic, but to keep things simple we'll limit* Nitrogen's valence to 3 (as
                 # per self._max_atom_valence) unless it is charged, then we make it 5.
                 # This keeps RDKit happy (and is probably a good idea anyway).
+                # (* unless allow_5_valence_nitrogen is True, then it's just always 5)
                 max_atom_valence = 5
             max_valence[n] = max_atom_valence - abs(ad.get("charge", 0)) - ad.get("expl_H", 0)
             # Compute explicitly defined valence:
@@ -281,14 +285,15 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             non_edge_index = torch.zeros((2, 0), dtype=torch.long)
         else:
             gc = nx.complement(g)
-            non_edge_index = torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).T.reshape(
-                (2, -1)
+            non_edge_index = (
+                torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).reshape((-1, 2)).T
             )
         data = gd.Data(
             x,
             edge_index,
             edge_attr,
             non_edge_index=non_edge_index,
+            stop_mask=torch.ones(1, 1) if len(g) > 0 else torch.zeros(1, 1),
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
             add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
