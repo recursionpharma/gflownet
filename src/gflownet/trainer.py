@@ -126,7 +126,7 @@ class GFNTrainer:
 
         self.device = device
         # Print the loss every `self.print_every` iterations
-        self.print_every = 1
+        self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []

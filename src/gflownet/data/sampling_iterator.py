@@ -332,10 +332,11 @@ class SamplingIterator(IterableDataset):
             yield batch
 
     def validate_batch(self, batch, trajs):
-        for actions, atypes in [
-            (batch.actions, self.ctx.action_type_order),
-            # (batch.bck_actions, self.ctx.bck_action_type_order),
-        ]:
+        for actions, atypes in [(batch.actions, self.ctx.action_type_order)] + (
+            [(batch.bck_actions, self.ctx.bck_action_type_order)]
+            if hasattr(batch, "bck_actions") and hasattr(self.ctx, "bck_action_type_order")
+            else []
+        ):
             mask_cat = GraphActionCategorical(
                 batch,
                 [self.model._action_type_to_mask(t, batch) for t in atypes],

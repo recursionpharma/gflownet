@@ -112,7 +112,7 @@ class QM9GapTrainer(StandardOnlineTrainer):
 
     def setup_env_context(self):
         self.ctx = MolBuildingEnvContext(
-            ["H", "C", "N", "F", "O"], expl_H_range=[0, 1, 2, 3], num_cond_dim=32, allow_5_valence_nitrogen=True
+            ["C", "N", "F", "O"], expl_H_range=[0, 1, 2, 3], num_cond_dim=32, allow_5_valence_nitrogen=True
         )
         # Note: we only need the allow_5_valence_nitrogen flag because of how we generate trajectories
         # from the dataset. For example, consider tue Nitrogen atom in this: C[NH+](C)C, when s=CN(C)C, if the action
