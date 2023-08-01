@@ -125,6 +125,7 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         "log_dir": "./logs/debug_run_seh_frag",
+        "device": torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
         "overwrite_existing_exp": True,
         "num_training_steps": 10_000,
         "num_workers": 8,
@@ -148,7 +149,7 @@ def main():
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(hps["log_dir"])
 
-    trial = SEHFragTrainer(hps, torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    trial = SEHFragTrainer(hps)
     trial.print_every = 1
     trial.run()
 

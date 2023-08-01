@@ -90,7 +90,7 @@ class GFNTask:
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any], device: torch.device):
+    def __init__(self, hps: Dict[str, Any]):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
@@ -124,7 +124,7 @@ class GFNTrainer:
         # OmegaConf returns a fancy object but we can still pretend it's a Config instance
         self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
 
-        self.device = device
+        self.device = torch.device(self.cfg.device)
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data

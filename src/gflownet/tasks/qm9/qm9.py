@@ -140,7 +140,7 @@ def main():
     config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.yaml")
     with open(config_file, "r") as f:
         hps = yaml.load(f)
-    trial = QM9GapTrainer(hps, torch.device("cuda"))
+    trial = QM9GapTrainer(hps)
     trial.run()
 
 

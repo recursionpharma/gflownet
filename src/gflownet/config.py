@@ -52,6 +52,8 @@ class Config:
     ----------
     log_dir : str
         The directory where to store logs, checkpoints, and samples.
+    device : str
+        The device to use for training (either "cpu" or "cuda[:<device_id>]")
     seed : int
         The random seed
     validate_every : int
@@ -79,6 +81,7 @@ class Config:
     """
 
     log_dir: str = MISSING
+    device: str = "cuda"
     seed: int = 0
     validate_every: int = 1000
     checkpoint_every: Optional[int] = None

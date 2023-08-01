@@ -358,6 +358,7 @@ def main():
     """Example of how this model can be run."""
     hps = {
         "log_dir": "./logs/debug_run_sfm",
+        "device": torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
         "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,
@@ -421,7 +422,7 @@ def main():
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(hps["log_dir"])
 
-    trial = SEHMOOFragTrainer(hps, torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    trial = SEHMOOFragTrainer(hps)
     trial.print_every = 1
     trial.run()
 
