@@ -120,7 +120,8 @@ class MultiObjectiveStatsHook:
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
         # locally (in-process) accumulate flat rewards to build a better pareto estimate
         self.all_flat_rewards = self.all_flat_rewards + list(flat_rewards)
-        self.all_focus_dirs = self.all_focus_dirs + list(cond_info["focus_dir"])
+        if self.compute_focus_accuracy:
+            self.all_focus_dirs = self.all_focus_dirs + list(cond_info["focus_dir"])
         self.all_smi = self.all_smi + list([i.get("smi", None) for i in trajs])
         if len(self.all_flat_rewards) > self.num_to_keep:
             self.all_flat_rewards = self.all_flat_rewards[-self.num_to_keep :]
@@ -128,7 +129,8 @@ class MultiObjectiveStatsHook:
             self.all_smi = self.all_smi[-self.num_to_keep :]
 
         flat_rewards = torch.stack(self.all_flat_rewards).numpy()
-        focus_dirs = torch.stack(self.all_focus_dirs).numpy()
+        if self.compute_focus_accuracy:
+            focus_dirs = torch.stack(self.all_focus_dirs).numpy()
 
         # collects empirical pareto front from in-process samples
         pareto_idces = metrics.is_pareto_efficient(-flat_rewards, return_mask=False)

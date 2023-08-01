@@ -2,11 +2,13 @@ import os
 import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
 from omegaconf import OmegaConf
+from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -88,7 +90,7 @@ class GFNTask:
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any], device: torch.device):
+    def __init__(self, hps: Dict[str, Any]):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
@@ -119,13 +121,12 @@ class GFNTrainer:
         # The final config is obtained by merging the three sources
         self.cfg: Config = OmegaConf.structured(Config())
         self.set_default_hps(self.cfg)
-        OmegaConf.merge(self.cfg, hps)
+        # OmegaConf returns a fancy object but we can still pretend it's a Config instance
+        self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
 
-        self.device = device
-        # idem, but from `self.test_data` during validation.
-        self.valid_offline_ratio = 1
+        self.device = torch.device(self.cfg.device)
         # Print the loss every `self.print_every` iterations
-        self.print_every = 1000
+        self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
         self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
@@ -137,11 +138,33 @@ class GFNTrainer:
     def set_default_hps(self, base: Config):
         raise NotImplementedError()
 
-    def setup(self):
+    def setup_env_context(self):
         raise NotImplementedError()
+
+    def setup_task(self):
+        raise NotImplementedError()
+
+    def setup_model(self):
+        raise NotImplementedError()
+
+    def setup_algo(self):
+        raise NotImplementedError()
+
+    def setup_data(self):
+        pass
 
     def step(self, loss: Tensor):
         raise NotImplementedError()
+
+    def setup(self):
+        RDLogger.DisableLog("rdApp.*")
+        self.rng = np.random.default_rng(142857)
+        self.env = GraphBuildingEnv()
+        self.setup_data()
+        self.setup_task()
+        self.setup_env_context()
+        self.setup_algo()
+        self.setup_model()
 
     def _wrap_for_mp(self, obj, send_to_device=False):
         """Wraps an object in a placeholder whose reference can be sent to a
@@ -203,7 +226,7 @@ class GFNTrainer:
             dev,
             batch_size=self.cfg.algo.global_batch_size,
             illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
-            ratio=self.valid_offline_ratio,
+            ratio=self.cfg.algo.valid_offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
             sample_cond_info=self.cfg.algo.valid_sample_cond_info,
             stream=False,

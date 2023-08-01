@@ -91,6 +91,8 @@ class AlgoConfig:
     offline_ratio: float
         The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
         `self.sampling_model`
+    valid_offline_ratio: float
+        Idem but for validation, and `self.test_data`.
     train_random_action_prob : float
         The probability of taking a random action during training
     valid_random_action_prob : float
@@ -108,6 +110,7 @@ class AlgoConfig:
     max_edges: int = 128
     illegal_action_logreward: float = -100
     offline_ratio: float = 0.5
+    valid_offline_ratio: float = 1
     train_random_action_prob: float = 0.0
     valid_random_action_prob: float = 0.0
     valid_sample_cond_info: bool = True

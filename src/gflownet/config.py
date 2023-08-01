@@ -7,6 +7,7 @@ from gflownet.algo.config import AlgoConfig
 from gflownet.data.config import ReplayConfig
 from gflownet.models.config import ModelConfig
 from gflownet.tasks.config import TasksConfig
+from gflownet.utils.config import ConditionalsConfig
 
 
 @dataclass
@@ -51,12 +52,16 @@ class Config:
     ----------
     log_dir : str
         The directory where to store logs, checkpoints, and samples.
+    device : str
+        The device to use for training (either "cpu" or "cuda[:<device_id>]")
     seed : int
         The random seed
     validate_every : int
         The number of training steps after which to validate the model
     checkpoint_every : Optional[int]
         The number of training steps after which to checkpoint the model
+    print_every : int
+        The number of training steps after which to print the training loss
     start_at_step : int
         The training step to start at (default: 0)
     num_final_gen_steps : Optional[int]
@@ -76,9 +81,11 @@ class Config:
     """
 
     log_dir: str = MISSING
+    device: str = "cuda"
     seed: int = 0
     validate_every: int = 1000
     checkpoint_every: Optional[int] = None
+    print_every: int = 100
     start_at_step: int = 0
     num_final_gen_steps: Optional[int] = None
     num_training_steps: int = 10_000
@@ -92,3 +99,4 @@ class Config:
     opt: OptimizerConfig = OptimizerConfig()
     replay: ReplayConfig = ReplayConfig()
     task: TasksConfig = TasksConfig()
+    cond: ConditionalsConfig = ConditionalsConfig()

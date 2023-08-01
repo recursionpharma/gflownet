@@ -3,6 +3,7 @@ import tarfile
 import numpy as np
 import pandas as pd
 import rdkit.Chem as Chem
+import torch
 from torch.utils.data import Dataset
 
 
@@ -39,7 +40,10 @@ class QM9Dataset(Dataset):
         return len(self.idcs)
 
     def __getitem__(self, idx):
-        return (Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]]), self.df[self.target][self.idcs[idx]])
+        return (
+            Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]]),
+            torch.tensor([self.df[self.target][self.idcs[idx]]]).float(),
+        )
 
 
 def convert_h5():

@@ -1,30 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass
 class SEHTaskConfig:
-    """Config for the SEHTask
-
-    Attributes
-    ----------
-
-    temperature_sample_dist : str
-        The distribution to sample the inverse temperature from. Can be one of:
-        - "uniform": uniform distribution
-        - "loguniform": log-uniform distribution
-        - "gamma": gamma distribution
-        - "constant": constant temperature
-    temperature_dist_params : List[Any]
-        The parameters of the temperature distribution. E.g. for the "uniform" distribution, this is the range.
-    num_thermometer_dim : int
-        The number of thermometer encoding dimensions to use.
-    """
-
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
-    num_thermometer_dim: int = 32
+    pass  # SEH just uses a temperature conditional
 
 
 @dataclass
@@ -57,10 +37,6 @@ class SEHMOOTaskConfig:
         The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
     """
 
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
-    num_thermometer_dim: int = 32
     use_steer_thermometer: bool = False
     preference_type: Optional[str] = "dirichlet"
     focus_type: Optional[str] = None
@@ -72,16 +48,13 @@ class SEHMOOTaskConfig:
     max_train_it: Optional[int] = None
     n_valid: int = 15
     n_valid_repeats: int = 128
-    objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "wt"])
+    objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
 
 
 @dataclass
 class QM9TaskConfig:
-    # TODO: a proper class for temperature-conditional sampling
-    temperature_sample_dist: str = "uniform"
-    temperature_dist_params: List[Any] = field(default_factory=lambda: [0.5, 32])
-    num_thermometer_dim: int = 32
-    h5_path = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
+    h5_path: str = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
+    model_path: str = "./data/qm9/qm9_model.pt"
 
 
 @dataclass

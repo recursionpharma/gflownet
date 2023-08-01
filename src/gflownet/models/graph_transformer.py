@@ -145,6 +145,27 @@ class GraphTransformerGFN(nn.Module):
     Outputs logits corresponding to the action types used by the env_ctx argument.
     """
 
+    # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
+    # embeddings to the right MLP
+    _action_type_to_graph_part = {
+        GraphActionType.Stop: "graph",
+        GraphActionType.AddNode: "node",
+        GraphActionType.SetNodeAttr: "node",
+        GraphActionType.AddEdge: "non_edge",
+        GraphActionType.SetEdgeAttr: "edge",
+        GraphActionType.RemoveNode: "node",
+        GraphActionType.RemoveNodeAttr: "node",
+        GraphActionType.RemoveEdge: "edge",
+        GraphActionType.RemoveEdgeAttr: "edge",
+    }
+    # The torch_geometric batch key each graph part corresponds to
+    _graph_part_to_key = {
+        "graph": None,
+        "node": "x",
+        "non_edge": "non_edge_index",
+        "edge": "edge_index",
+    }
+
     def __init__(
         self,
         env_ctx,
@@ -184,25 +205,8 @@ class GraphTransformerGFN(nn.Module):
             GraphActionType.RemoveEdge: (num_edge_feat, 1),
             GraphActionType.RemoveEdgeAttr: (num_edge_feat, env_ctx.num_edge_attrs),
         }
-        # The GraphTransformer outputs per-node, per-edge, and per-graph embeddings, this routes the
-        # embeddings to the right MLP
-        self._action_type_to_graph_part = {
-            GraphActionType.Stop: "graph",
-            GraphActionType.AddNode: "node",
-            GraphActionType.SetNodeAttr: "node",
-            GraphActionType.AddEdge: "non_edge",
-            GraphActionType.SetEdgeAttr: "edge",
-            GraphActionType.RemoveNode: "node",
-            GraphActionType.RemoveNodeAttr: "node",
-            GraphActionType.RemoveEdge: "edge",
-            GraphActionType.RemoveEdgeAttr: "edge",
-        }
-        # The torch_geometric batch key each graph part corresponds to
-        self._graph_part_to_key = {
-            "graph": None,
-            "node": "x",
-            "non_edge": "non_edge_index",
-            "edge": "edge_index",
+        self._action_type_to_key = {
+            at: self._graph_part_to_key[self._action_type_to_graph_part[at]] for at in self._action_type_to_graph_part
         }
 
         # Here we create only the embedding -> logit mapping MLPs that are required by the environment
@@ -229,13 +233,14 @@ class GraphTransformerGFN(nn.Module):
 
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
+        # Note to self: we can't use torch.inf here, because inf * 0 is nan (but also see issue #99)
         return x * m + -1000 * (1 - m)
 
     def _make_cat(self, g, emb, action_types):
         return GraphActionCategorical(
             g,
             logits=[self._action_type_to_logit(t, emb, g) for t in action_types],
-            keys=[self._graph_part_to_key[self._action_type_to_graph_part[t]] for t in action_types],
+            keys=[self._action_type_to_key[t] for t in action_types],
             masks=[self._action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )

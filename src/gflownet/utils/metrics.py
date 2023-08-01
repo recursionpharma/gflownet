@@ -33,7 +33,7 @@ def compute_focus_coef(
     assert (
         focus_limit_coef > 0.0 and focus_limit_coef <= 1.0
     ), f"focus_limit_coef must be in (0, 1], now {focus_limit_coef}"
-    focus_gamma_param = np.log(focus_limit_coef) / np.log(focus_cosim)
+    focus_gamma_param = torch.tensor(np.log(focus_limit_coef) / np.log(focus_cosim)).float()
     cosim = nn.functional.cosine_similarity(flat_rewards, focus_dirs, dim=1)
     in_focus_mask = cosim >= focus_cosim
     focus_coef = torch.where(in_focus_mask, cosim**focus_gamma_param, 0.0)

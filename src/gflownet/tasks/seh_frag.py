@@ -1,34 +1,22 @@
-import copy
 import os
-import pathlib
 import shutil
 import socket
 from typing import Callable, Dict, List, Tuple, Union
 
-import git
 import numpy as np
-import scipy.stats as stats
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from omegaconf import OmegaConf
-from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from gflownet.algo.advantage_actor_critic import A2C
-from gflownet.algo.flow_matching import FlowMatching
-from gflownet.algo.soft_q_learning import SoftQLearning
-from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
-from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.models import bengio2021flow
-from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.train import FlatRewards, GFNTask, GFNTrainer, RewardScalar
-from gflownet.utils.transforms import thermometer
+from gflownet.online_trainer import StandardOnlineTrainer
+from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
+from gflownet.utils.conditioning import TemperatureConditional
 
 
 class SEHTask(GFNTask):
@@ -52,9 +40,8 @@ class SEHTask(GFNTask):
         self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
-        self.temperature_sample_dist = cfg.task.seh.temperature_sample_dist
-        self.temperature_dist_params = cfg.task.seh.temperature_dist_params
-        self.num_thermometer_dim = cfg.task.seh.num_thermometer_dim
+        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.num_cond_dim = self.temperature_conditional.encoding_size()
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -68,41 +55,10 @@ class SEHTask(GFNTask):
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        beta = None
-        if self.temperature_sample_dist == "constant":
-            assert type(self.temperature_dist_params) is float
-            beta = np.array(self.temperature_dist_params).repeat(n).astype(np.float32)
-            beta_enc = torch.zeros((n, self.num_thermometer_dim))
-        else:
-            if self.temperature_sample_dist == "gamma":
-                loc, scale = self.temperature_dist_params
-                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
-                upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
-            elif self.temperature_sample_dist == "uniform":
-                a, b = float(self.temperature_dist_params[0]), float(self.temperature_dist_params[1])
-                beta = self.rng.uniform(a, b, n).astype(np.float32)
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == "loguniform":
-                low, high = np.log(self.temperature_dist_params)
-                beta = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
-                upper_bound = self.temperature_dist_params[1]
-            elif self.temperature_sample_dist == "beta":
-                a, b = float(self.temperature_dist_params[0]), float(self.temperature_dist_params[1])
-                beta = self.rng.beta(a, b, n).astype(np.float32)
-                upper_bound = 1
-            beta_enc = thermometer(torch.tensor(beta), self.num_thermometer_dim, 0, upper_bound)
-
-        assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
-        return {"beta": torch.tensor(beta), "encoding": beta_enc}
+        return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        if isinstance(flat_reward, list):
-            flat_reward = torch.tensor(flat_reward)
-        scalar_logreward = flat_reward.squeeze().clamp(min=1e-30).log()
-        assert len(scalar_logreward.shape) == len(
-            cond_info["beta"].shape
-        ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
-        return RewardScalar(scalar_logreward * cond_info["beta"])
+        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -117,7 +73,9 @@ class SEHTask(GFNTask):
         return FlatRewards(preds), is_valid
 
 
-class SEHFragTrainer(GFNTrainer):
+class SEHFragTrainer(StandardOnlineTrainer):
+    task: SEHTask
+
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
@@ -140,6 +98,7 @@ class SEHFragTrainer(GFNTrainer):
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
+        cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
         cfg.algo.tb.Z_learning_rate = 1e-3
@@ -150,20 +109,6 @@ class SEHFragTrainer(GFNTrainer):
         cfg.replay.capacity = 10_000
         cfg.replay.warmup = 1_000
 
-    def setup_algo(self):
-        algo = self.cfg.algo.method
-        if algo == "TB":
-            algo = TrajectoryBalance
-        elif algo == "FM":
-            algo = FlowMatching
-        elif algo == "A2C":
-            algo = A2C
-        elif algo == "SQL":
-            algo = SoftQLearning
-        else:
-            raise ValueError(algo)
-        self.algo = algo(self.env, self.ctx, self.rng, self.cfg)
-
     def setup_task(self):
         self.task = SEHTask(
             dataset=self.training_data,
@@ -172,98 +117,30 @@ class SEHFragTrainer(GFNTrainer):
             wrap_model=self._wrap_for_mp,
         )
 
-    def setup_model(self):
-        model = GraphTransformerGFN(
-            self.ctx,
-            self.cfg,
-            do_bck=self.cfg.algo.tb.do_parameterize_p_b,
-        )
-        self.model = model
-
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(
-            max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.cfg.task.seh.num_thermometer_dim
-        )
-
-    def setup(self):
-        RDLogger.DisableLog("rdApp.*")
-        self.rng = np.random.default_rng(142857)
-        self.env = GraphBuildingEnv()
-        self.training_data = []
-        self.test_data = []
-        self.offline_ratio = 0
-        self.valid_offline_ratio = 0
-        self.replay_buffer = ReplayBuffer(self.cfg, self.rng) if self.cfg.replay.use else None
-        self.setup_env_context()
-        self.setup_algo()
-        self.setup_task()
-        self.setup_model()
-
-        # Separate Z parameters from non-Z to allow for LR decay on the former
-        Z_params = list(self.model.logZ.parameters())
-        non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
-        self.opt = torch.optim.Adam(
-            non_Z_params,
-            self.cfg.opt.learning_rate,
-            (self.cfg.opt.momentum, 0.999),
-            weight_decay=self.cfg.opt.weight_decay,
-            eps=self.cfg.opt.adam_eps,
-        )
-        self.opt_Z = torch.optim.Adam(Z_params, self.cfg.algo.tb.Z_learning_rate, (0.9, 0.999))
-        self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
-        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
-            self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
-        )
-
-        self.sampling_tau = self.cfg.algo.sampling_tau
-        if self.sampling_tau > 0:
-            self.sampling_model = copy.deepcopy(self.model)
-        else:
-            self.sampling_model = self.model
-
-        self.mb_size = self.cfg.algo.global_batch_size
-        self.clip_grad_callback = {
-            "value": lambda params: torch.nn.utils.clip_grad_value_(params, self.cfg.opt.clip_grad_param),
-            "norm": lambda params: torch.nn.utils.clip_grad_norm_(params, self.cfg.opt.clip_grad_param),
-            "none": lambda x: None,
-        }[self.cfg.opt.clip_grad_type]
-
-        # saving hyperparameters
-        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
-        self.cfg.git_hash = git_hash
-
-        os.makedirs(self.cfg.log_dir, exist_ok=True)
-        print("\n\nHyperparameters:\n")
-        yaml = OmegaConf.to_yaml(self.cfg)
-        print(yaml)
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
-            f.write(yaml)
-
-    def step(self, loss: Tensor):
-        loss.backward()
-        for i in self.model.parameters():
-            self.clip_grad_callback(i)
-        self.opt.step()
-        self.opt.zero_grad()
-        self.opt_Z.step()
-        self.opt_Z.zero_grad()
-        self.lr_sched.step()
-        self.lr_sched_Z.step()
-        if self.sampling_tau > 0:
-            for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
-                b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
 
 
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": "./logs/debug_run",
+        "log_dir": "./logs/debug_run_seh_frag",
+        "device": torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
         "overwrite_existing_exp": True,
         "num_training_steps": 10_000,
         "num_workers": 8,
-        "opt.lr_decay": 20000,
-        "algo.sampling_tau": 0.99,
-        "task.seh.temperature_dist_params": (0.0, 64.0),
+        "opt": {
+            "lr_decay": 20000,
+        },
+        "algo": {
+            "sampling_tau": 0.99,
+        },
+        "cond": {
+            "temperature": {
+                "sample_dist": "uniform",
+                "dist_params": [0, 64.0],
+            }
+        },
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:
@@ -272,7 +149,7 @@ def main():
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(hps["log_dir"])
 
-    trial = SEHFragTrainer(hps, torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    trial = SEHFragTrainer(hps)
     trial.print_every = 1
     trial.run()
 
