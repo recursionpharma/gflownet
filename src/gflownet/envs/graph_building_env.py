@@ -271,9 +271,9 @@ class GraphBuildingEnv:
                         GraphAction(GraphActionType.AddNode, source=anchor, value=g.nodes[i]["v"]),
                         new_g,
                     )
-            if len(g.nodes) == 1:
+            if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
                 # The final node is degree 0, need this special case to remove it
-                # and end up with S0, the empty graph root
+                # and end up with S0, the empty graph root (but only if it has no attrs except 'v')
                 add_parent(
                     GraphAction(GraphActionType.AddNode, source=0, value=g.nodes[i]["v"]),
                     graph_without_node(g, i),
