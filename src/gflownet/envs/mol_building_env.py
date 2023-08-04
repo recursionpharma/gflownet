@@ -182,7 +182,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             a, b = g.non_edge_index[:, act_row]
             return GraphAction(t, source=a.item(), target=b.item())
         elif t is GraphActionType.SetEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]  # Edges are duplicated to get undirected GNN, deduplicated for logits
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
+            a, b = g.edge_index[:, act_row * 2]
             attr, val = self.bond_attr_logit_map[act_col]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
         elif t is GraphActionType.RemoveNode:
@@ -191,10 +194,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             attr = self.settable_atom_attrs[act_col]
             return GraphAction(t, source=act_row, attr=attr)
         elif t is GraphActionType.RemoveEdge:
-            a, b = g.edge_index[:, act_row * 2]
+            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
             return GraphAction(t, source=a.item(), target=b.item())
         elif t is GraphActionType.RemoveEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]
+            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
             attr = self.bond_attrs[act_col]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
@@ -228,12 +231,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             ).argmax()
             col = 0
         elif action.action is GraphActionType.SetEdgeAttr:
-            # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
-            # so no need for a double check.
-            # row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
-            #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
-            # Because edges are duplicated but logits aren't, divide by two
             row = row.div(2, rounding_mode="floor")  # type: ignore
             col = (
                 self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr][0]
@@ -246,7 +247,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             col = self.settable_atom_attrs.index(action.attr)
         elif action.action is GraphActionType.RemoveEdge:
             row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1)).argmax()
-            row = int(row) // 2  # edges are duplicated, but edge logits are not
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
+            row = int(row) // 2
             col = 0
         elif action.action is GraphActionType.RemoveEdgeAttr:
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
