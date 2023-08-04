@@ -358,7 +358,7 @@ def main():
     """Example of how this model can be run."""
     hps = {
         "log_dir": "./logs/debug_run_sfm",
-        "device": torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
         "pickle_mp_messages": True,
         "overwrite_existing_exp": True,
         "seed": 0,

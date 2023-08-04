@@ -113,7 +113,9 @@ class GraphSampler:
                 ]
             if self.sample_temp != 1:
                 sample_cat = copy.copy(fwd_cat)
-                sample_cat.logits = [i / self.sample_temp for i in fwd_cat.logits]
+                sample_cat.logits = [
+                    i * m / self.sample_temp - 1000 * (1 - m) for i, m in zip(fwd_cat.logits, fwd_cat.masks)
+                ]
                 actions = sample_cat.sample()
             else:
                 actions = fwd_cat.sample()

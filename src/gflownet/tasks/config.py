@@ -58,7 +58,27 @@ class QM9TaskConfig:
 
 
 @dataclass
+class BasicGraphConfig:
+    do_save_generated: bool = True
+    data_root: str = "./data/basic_graph_task"
+    reward_func: str = "count"  # One of cliques, even_neighbors, count, const
+    do_supervised: bool = False
+    do_tabular_model: bool = False
+    supervised_loss: str = "MSE"
+    train_ratio: float = 0.9
+    i2h_width: int = 4  # This is a model hyperparameter that I'm testing out here, should move to model config
+    # Distillation:
+    regress_to_F: bool = False
+    regress_to_Fsa: bool = False
+    regress_to_P_F: bool = False
+    # Test split
+    test_split_type: str = "subtrees"
+    test_split_seed: int = 142857
+
+
+@dataclass
 class TasksConfig:
     qm9: QM9TaskConfig = QM9TaskConfig()
     seh: SEHTaskConfig = SEHTaskConfig()
     seh_moo: SEHMOOTaskConfig = SEHMOOTaskConfig()
+    basic_graph: BasicGraphConfig = BasicGraphConfig()

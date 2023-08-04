@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 from torch import Tensor
-from torch_scatter import scatter, scatter_sum
+from torch_scatter import scatter, scatter_sum, scatter_logsumexp
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
@@ -309,11 +309,7 @@ class TrajectoryBalance(GFNAlgorithm):
             # Indicate that the `batch` corresponding to each action is the above
             ip_log_prob = fwd_cat.log_prob(batch.ip_actions, batch=ip_batch_idces)
             # take the logsumexp (because we want to sum probabilities, not log probabilities)
-            # TODO: numerically stable version:
-            p = scatter(ip_log_prob.exp(), ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce="sum")
-            # As a (reasonable) band-aid, ignore p < 1e-30, this will prevent underflows due to
-            # scatter(small number) = 0 on CUDA
-            log_p_F = p.clamp(1e-30).log()
+            log_p_F = scatter_logsumexp(ip_log_prob, ip_batch_idces, dim=0, dim_size=batch_idx.shape[0])
 
             if self.cfg.do_parameterize_p_b:
                 # Now we repeat this but for the backward policy
@@ -321,10 +317,7 @@ class TrajectoryBalance(GFNAlgorithm):
                     batch.bck_ip_lens
                 )
                 bck_ip_log_prob = bck_cat.log_prob(batch.bck_ip_actions, batch=bck_ip_batch_idces)
-                bck_p = scatter(
-                    bck_ip_log_prob.exp(), bck_ip_batch_idces, dim=0, dim_size=batch_idx.shape[0], reduce="sum"
-                )
-                log_p_B = bck_p.clamp(1e-30).log()
+                log_p_B = scatter_logsumexp(bck_ip_log_prob, bck_ip_batch_idces, dim=0, dim_size=batch_idx.shape[0])
         else:
             # Else just naively take the logprob of the actions we took
             log_p_F = fwd_cat.log_prob(batch.actions)
@@ -496,7 +489,7 @@ class TrajectoryBalance(GFNAlgorithm):
         cumul_lens = torch.cumsum(torch.cat([torch.zeros(1, device=dev), traj_lengths]), 0).long()
         total_loss = torch.zeros(num_trajs, device=dev)
         ar = torch.arange(max_len, device=dev)
-        car = torch.cumsum(ar, 0)
+        car = torch.cumsum(ar, 0) if self.length_normalize_losses else torch.ones_like(ar)
         F_and_R = torch.cat([F, R])
         R_start = F.shape[0]
         for ep in range(traj_lengths.shape[0]):
