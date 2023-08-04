@@ -8,7 +8,13 @@ import torch_geometric.data as gd
 from rdkit.Chem import Mol
 from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import (
+    Graph,
+    GraphAction,
+    GraphActionType,
+    GraphBuildingEnvContext,
+    graph_without_edge,
+)
 from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
@@ -77,19 +83,22 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         # The size of the input vector for each atom
         self.atom_attr_size = sum(len(i) for i in self.atom_attr_values.values())
         self.atom_attrs = sorted(self.atom_attr_values.keys())
+        # 'v' is set separately when creating the node, so there's no point in having a SetNodeAttr logit for it
+        self.settable_atom_attrs = [i for i in self.atom_attrs if i != "v"]
         # The beginning position within the input vector of each attribute
         self.atom_attr_slice = [0] + list(np.cumsum([len(self.atom_attr_values[i]) for i in self.atom_attrs]))
         # The beginning position within the logit vector of each attribute
-        num_atom_logits = [len(self.atom_attr_values[i]) - 1 for i in self.atom_attrs]
+        num_atom_logits = [len(self.atom_attr_values[i]) - 1 for i in self.settable_atom_attrs]
         self.atom_attr_logit_slice = {
             k: (s, e)
-            for k, s, e in zip(self.atom_attrs, [0] + list(np.cumsum(num_atom_logits)), np.cumsum(num_atom_logits))
+            for k, s, e in zip(
+                self.settable_atom_attrs, [0] + list(np.cumsum(num_atom_logits)), np.cumsum(num_atom_logits)
+            )
         }
         # The attribute and value each logit dimension maps back to
         self.atom_attr_logit_map = [
             (k, v)
-            for k in self.atom_attrs
-            if k != "v"
+            for k in self.settable_atom_attrs
             # index 0 is skipped because it is the default value
             for v in self.atom_attr_values[k][1:]
         ]
@@ -147,12 +156,21 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.AddEdge,
             GraphActionType.SetEdgeAttr,
         ]
+        self.bck_action_type_order = [
+            GraphActionType.RemoveNode,
+            GraphActionType.RemoveNodeAttr,
+            GraphActionType.RemoveEdge,
+            GraphActionType.RemoveEdgeAttr,
+        ]
         self.device = torch.device("cpu")
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
         act_type, act_row, act_col = [int(i) for i in action_idx]
-        t = self.action_type_order[act_type]
+        if fwd:
+            t = self.action_type_order[act_type]
+        else:
+            t = self.bck_action_type_order[act_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -164,12 +182,34 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             a, b = g.non_edge_index[:, act_row]
             return GraphAction(t, source=a.item(), target=b.item())
         elif t is GraphActionType.SetEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]  # Edges are duplicated to get undirected GNN, deduplicated for logits
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
+            a, b = g.edge_index[:, act_row * 2]
             attr, val = self.bond_attr_logit_map[act_col]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
+        elif t is GraphActionType.RemoveNode:
+            return GraphAction(t, source=act_row)
+        elif t is GraphActionType.RemoveNodeAttr:
+            attr = self.settable_atom_attrs[act_col]
+            return GraphAction(t, source=act_row, attr=attr)
+        elif t is GraphActionType.RemoveEdge:
+            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
+            return GraphAction(t, source=a.item(), target=b.item())
+        elif t is GraphActionType.RemoveEdgeAttr:
+            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
+            attr = self.bond_attrs[act_col]
+            return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
     def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
         """Translate a GraphAction to an index tuple"""
+        for u in [self.action_type_order, self.bck_action_type_order]:
+            if action.action in u:
+                type_idx = u.index(action.action)
+                break
+        else:
+            raise ValueError(f"Unknown action type {action.action}")
+
         if action.action is GraphActionType.Stop:
             row = col = 0
         elif action.action is GraphActionType.AddNode:
@@ -191,17 +231,33 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             ).argmax()
             col = 0
         elif action.action is GraphActionType.SetEdgeAttr:
-            # Here the edges are duplicated, both (i,j) and (j,i) are in edge_index
-            # so no need for a double check.
-            # row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1) +
-            #       (g.edge_index.T == torch.tensor([(action.target, action.source)])).prod(1)).argmax()
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
             row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
-            # Because edges are duplicated but logits aren't, divide by two
             row = row.div(2, rounding_mode="floor")  # type: ignore
             col = (
                 self.bond_attr_values[action.attr].index(action.value) - 1 + self.bond_attr_logit_slice[action.attr][0]
             )
-        type_idx = self.action_type_order.index(action.action)
+        elif action.action is GraphActionType.RemoveNode:
+            row = action.source
+            col = 0
+        elif action.action is GraphActionType.RemoveNodeAttr:
+            row = action.source
+            col = self.settable_atom_attrs.index(action.attr)
+        elif action.action is GraphActionType.RemoveEdge:
+            row = ((g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1)).argmax()
+            # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
+            # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
+            # to another we can safely divide or multiply by two.
+            row = int(row) // 2
+            col = 0
+        elif action.action is GraphActionType.RemoveEdgeAttr:
+            row = (g.edge_index.T == torch.tensor([(action.source, action.target)])).prod(1).argmax()
+            row = row.div(2, rounding_mode="floor")  # type: ignore
+            col = self.bond_attrs.index(action.attr)
+        else:
+            raise ValueError(f"Unknown action type {action.action}")
         return (type_idx, int(row), int(col))
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
@@ -211,6 +267,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         add_node_mask = torch.ones((x.shape[0], self.num_new_node_values))
         if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
             add_node_mask *= 0
+        remove_node_mask = torch.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
+        remove_node_attr_mask = torch.zeros((x.shape[0], len(self.settable_atom_attrs)))
+
         explicit_valence = {}
         max_valence = {}
         set_node_attr_mask = torch.ones((x.shape[0], self.num_node_attr_logits))
@@ -218,18 +277,33 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             set_node_attr_mask *= 0
         for i, n in enumerate(g.nodes):
             ad = g.nodes[n]
+            if g.degree(n) <= 1 and len(ad) == 1 and all([len(g[n][neigh]) == 0 for neigh in g.neighbors(n)]):
+                # If there's only the 'v' key left and the node is a leaf, and the edge that connect to the node have
+                # no attributes set, we can remove it
+                remove_node_mask[i] = 1
             for k, sl in zip(self.atom_attrs, self.atom_attr_slice):
+                # idx > 0 means that the attribute is not the default value
                 idx = self.atom_attr_values[k].index(ad[k]) if k in ad else 0
                 x[i, sl + idx] = 1
-                # If the attribute is already there, mask out logits
-                # (or if the attribute is a negative attribute and has been filled)
+                if k == "v":
+                    continue
+                # If the attribute
+                #   - is already there (idx > 0),
+                #   - or the attribute is a negative attribute and has been filled
+                #   - or the attribute is a negative attribute and is not fillable (i.e. not a key of ad)
+                # then mask forward logits.
+                # For backward logits, positively mask if the attribute is there (idx > 0).
                 if k in self.negative_attrs:
                     if k in ad and idx > 0 or k not in ad:
                         s, e = self.atom_attr_logit_slice[k]
                         set_node_attr_mask[i, s:e] = 0
+                        # We don't want to make the attribute removable if it's not fillable (i.e. not a key of ad)
+                        if k in ad:
+                            remove_node_attr_mask[i, self.settable_atom_attrs.index(k)] = 1
                 elif k in ad:
                     s, e = self.atom_attr_logit_slice[k]
                     set_node_attr_mask[i, s:e] = 0
+                    remove_node_attr_mask[i, self.settable_atom_attrs.index(k)] = 1
             # Account for charge and explicit Hs in atom as limiting the total valence
             max_atom_valence = self._max_atom_valence[ad.get("fill_wildcard", None) or ad["v"]]
             # Special rule for Nitrogen
@@ -256,8 +330,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 s, e = self.atom_attr_logit_slice["expl_H"]
                 set_node_attr_mask[i, s:e] = 0
 
+        remove_edge_mask = torch.zeros((len(g.edges), 1))
+        for i, (u, v) in enumerate(g.edges):
+            if g.degree(u) > 1 and g.degree(v) > 1:
+                if nx.algorithms.is_connected(graph_without_edge(g, (u, v))):
+                    remove_edge_mask[i] = 1
         edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
         set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
+        remove_edge_attr_mask = torch.zeros((len(g.edges), len(self.bond_attrs)))
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             for k, sl in zip(self.bond_attrs, self.bond_attr_slice):
@@ -267,6 +347,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 if k in ad:  # If the attribute is already there, mask out logits
                     s, e = self.bond_attr_logit_slice[k]
                     set_edge_attr_mask[i, s:e] = 0
+                    remove_edge_attr_mask[i, self.bond_attrs.index(k)] = 1
             # Check which bonds don't bust the valence of their atoms
             if "type" not in ad:  # Only if type isn't already set
                 sl, _ = self.bond_attr_logit_slice["type"]
@@ -293,11 +374,15 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             edge_index,
             edge_attr,
             non_edge_index=non_edge_index,
-            stop_mask=torch.ones(1, 1) if len(g) > 0 else torch.zeros(1, 1),
+            stop_mask=torch.ones((1, 1)) * (len(g.nodes) > 0),  # Can only stop if there's at least a node
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
             add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
             set_edge_attr_mask=set_edge_attr_mask,
+            remove_node_mask=remove_node_mask,
+            remove_node_attr_mask=remove_node_attr_mask,
+            remove_edge_mask=remove_edge_mask,
+            remove_edge_attr_mask=remove_edge_attr_mask,
         )
         if self.num_rw_feat > 0:
             data.x = torch.cat([data.x, random_walk_probs(data, self.num_rw_feat, skip_odd=True)], 1)
