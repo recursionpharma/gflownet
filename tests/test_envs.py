@@ -10,6 +10,7 @@ from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.envs.basic_graph_ctx import BasicGraphContext
 from gflownet.models import bengio2021flow
 
 
@@ -82,6 +83,10 @@ def get_atom_env_ctx():
     return MolBuildingEnvContext(atoms=["C", "N"], expl_H_range=[0], charges=[0], max_nodes=2)
 
 
+def get_basic_env_ctx():
+    return BasicGraphContext(max_nodes=2)
+
+
 @pytest.fixture
 def two_node_states_frags(request):
     data = request.config.cache.get("frag_env/two_node_states", None)
@@ -101,6 +106,18 @@ def two_node_states_atoms(request):
         data = build_two_node_states(get_atom_env_ctx())
         # pytest caches through JSON so we have to make a clean enough string
         request.config.cache.set("atom_env/two_node_states", base64.b64encode(pickle.dumps(data)).decode())
+    else:
+        data = pickle.loads(base64.b64decode(data))
+    return data
+
+
+@pytest.fixture
+def two_node_states_basic(request):
+    data = request.config.cache.get("basic_graph_env/two_node_states", None)
+    if data is None:
+        data = build_two_node_states(get_basic_env_ctx())
+        # pytest caches through JSON so we have to make a clean enough string
+        request.config.cache.set("basic_graph_env/two_node_states", base64.b64encode(pickle.dumps(data)).decode())
     else:
         data = pickle.loads(base64.b64decode(data))
     return data
@@ -176,3 +193,11 @@ def test_backwards_mask_equivalence_atom(two_node_states_atoms):
 
 def test_backwards_mask_equivalence_ipa_atom(two_node_states_atoms):
     _test_backwards_mask_equivalence_ipa(two_node_states_atoms, get_atom_env_ctx())
+
+
+def test_backwards_mask_equivalence_basic(two_node_states_basic):
+    _test_backwards_mask_equivalence(two_node_states_basic, get_basic_env_ctx())
+
+
+def test_backwards_mask_equivalence_ipa_basic(two_node_states_basic):
+    _test_backwards_mask_equivalence_ipa(two_node_states_basic, get_basic_env_ctx())
