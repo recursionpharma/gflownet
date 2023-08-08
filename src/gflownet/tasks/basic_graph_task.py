@@ -1,5 +1,5 @@
-import os
 import bz2
+import os
 import pickle
 from typing import Dict, List, Tuple
 
@@ -21,9 +21,9 @@ from gflownet.envs.basic_graph_ctx import BasicGraphContext
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
+    GraphActionCategorical,
     GraphActionType,
     GraphBuildingEnv,
-    GraphActionCategorical,
 )
 from gflownet.models.graph_transformer import GraphTransformer, GraphTransformerGFN
 from gflownet.trainer import FlatRewards, GFNAlgorithm, GFNTask, GFNTrainer, RewardScalar

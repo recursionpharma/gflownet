@@ -113,7 +113,6 @@ class GFNTrainer:
         self.ctx: GraphBuildingEnvContext
         self.task: GFNTask
         self.algo: GFNAlgorithm
-        self.cfg: Config
 
         # There are three sources of config values
         #   - The default values specified in individual config classes

@@ -12,7 +12,6 @@ import torch.nn as nn
 from rdkit import Chem, RDLogger
 from torch.utils.data import Dataset, IterableDataset
 
-from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical
 
