@@ -1,3 +1,4 @@
+import copy
 from typing import Dict, List, Tuple
 
 import networkx as nx
@@ -9,6 +10,7 @@ from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
     GraphActionType,
+    GraphBuildingEnv,
     GraphBuildingEnvContext,
     graph_without_edge,
 )
@@ -63,6 +65,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
             GraphActionType.RemoveNode,
             GraphActionType.RemoveEdge,
         ]
+        self._env = GraphBuildingEnv()
         self.device = torch.device("cpu")
         self.graph_data = graph_data
         self.hash_to_graphs: Dict[str, int] = {}
@@ -70,6 +73,25 @@ class BasicGraphContext(GraphBuildingEnvContext):
             states_hash = [hashg(i) for i in graph_data]
             for i, h, g in zip(range(len(graph_data)), states_hash, graph_data):
                 self.hash_to_graphs[h] = self.hash_to_graphs.get(h, list()) + [(g, i)]
+            self._cache = {}
+
+    def relabel(self, g, ga):
+        if ga.action != GraphActionType.Stop:
+            gp = self._env.step(g, ga)
+        ig = self.graph_data[self.get_graph_idx(g)]
+        rmap = nx.vf2pp_isomorphism(g, ig, "v")
+        ga = copy.copy(ga)
+        if rmap is None and not len(g):
+            rmap = {0: 0}
+        if ga.source is not None:
+            ga.source = rmap[ga.source]
+        if ga.target is not None:
+            ga.target = rmap[ga.target]
+        if ga.action != GraphActionType.Stop:
+            gp2 = self._env.step(ig, ga)
+            if not nx.is_isomorphic(gp2, gp, lambda a, b: a == b):
+                raise ValueError()
+        return copy.deepcopy(ig), ga
 
     def get_graph_idx(self, g, default=None):
         h = hashg(g)
@@ -138,6 +160,16 @@ class BasicGraphContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
+        if self.graph_data is not None:
+            # This caching achieves two things, first we'll speed things up
+            gidx = self.get_graph_idx(g)
+            if gidx in self._cache:
+                return self._cache[gidx]
+            # And second we'll always have the same node ordering, which is necessary for the tabular model
+            # to work. In the non-tabular case, we're hopefully using a model that's invariant to node ordering, so this
+            # shouldn't cause any problems.
+            g = self.graph_data[gidx]
+
         x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self._num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
         remove_node_mask = torch.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
@@ -160,7 +192,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
         non_edge_index = torch.tensor([i for i in gc.edges], dtype=torch.long).reshape((-1, 2)).T
         gid = self.get_graph_idx(g) if self.output_gid else 0
 
-        return self._preprocess(
+        data = self._preprocess(
             gd.Data(
                 x,
                 edge_index,
@@ -174,6 +206,9 @@ class BasicGraphContext(GraphBuildingEnvContext):
                 gid=gid,
             )
         )
+        if self.graph_data is not None:
+            self._cache[gidx] = data
+        return data
 
     def _preprocess(self, g: gd.Data) -> gd.Data:
         if self._num_rw_feat > 0:

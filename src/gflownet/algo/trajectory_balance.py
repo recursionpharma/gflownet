@@ -88,7 +88,7 @@ class TrajectoryBalance(GFNAlgorithm):
         )
         if self.cfg.do_subtb:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
-            self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
+            self._init_subtb(torch.device(cfg.device))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
@@ -138,7 +138,11 @@ class TrajectoryBalance(GFNAlgorithm):
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
-        trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
+        if hasattr(self.ctx, "relabel"):
+            relabel = self.ctx.relabel
+        else:
+            relabel = lambda *x: x
+        trajs = [{"traj": [relabel(*t) for t in generate_forward_trajectory(i)]} for i in graphs]
         for traj in trajs:
             n_back = [
                 self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)
@@ -505,6 +509,6 @@ class TrajectoryBalance(GFNAlgorithm):
             P_F_sums = scatter_sum(P_F[idces + offset], dests)
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
             F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
-            F_end = F_and_R[fidces]
+            F_end = F_and_R[fidces]  # .detach()
             total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
         return total_loss

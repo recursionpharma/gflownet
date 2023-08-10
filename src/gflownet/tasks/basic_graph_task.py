@@ -324,10 +324,12 @@ class BasicGraphTaskTrainer(GFNTrainer):
             )
         elif mcfg.do_tabular_model:
             model = TabularHashingModel(self.exact_prob_cb)
-            if 1:
+            if 0:
+                model.set_values(self.exact_prob_cb)
+            if 0:  # reload_bit
                 model.load_state_dict(
                     torch.load(
-                        "/mnt/ps/home/CORP/emmanuel.bengio/rs/gfn/gflownet/src/gflownet/tasks/logs/basic_graphs/run_6n_9/model_state.pt"
+                        "/mnt/ps/home/CORP/emmanuel.bengio/rs/gfn/gflownet/src/gflownet/tasks/logs/basic_graphs/run_6n_4/model_state.pt"
                     )["models_state_dict"][0]
                 )
         else:
@@ -353,6 +355,8 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self.opt = torch.optim.SGD(
                 params, self.cfg.opt.learning_rate, self.cfg.opt.momentum, weight_decay=self.cfg.opt.weight_decay
             )
+        elif self.cfg.opt.opt == "RMSProp":
+            self.opt = torch.optim.RMSprop(params, self.cfg.opt.learning_rate, weight_decay=self.cfg.opt.weight_decay)
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
 
         algo = self.cfg.algo.method
@@ -480,6 +484,16 @@ class TabularHashingModel(torch.nn.Module):
             ),
             logF_s,
         )
+
+    def set_values(self, epc):
+        """Set the values of the table to the true values of the MDP. This tabular model should have 0 error."""
+        for i in tqdm(range(len(epc.states))):
+            for neighbor in list(epc.mdp_graph.neighbors(i)):
+                for _, edge in epc.mdp_graph.get_edge_data(i, neighbor).items():
+                    a, F = edge["a"], edge["F"]
+                    self.table.data[self.slices[i][a[0]] + a[1] * self.shapes[i][a[0]][1] + a[2]] = F
+            self.table.data[self.slices[i][3]] = epc.mdp_graph.nodes[i]["F"]
+        self._logZ.data = torch.tensor(epc.mdp_graph.nodes[0]["F"]).float()
 
     def logZ(self, cond_info: Tensor):
         return self._logZ.tile(cond_info.shape[0]).reshape((-1, 1))  # Why is the reshape necessary?
@@ -876,14 +890,30 @@ def main():
         "num_training_steps": 20000,
         "validate_every": 100,
         "num_workers": 16,
-        "log_dir": "./logs/basic_graphs/run_6n_14",
+        "log_dir": "./logs/basic_graphs/run_6n_19",
         "model": {"num_layers": 2, "num_emb": 256},
-        "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2, "momentum": 0.0, "lr_decay": 1e10},
+        # WARNING: SubTB is detached targets!
+        "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2, "momentum": 0.995, "lr_decay": 1e10},
+        # "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2, "momentum": 0.0, "lr_decay": 1e10, "opt": "RMSProp"},
         # "opt": {"opt": "SGD", "learning_rate": 0.3, "momentum": 0},
-        "algo": {"global_batch_size": 2048, "tb": {"do_subtb": False}, "max_nodes": 6},
+        "algo": {"global_batch_size": 4096, "tb": {"do_subtb": True}, "max_nodes": 6},
         "task": {
             "basic_graph": {"do_supervised": False, "do_tabular_model": True}
         },  # Change this to launch a supervised job
+    }
+
+    hps = {
+        "num_training_steps": 20000,
+        "validate_every": 100,
+        "num_workers": 16,
+        "log_dir": "./logs/basic_graphs/run_6n_27",
+        "model": {"num_layers": 2, "num_emb": 256},
+        # WARNING: SubTB is detached targets! -- not
+        "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2},
+        # "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2, "momentum": 0.0, "lr_decay": 1e10, "opt": "RMSProp"},
+        # "opt": {"opt": "SGD", "learning_rate": 1e-2, "momentum": 0},
+        "algo": {"global_batch_size": 512, "tb": {"do_subtb": True}, "max_nodes": 6, "offline_ratio": 1 / 4},
+        "task": {"basic_graph": {"do_supervised": False, "do_tabular_model": True, "train_ratio": 1}},  #
     }
     if hps["task"]["basic_graph"]["do_supervised"]:
         trial = BGSupervisedTrainer(hps, torch.device("cuda"))

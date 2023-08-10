@@ -334,6 +334,7 @@ class SamplingIterator(IterableDataset):
             batch.preferences = cond_info.get("preferences", None)
             batch.focus_dir = cond_info.get("focus_dir", None)
             batch.extra_info = extra_info
+            batch.trajs = trajs
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
 
