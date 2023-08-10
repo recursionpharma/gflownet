@@ -24,6 +24,7 @@ from .config import Config
 # This type represents an unprocessed list of reward signals/conditioning information
 FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
 
+
 # This type represents the outcome for a multi-objective task of
 # converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
 RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
@@ -51,6 +52,23 @@ class GFNAlgorithm:
         info: Dict[str, Tensor]
             Logged information about model predictions.
         """
+        raise NotImplementedError()
+
+    def create_training_data_from_own_samples(
+        self, model: nn.Module, batch_size: int, cond_info: Tensor, random_action_prob: float = 0
+    ) -> Dict[str, Tensor]:
+        """Creates a batch of training data by sampling the model
+
+        Parameters
+        ----------
+        model: nn.Module
+            The model being sampled from
+        batch_size: int
+            The number of samples to generate
+        cond_info: Tensor
+            A tensor of conditional information
+        random_action_prob: float
+            The probability of taking a random action instead of the model's action"""
         raise NotImplementedError()
 
 
@@ -86,6 +104,17 @@ class GFNTask:
         is_valid: Tensor
             A 1d tensor, a boolean indicating whether the molecule is valid.
         """
+        raise NotImplementedError()
+
+    def sample_conditional_information(self, batch_size: int, train_it: int) -> Dict[str, Tensor]:
+        """Samples a batch of conditional information.
+
+        Parameters
+        ----------
+        batch_size: int
+            The number of samples to generate
+        train_it: int
+            The current training iteration"""
         raise NotImplementedError()
 
 

@@ -100,3 +100,5 @@ class Config:
     replay: ReplayConfig = ReplayConfig()
     task: TasksConfig = TasksConfig()
     cond: ConditionalsConfig = ConditionalsConfig()
+
+    greedy_max_steps: int = 10

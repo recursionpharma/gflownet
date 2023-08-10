@@ -139,7 +139,7 @@ class GraphBuildingEnv:
     def new(self):
         return Graph()
 
-    def step(self, g: Graph, action: GraphAction) -> Graph:
+    def step(self, g: Graph, action: GraphAction, relabel: bool = True) -> Graph:
         """Step forward the given graph state with an action
 
         Parameters
@@ -148,6 +148,8 @@ class GraphBuildingEnv:
             the graph to be modified
         action: GraphAction
             the action taken on the graph, indices must match
+        relabel: bool
+            if True, relabels the new graph so that the node ids are contiguous [0, .., n]
 
         Returns
         -------
@@ -202,6 +204,8 @@ class GraphBuildingEnv:
         elif action.action is GraphActionType.RemoveNode:
             assert g.has_node(action.source)
             gp = graph_without_node(gp, action.source)
+            if relabel:
+                gp = nx.relabel_nodes(gp, dict(zip(gp.nodes, range(len(gp.nodes)))))
         elif action.action is GraphActionType.RemoveNodeAttr:
             assert g.has_node(action.source)
             gp = graph_without_node_attr(gp, action.source, action.attr)
@@ -331,7 +335,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
-    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)]
+    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)] if len(g) else []
     traj = []
     # This map keeps track of node labels in gn, since we have to start from 0
     relabeling_map: Dict[int, int] = {}
@@ -635,6 +639,19 @@ class GraphActionCategorical:
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
         # Take the argmax
         return self.argmax(x=gumbel)
+
+    def max(self, x: List[torch.Tensor]):
+        """Taxes the max, i.e. if x are the logprobs, returns the most likely action's probability.
+
+        Parameters
+        ----------
+        x: List[Tensor]
+            Tensors in the same format as the logits (see constructor).
+        Returns
+        -------
+        max: Tensor
+            Tensor of shape `(self.num_graphs,)`, the max of each categorical within the batch."""
+        return self._compute_batchwise_max(x, batch=self.batch, reduce_columns=True)
 
     def argmax(
         self,
