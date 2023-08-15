@@ -102,3 +102,5 @@ class Config:
     cond: ConditionalsConfig = ConditionalsConfig()
 
     greedy_max_steps: int = 10
+    mellowmax_omega: float = 128
+    dqn_tau: float = 0.995

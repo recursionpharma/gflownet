@@ -34,7 +34,9 @@ class TBConfig:
     do_subtb: bool = False
     do_correct_idempotent: bool = False
     do_parameterize_p_b: bool = False
+    do_length_normalize: bool = False
     subtb_max_len: int = 128
+    subtb_detach: bool = False
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
 

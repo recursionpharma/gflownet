@@ -55,6 +55,7 @@ class GraphSampler:
         self.pad_with_terminal_state = pad_with_terminal_state
         self.input_timestep = input_timestep
         self.compute_uniform_bck = True
+        self.max_len_actual = self.max_len
 
     def sample_from_model(
         self,
@@ -112,14 +113,15 @@ class GraphSampler:
 
         for t in range(self.max_len):
             # Construct graphs for the trajectories that aren't yet done
-            torch_graphs = [self.ctx.graph_to_Data(i) for i in not_done(graphs)]
+            torch_graphs = [self.ctx.graph_to_Data(i, t) for i in not_done(graphs)]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             # Forward pass to get GraphActionCategorical
             # Note about `*_`, the model may be outputting its own bck_cat, but we ignore it if it does.
             # TODO: compute bck_cat.log_prob(bck_a) when relevant
             ci = cond_info[not_done_mask]
             if self.input_timestep:
-                ci = torch.cat([ci, torch.tensor([[t / self.max_len]], device=dev).repeat(ci.shape[0], 1)], dim=1)
+                remaining = min(1, (self.max_len - t) / self.max_len_actual)
+                ci = torch.cat([ci, torch.tensor([[remaining]], device=dev).repeat(ci.shape[0], 1)], dim=1)
             fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), ci)
             if random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks

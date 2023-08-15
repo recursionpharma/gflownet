@@ -240,7 +240,7 @@ class GraphTransformerGFN(nn.Module):
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
         # Note to self: we can't use torch.inf here, because inf * 0 is nan (but also see issue #99)
-        return x * m + -1000 * (1 - m)
+        return x * m + -1000000 * (1 - m)
 
     def _make_cat(self, g, emb, action_types):
         return GraphActionCategorical(

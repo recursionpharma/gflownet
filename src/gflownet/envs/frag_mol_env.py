@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 import rdkit.Chem as Chem
@@ -75,6 +75,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
         self.edges_are_unordered = False
+        self.fail_on_missing_attr = False
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
@@ -172,7 +173,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             type_idx = self.bck_action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, t: Optional[int] = None) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters
         ----------
@@ -247,7 +248,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         else:
             add_node_mask = (degrees < max_degrees).float()[:, None] if len(g.nodes) else torch.ones((1, 1))
             add_node_mask = add_node_mask * torch.ones((x.shape[0], self.num_new_node_values))
-        stop_mask = torch.zeros((1, 1)) if has_unfilled_attach or not len(g) else torch.ones((1, 1))
+        stop_mask = torch.zeros((1, 1)) if has_unfilled_attach or not len(g) or t == 0 else torch.ones((1, 1))
 
         return gd.Data(
             x,
@@ -303,6 +304,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         for a, b in g.edges:
             afrag = g.nodes[a]["v"]
             bfrag = g.nodes[b]["v"]
+            if self.fail_on_missing_attr:
+                assert f"{a}_attach" in g.edges[(a, b)] and f"{b}_attach" in g.edges[(a, b)]
             u, v = (
                 int(self.frags_stems[afrag][g.edges[(a, b)].get(f"{a}_attach", 0)] + offsets[a]),
                 int(self.frags_stems[bfrag][g.edges[(a, b)].get(f"{b}_attach", 0)] + offsets[b]),

@@ -52,14 +52,15 @@ class GreedyfierIterator(IterableDataset):
         ctx: GraphBuildingEnvContext,
         first_algo: GFNAlgorithm,
         second_algo: GFNAlgorithm,
-        task: GFNTask,
+        first_task: GFNTask,
+        second_task: GFNTask,
         device,
         batch_size: int,
         log_dir: str,
         random_action_prob: float = 0.0,
         hindsight_ratio: float = 0.0,
         init_train_iter: int = 0,
-        illegal_action_logreward: float = -100.0,
+        illegal_action_logrewards: tuple[float, float] = (-100.0, -10.0),
     ):
         """Parameters
         ----------
@@ -104,12 +105,13 @@ class GreedyfierIterator(IterableDataset):
         self.ctx = ctx
         self.first_algo = first_algo
         self.second_algo = second_algo
-        self.task = task
+        self.first_task = first_task
+        self.second_task = second_task
         self.device = device
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
-        self.illegal_action_logreward = illegal_action_logreward
+        self.illegal_action_logrewards = illegal_action_logrewards
 
         # This SamplingIterator instance will be copied by torch DataLoaders for each worker, so we
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
@@ -130,16 +132,16 @@ class GreedyfierIterator(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = worker_info.id if worker_info is not None else 0
         # Now that we know we are in a worker instance, we can initialize per-worker things
-        self.rng = self.first_algo.rng = self.task.rng = np.random.default_rng(142857 + self._wid)
+        self.rng = self.first_algo.rng = self.first_task.rng = np.random.default_rng(142857 + self._wid)
         self.ctx.device = self.device
+        self.second_algo.ctx.device = self.device  # TODO: fix
         if self.log_dir is not None:
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_path = f"{self.log_dir}/generated_mols_{self._wid}.db"
             self.log.connect(self.log_path)
 
-        sampler: GraphSampler = self.second_algo.graph_sampler
         while True:
-            cond_info = self.task.sample_conditional_information(self.batch_size, self.train_it)
+            cond_info = self.first_task.sample_conditional_information(self.batch_size, self.train_it)
             with torch.no_grad():
                 start_trajs = self.first_algo.create_training_data_from_own_samples(
                     self.first_model,
@@ -148,19 +150,33 @@ class GreedyfierIterator(IterableDataset):
                     random_action_prob=self.random_action_prob,
                 )
 
-                improved_trajs = sampler.sample_from_model(
+                # improved_trajs = sampler.sample_from_model(
+                improved_trajs = self.second_algo.create_training_data_from_own_samples(
                     self.second_model,
-                    self.batch_size,
-                    cond_info["encoding"],
-                    self.device,
-                    starts=[i["result"] for i in start_trajs],
+                    self.batch_size - 1,
+                    cond_info["encoding"][: self.batch_size - 1],
+                    random_action_prob=self.random_action_prob,
+                    starts=[i["result"] for i in start_trajs[: self.batch_size - 1]],
                 )
+                # This will always be the same trajectory, because presumably the second model is
+                # a deterministic greedy model, and we are sampling from it with random_action_prob=0, so just need to
+                # have 1 sample.
+                normal_max_len = self.second_algo.graph_sampler.max_len
+                self.second_algo.graph_sampler.max_len = self.first_algo.graph_sampler.max_len
+                improved_trajs += self.second_algo.create_training_data_from_own_samples(
+                    self.second_model,
+                    1,
+                    cond_info["encoding"][self.batch_size - 1 :],
+                    random_action_prob=0,
+                )
+                self.second_algo.graph_sampler.max_len = normal_max_len
 
             dag_trajs_from_improved = self.first_algo.create_training_data_from_graphs(
                 [i["result"] for i in improved_trajs]
             )
 
-            trajs = start_trajs + dag_trajs_from_improved
+            trajs_for_first = start_trajs + dag_trajs_from_improved
+            trajs_for_second = start_trajs + improved_trajs
 
             def safe(f, a, default):
                 try:
@@ -168,36 +184,55 @@ class GreedyfierIterator(IterableDataset):
                 except Exception as e:
                     return default
 
-            results = [safe(self.ctx.graph_to_mol, i["result"], None) for i in trajs]
-            pred_reward, is_valid = self.task.compute_flat_rewards(results)
+            # Both trajectory objects have the same endpoints, so we can compute their validity
+            # and flat_rewards together
+            results = [safe(self.ctx.graph_to_mol, i["result"], None) for i in trajs_for_first]
+            pred_reward, is_valid = self.first_task.compute_flat_rewards(results)
             assert pred_reward.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
             flat_rewards = list(pred_reward)
             # Override the is_valid key in case the task made some mols invalid
-            for i in range(len(trajs)):
-                trajs[i]["is_valid"] = is_valid[i].item()
+            for i in range(len(trajs_for_first)):
+                traj_not_too_long = len(trajs_for_first[i]["traj"]) <= self.first_algo.max_len
+                is_valid[i] = is_valid[i] and self.ctx.is_sane(trajs_for_first[i]["result"]) and traj_not_too_long
+                trajs_for_first[i]["is_valid"] = is_valid[i].item()
+                # Override trajectories in case they are too long or not sane
+                if not is_valid[i] and i >= self.batch_size:
+                    trajs_for_first[i] = trajs_for_first[i - self.batch_size]
+                    trajs_for_first[i]["is_valid"] = is_valid[i - self.batch_size].item()
+                    improved_trajs[i - self.batch_size]["is_valid"] = 0
+                    flat_rewards[i] = flat_rewards[i - self.batch_size]
 
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
-            log_rewards = torch.cat(
+            first_log_rewards = torch.cat(
                 [
-                    self.task.cond_info_to_logreward(cond_info, flat_rewards[: self.batch_size]),
-                    self.task.cond_info_to_logreward(cond_info, flat_rewards[self.batch_size :]),
+                    self.first_task.cond_info_to_logreward(cond_info, flat_rewards[: self.batch_size]),
+                    self.first_task.cond_info_to_logreward(cond_info, flat_rewards[self.batch_size :]),
                 ],
             )
-            log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
+            first_log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logrewards[0]
+
+            second_log_rewards = torch.cat(
+                [
+                    self.second_task.cond_info_to_logreward(cond_info, flat_rewards[: self.batch_size]),
+                    self.second_task.cond_info_to_logreward(cond_info, flat_rewards[self.batch_size :]),
+                ],
+            )
+            second_is_valid = is_valid.clone()
+            second_is_valid[self.batch_size :] = torch.tensor([i["is_valid"] for i in improved_trajs]).bool()
+            second_log_rewards[torch.logical_not(second_is_valid)] = self.illegal_action_logrewards[1]
 
             # Computes some metrics
-            extra_info = {}
             if self.log_dir is not None:
                 self.log_generated(
                     deepcopy(start_trajs),
-                    deepcopy(log_rewards[: self.batch_size]),
+                    deepcopy(first_log_rewards[: self.batch_size]),
                     deepcopy(flat_rewards[: self.batch_size]),
                     {k: v for k, v in deepcopy(cond_info).items()},
                 )
                 self.log_generated(
                     deepcopy(improved_trajs),
-                    deepcopy(log_rewards[self.batch_size :]),
+                    deepcopy(first_log_rewards[self.batch_size :]),
                     deepcopy(flat_rewards[self.batch_size :]),
                     {k: v for k, v in deepcopy(cond_info).items()},
                 )
@@ -205,19 +240,21 @@ class GreedyfierIterator(IterableDataset):
                 raise NotImplementedError()
 
             # Construct batch
-            batch = self.first_algo.construct_batch(trajs, cond_info["encoding"].repeat(2, 1), log_rewards)
-            batch.num_online = len(trajs)
+            batch = self.first_algo.construct_batch(
+                trajs_for_first, cond_info["encoding"].repeat(2, 1), first_log_rewards
+            )
+            batch.num_online = len(trajs_for_first)
             batch.num_offline = 0
             batch.flat_rewards = flat_rewards
-            batch.preferences = cond_info.get("preferences", None)
-            batch.focus_dir = cond_info.get("focus_dir", None)
-            batch.extra_info = extra_info
+
+            # self.validate_batch(self.first_model, batch, trajs_for_first, self.ctx)
 
             second_batch = self.second_algo.construct_batch(
-                improved_trajs, cond_info["encoding"], log_rewards[self.batch_size :]
+                trajs_for_second, cond_info["encoding"].repeat(2, 1), second_log_rewards
             )
-            second_batch.num_online = len(improved_trajs)
+            second_batch.num_online = len(trajs_for_second)
             second_batch.num_offline = 0
+            # self.validate_batch(self.second_model, second_batch, trajs_for_second, self.second_algo.ctx)
 
             self.train_it += worker_info.num_workers if worker_info is not None else 1
             yield BatchTuple(batch, second_batch)
@@ -255,6 +292,29 @@ class GreedyfierIterator(IterableDataset):
         )
 
         self.log.insert_many(data, data_labels)
+
+    def validate_batch(self, model, batch, trajs, ctx):
+        for actions, atypes in [(batch.actions, ctx.action_type_order)] + (
+            [(batch.bck_actions, ctx.bck_action_type_order)]
+            if hasattr(batch, "bck_actions") and hasattr(ctx, "bck_action_type_order")
+            else []
+        ):
+            mask_cat = GraphActionCategorical(
+                batch,
+                [model._action_type_to_mask(t, batch) for t in atypes],
+                [model._action_type_to_key[t] for t in atypes],
+                [None for _ in atypes],
+            )
+            masked_action_is_used = 1 - mask_cat.log_prob(actions, logprobs=mask_cat.logits)
+            num_trajs = len(trajs)
+            batch_idx = torch.arange(num_trajs, device=batch.x.device).repeat_interleave(batch.traj_lens)
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if masked_action_is_used.sum() != 0:
+                invalid_idx = masked_action_is_used.argmax().item()
+                traj_idx = batch_idx[invalid_idx].item()
+                timestep = invalid_idx - first_graph_idx[traj_idx].item()
+                raise ValueError("Found an action that was masked out", trajs[traj_idx]["traj"][timestep])
 
 
 class SQLiteLog:

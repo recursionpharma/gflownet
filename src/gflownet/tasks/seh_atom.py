@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 
 from gflownet.config import Config
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.data.greedyfier_iterator import GreedyfierIterator, BatchTuple
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
@@ -85,6 +86,7 @@ class SEHAtomTrainer(StandardOnlineTrainer):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
         cfg.num_workers = 8
+        cfg.checkpoint_every = 1000
         cfg.opt.learning_rate = 1e-4
         cfg.opt.weight_decay = 1e-8
         cfg.opt.momentum = 0.9
@@ -99,9 +101,10 @@ class SEHAtomTrainer(StandardOnlineTrainer):
 
         cfg.algo.method = "TB"
         cfg.algo.max_nodes = 9
+        cfg.algo.max_edges = 70
         cfg.algo.sampling_tau = 0.9
-        cfg.algo.illegal_action_logreward = -75
-        cfg.algo.train_random_action_prob = 0.0
+        cfg.algo.illegal_action_logreward = -256
+        cfg.algo.train_random_action_prob = 0.01
         cfg.algo.valid_random_action_prob = 0.0
         cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
@@ -119,9 +122,11 @@ class SEHAtomTrainer(StandardOnlineTrainer):
         cfgp = copy.deepcopy(self.cfg)
         cfgp.algo.max_len = cfgp.greedy_max_steps
         cfgp.algo.input_timestep = True
+        cfgp.algo.illegal_action_logreward = -10
         ctxp = copy.deepcopy(self.ctx)
         ctxp.num_cond_dim += 1  # Add an extra dimension for the timestep input
         ctxp.action_type_order = ctxp.action_type_order + ctxp.bck_action_type_order  # Merge fwd and bck action types
+        ctxp.bck_action_type_order = ctxp.action_type_order  # Make sure the backward action types are the same
         self.greedy_algo = QLearning(self.env, ctxp, self.rng, cfgp)
         self.greedy_algo.graph_sampler.compute_uniform_bck = False
         self.greedy_ctx = ctxp
@@ -133,14 +138,29 @@ class SEHAtomTrainer(StandardOnlineTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
+        self.greedy_task = copy.copy(self.task)
+        # Ignore temperature for greedy task
+        self.greedy_task.cond_info_to_logreward = lambda cond_info, flat_reward: RewardScalar(
+            flat_reward.reshape((-1,))
+        )
 
     def setup_env_context(self):
-        self.ctx = MolBuildingEnvContext(
-            ["C", "N", "O", "S", "F", "Cl", "Br"],
-            num_rw_feat=0,
-            max_nodes=self.cfg.algo.max_nodes,
-            num_cond_dim=self.task.num_cond_dim,
-        )
+        if 1:
+            self.ctx = FragMolBuildingEnvContext(num_cond_dim=self.task.num_cond_dim)
+            # Why do we need this? The greedy algorithm might remove edge attributes which make the fragment graph
+            # invalid, we want to know that we've landed in an invalid state in such a case.
+            self.ctx.fail_on_missing_attr = True
+        else:
+            self.ctx = MolBuildingEnvContext(
+                ["C", "N", "O", "S", "F", "Cl", "Br"],
+                charges=[0],
+                chiral_types=None,
+                num_rw_feat=0,
+                max_nodes=self.cfg.algo.max_nodes,
+                num_cond_dim=self.task.num_cond_dim,
+                allow_5_valence_nitrogen=True,  # We need to fix backward trajectories to use masks!
+                # And make sure the Nitrogen-related backward masks make sense
+            )
 
     def setup_model(self):
         super().setup_model()
@@ -148,6 +168,10 @@ class SEHAtomTrainer(StandardOnlineTrainer):
             self.greedy_ctx,
             self.cfg,
         )
+        self._get_additional_parameters = lambda: list(self.greedy_model.parameters())
+        self.greedy_model_lagged = copy.deepcopy(self.greedy_model)
+        self.greedy_model_lagged.to(self.device)
+        self.dqn_tau = self.cfg.dqn_tau
 
     def build_training_data_loader(self):
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
@@ -159,11 +183,16 @@ class SEHAtomTrainer(StandardOnlineTrainer):
             self.algo,
             self.greedy_algo,
             self.task,
+            self.greedy_task,
             dev,
             batch_size=self.cfg.algo.global_batch_size,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
             random_action_prob=self.cfg.algo.train_random_action_prob,
             hindsight_ratio=self.cfg.replay.hindsight_ratio,  # remove?
+            illegal_action_logrewards=(
+                self.cfg.algo.illegal_action_logreward,
+                self.greedy_algo.illegal_action_logreward,
+            ),
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)
@@ -180,34 +209,47 @@ class SEHAtomTrainer(StandardOnlineTrainer):
     def train_batch(self, batch: BatchTuple, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         gfn_batch, greedy_batch = batch
         loss, info = self.algo.compute_batch_losses(self.model, gfn_batch)
-        gloss, ginfo = self.greedy_algo.compute_batch_losses(self.greedy_model, greedy_batch)
+        gloss, ginfo = self.greedy_algo.compute_batch_losses(self.greedy_model, greedy_batch, self.greedy_model_lagged)
         self.step(loss + gloss)  # TODO: clip greedy model gradients?
         info.update({f"greedy_{k}": v for k, v in ginfo.items()})
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
+    def step(self, loss):
+        super().step(loss)
+        if self.dqn_tau > 0:
+            for a, b in zip(self.greedy_model.parameters(), self.greedy_model_lagged.parameters()):
+                b.data.mul_(self.dqn_tau).add_(a.data * (1 - self.dqn_tau))
+
+    def _save_state(self, it):
+        torch.save(
+            {
+                "models_state_dict": [self.model.state_dict(), self.greedy_model.state_dict()],
+                "cfg": self.cfg,
+                "step": it,
+            },
+            open(pathlib.Path(self.cfg.log_dir) / "model_state.pt", "wb"),
+        )
+
 
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": "./logs/debug_run_seh_atom",
+        "log_dir": f"./logs/greedy/run_debug/",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
-        "num_training_steps": 100,
+        "num_training_steps": 2000,
         "validate_every": 0,
         "num_workers": 0,
         "opt": {
             "lr_decay": 20000,
         },
-        "algo": {
-            "sampling_tau": 0.95,
-            "global_batch_size": 4,
-        },
+        "algo": {"sampling_tau": 0.95, "global_batch_size": 4, "tb": {"do_subtb": True}},
         "cond": {
             "temperature": {
                 "sample_dist": "uniform",
-                "dist_params": [0, 64.0],
+                "dist_params": [8.0, 64.0],
             }
         },
     }

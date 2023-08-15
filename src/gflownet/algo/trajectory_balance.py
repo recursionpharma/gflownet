@@ -71,7 +71,7 @@ class TrajectoryBalance(GFNAlgorithm):
         self.tb_loss_is_mae = False
         self.tb_loss_is_huber = False
         self.mask_invalid_rewards = False
-        self.length_normalize_losses = False
+        self.length_normalize_losses = self.cfg.do_length_normalize
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
@@ -87,8 +87,8 @@ class TrajectoryBalance(GFNAlgorithm):
             pad_with_terminal_state=self.cfg.do_parameterize_p_b,
         )
         if self.cfg.do_subtb:
-            self._subtb_max_len = self.global_cfg.algo.max_len + 2
-            self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
+            self._subtb_max_len = self.global_cfg.algo.max_len + 4
+            self._init_subtb(torch.device(self.global_cfg.device))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
@@ -513,5 +513,6 @@ class TrajectoryBalance(GFNAlgorithm):
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
             F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
             F_end = F_and_R[fidces]
+            F_end = F_end.detach() if self.cfg.subtb_detach else F_end
             total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
         return total_loss
