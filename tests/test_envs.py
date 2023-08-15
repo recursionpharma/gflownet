@@ -1,16 +1,19 @@
 import base64
 import pickle
-from collections import defaultdict
 
 import networkx as nx
 import pytest
+from omegaconf import OmegaConf
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
+from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.models import bengio2021flow
 
 
-def build_two_node_states():
+def build_two_node_states(ctx):
     # TODO: This is actually fairly generic code that will probably be reused by other tests in the future.
     # Having a proper class to handle graph-indexed hash maps would probably be good.
     graph_cache = {}
@@ -20,7 +23,6 @@ def build_two_node_states():
     # We're enumerating all states of length two, but we could've just as well randomly sampled
     # some states.
     env = GraphBuildingEnv()
-    ctx = FragMolBuildingEnvContext(max_frags=2)
 
     def g2h(g):
         gc = g.to_directed()
@@ -72,11 +74,19 @@ def build_two_node_states():
     return [graph_by_idx[i] for i in list(nx.topological_sort(mdp_graph))]
 
 
+def get_frag_env_ctx():
+    return FragMolBuildingEnvContext(max_frags=2, fragments=bengio2021flow.FRAGMENTS[:20])
+
+
+def get_atom_env_ctx():
+    return MolBuildingEnvContext(atoms=["C", "N"], expl_H_range=[0], charges=[0], max_nodes=2)
+
+
 @pytest.fixture
-def two_node_states(request):
+def two_node_states_frags(request):
     data = request.config.cache.get("frag_env/two_node_states", None)
     if data is None:
-        data = build_two_node_states()
+        data = build_two_node_states(get_frag_env_ctx())
         # pytest caches through JSON so we have to make a clean enough string
         request.config.cache.set("frag_env/two_node_states", base64.b64encode(pickle.dumps(data)).decode())
     else:
@@ -84,13 +94,24 @@ def two_node_states(request):
     return data
 
 
-def test_backwards_mask_equivalence(two_node_states):
+@pytest.fixture
+def two_node_states_atoms(request):
+    data = request.config.cache.get("atom_env/two_node_states", None)
+    if data is None:
+        data = build_two_node_states(get_atom_env_ctx())
+        # pytest caches through JSON so we have to make a clean enough string
+        request.config.cache.set("atom_env/two_node_states", base64.b64encode(pickle.dumps(data)).decode())
+    else:
+        data = pickle.loads(base64.b64decode(data))
+    return data
+
+
+def _test_backwards_mask_equivalence(two_node_states, ctx):
     """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
     """
     env = GraphBuildingEnv()
-    ctx = FragMolBuildingEnvContext(max_frags=2)
     for i in range(1, len(two_node_states)):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=False)
@@ -103,7 +124,7 @@ def test_backwards_mask_equivalence(two_node_states):
             raise ValueError()
 
 
-def test_backwards_mask_equivalence_ipa(two_node_states):
+def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
     """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
@@ -111,8 +132,9 @@ def test_backwards_mask_equivalence_ipa(two_node_states):
     This test also accounts for idempotent actions.
     """
     env = GraphBuildingEnv()
-    ctx = FragMolBuildingEnvContext(max_frags=2)
-    algo = TrajectoryBalance(env, ctx, None, defaultdict(int), max_nodes=2)
+    cfg = OmegaConf.structured(Config)
+    cfg.algo.max_nodes = 2
+    algo = TrajectoryBalance(env, ctx, None, cfg)
     for i in range(1, len(two_node_states)):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=True)
@@ -138,3 +160,19 @@ def test_backwards_mask_equivalence_ipa(two_node_states):
                     equivalence_classes.append(ipa)
         if n != len(equivalence_classes):
             raise ValueError()
+
+
+def test_backwards_mask_equivalence_frag(two_node_states_frags):
+    _test_backwards_mask_equivalence(two_node_states_frags, get_frag_env_ctx())
+
+
+def test_backwards_mask_equivalence_ipa_frag(two_node_states_frags):
+    _test_backwards_mask_equivalence_ipa(two_node_states_frags, get_frag_env_ctx())
+
+
+def test_backwards_mask_equivalence_atom(two_node_states_atoms):
+    _test_backwards_mask_equivalence(two_node_states_atoms, get_atom_env_ctx())
+
+
+def test_backwards_mask_equivalence_ipa_atom(two_node_states_atoms):
+    _test_backwards_mask_equivalence_ipa(two_node_states_atoms, get_atom_env_ctx())

@@ -1,5 +1,3 @@
-from typing import Any, Dict
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +6,7 @@ from torch import Tensor
 from torch_scatter import scatter
 
 from gflownet.algo.graph_sampling import GraphSampler
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 
 
@@ -17,16 +16,14 @@ class SoftQLearning:
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         rng: np.random.RandomState,
-        hps: Dict[str, Any],
-        max_len=None,
-        max_nodes=None,
+        cfg: Config,
     ):
         """Soft Q-Learning implementation, see
-        xxxxx
+        Haarnoja, Tuomas, Haoran Tang, Pieter Abbeel, and Sergey Levine. "Reinforcement learning with deep
+        energy-based policies." In International conference on machine learning, pp. 1352-1361. PMLR, 2017.
 
         Hyperparameters used:
         illegal_action_logreward: float, log(R) given to the model for non-sane end states or illegal actions
-        sql_alpha: float, the entropy coefficient
 
         Parameters
         ----------
@@ -36,27 +33,23 @@ class SoftQLearning:
             A context.
         rng: np.random.RandomState
             rng used to take random actions
-        hps: Dict[str, Any]
-            Hyperparameter dictionary, see above for used keys.
-        max_len: int
-            If not None, ends trajectories of more than max_len steps.
-        max_nodes: int
-            If not None, ends trajectories of graphs with more than max_nodes steps (illegal action).
+        cfg: Config
+            The experiment configuration
         """
         self.ctx = ctx
         self.env = env
         self.rng = rng
-        self.max_len = max_len
-        self.max_nodes = max_nodes
-        self.illegal_action_logreward = hps["illegal_action_logreward"]
-        self.alpha = hps.get("sql_alpha", 0.01)
-        self.gamma = hps.get("sql_gamma", 1)
-        self.invalid_penalty = hps.get("sql_penalty", -10)
+        self.max_len = cfg.algo.max_len
+        self.max_nodes = cfg.algo.max_nodes
+        self.illegal_action_logreward = cfg.algo.illegal_action_logreward
+        self.alpha = cfg.algo.sql.alpha
+        self.gamma = cfg.algo.sql.gamma
+        self.invalid_penalty = cfg.algo.sql.penalty
         self.bootstrap_own_reward = False
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
-        self.graph_sampler = GraphSampler(ctx, env, max_len, max_nodes, rng, self.sample_temp)
+        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, rng, self.sample_temp)
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float

@@ -14,6 +14,10 @@ cvxopt==1.3.0
     # via gflownet (pyproject.toml)
 cython==0.29.33
     # via tables
+gitdb==4.0.10
+    # via gitpython
+gitpython==3.1.31
+    # via gflownet (pyproject.toml)
 google-auth==2.16.0
     # via
     #   google-auth-oauthlib
@@ -70,6 +74,8 @@ numpy==1.24.1
     #   torch-geometric
 oauthlib==3.2.2
     # via requests-oauthlib
+omegaconf==2.3.0
+    # via gflownet
 opt-einsum==3.3.0
     # via pyro-ppl
 packaging==23.0
@@ -139,6 +145,8 @@ six==1.16.0
     #   isodate
     #   multipledispatch
     #   python-dateutil
+smmap==5.0.0
+    # via gitdb
 tables==3.8.0
     # via gflownet (pyproject.toml)
 tensorboard==2.11.2
@@ -149,7 +157,7 @@ tensorboard-plugin-wit==1.8.1
     # via tensorboard
 threadpoolctl==3.1.0
     # via scikit-learn
-torch==1.10.2
+torch==1.13.1
     # via
     #   botorch
     #   gflownet (pyproject.toml)
@@ -159,9 +167,9 @@ torch-cluster==1.6.0
     # via gflownet (pyproject.toml)
 torch-geometric==2.0.3
     # via gflownet (pyproject.toml)
-torch-scatter==2.0.9
+torch-scatter==2.1.1
     # via gflownet (pyproject.toml)
-torch-sparse==0.6.13
+torch-sparse==0.6.17
     # via gflownet (pyproject.toml)
 tqdm==4.64.1
     # via
@@ -174,7 +182,8 @@ urllib3==1.26.14
 werkzeug==2.2.3
     # via tensorboard
 wheel==0.38.4
-    # via tensorboard
+    # via
+    #   tensorboard
 yacs==0.1.8
     # via torch-geometric
 zipp==3.12.0

@@ -4,11 +4,53 @@ from itertools import product
 
 import numpy as np
 import torch
+import torch.nn as nn
 from botorch.utils.multi_objective import infer_reference_point, pareto
 from botorch.utils.multi_objective.hypervolume import Hypervolume
 from rdkit import Chem, DataStructs
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
+
+
+def compute_focus_coef(
+    flat_rewards: torch.Tensor, focus_dirs: torch.Tensor, focus_cosim: float, focus_limit_coef: float = 1.0
+):
+    """
+    The focus direction is defined as a hypercone in the objective space centered around an focus_dir.
+    The focus coefficient (between 0 and 1) scales the reward associated to a given sample.
+    It should be 1 when the sample is exactly at the focus direction, equal to the focus_limit_coef
+        when the sample is at on the limit of the focus region and 0 when it is outside the focus region
+        we can use an exponential decay of the focus coefficient between the center and the limit of the focus region
+        i.e. cosim(sample, focus_dir) ** focus_gamma_param = focus_limit_coef
+    Note that we work in the positive quadrant (each reward is positive) and thus the cosine similarity is in [0, 1]
+
+    :param focus_dirs: the focus directions, shape (batch_size, num_objectives)
+    :param flat_rewards: the flat rewards, shape (batch_size, num_objectives)
+    :param focus_cosim: the cosine similarity threshold to define the focus region
+    :param focus_limit_coef: the focus coefficient at the limit of the focus region
+    """
+    assert focus_cosim >= 0.0 and focus_cosim <= 1.0, f"focus_cosim must be in [0, 1], now {focus_cosim}"
+    assert (
+        focus_limit_coef > 0.0 and focus_limit_coef <= 1.0
+    ), f"focus_limit_coef must be in (0, 1], now {focus_limit_coef}"
+    focus_gamma_param = torch.tensor(np.log(focus_limit_coef) / np.log(focus_cosim)).float()
+    cosim = nn.functional.cosine_similarity(flat_rewards, focus_dirs, dim=1)
+    in_focus_mask = cosim >= focus_cosim
+    focus_coef = torch.where(in_focus_mask, cosim**focus_gamma_param, 0.0)
+    return focus_coef, in_focus_mask
+
+
+def get_focus_accuracy(flat_rewards, focus_dirs, focus_cosim):
+    _, in_focus_mask = compute_focus_coef(focus_dirs, flat_rewards, focus_cosim, focus_limit_coef=1.0)
+    return in_focus_mask.float().sum() / len(flat_rewards)
+
+
+def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
+    """Discretise the faces that are at the extremity of a unit hypercube"""
+    linear_spaces = [np.linspace(0.0, 1.0, n_points_per_dim) for _ in range(n_dims)]
+    grid = np.array(list(product(*linear_spaces)))
+    extreme_points = grid[np.any(grid == 1, axis=1)]
+    return extreme_points
 
 
 def get_IGD(samples, ref_front: np.ndarray = None):
@@ -28,14 +70,6 @@ def get_IGD(samples, ref_front: np.ndarray = None):
     Returns:
         float: The IGD value.
     """
-
-    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
-        """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0.0, 1.0, n_points_per_dim) for _ in range(n_dims)]
-        grid = np.array(list(product(*linear_spaces)))
-        extreme_points = grid[np.any(grid == 1, axis=1)]
-        return extreme_points
-
     n_objectives = samples.shape[1]
     if ref_front is None:
         ref_front = get_limits_of_hypercube(n_dims=n_objectives)
@@ -71,14 +105,6 @@ def get_PC_entropy(samples, ref_front=None):
     Returns:
         float: The IGD value.
     """
-
-    def get_limits_of_hypercube(n_dims, n_points_per_dim=10):
-        """Discretise the faces that are at the extremity of a unit hypercube"""
-        linear_spaces = [np.linspace(0.0, 1.0, n_points_per_dim) for _ in range(n_dims)]
-        grid = np.array(list(product(*linear_spaces)))
-        extreme_points = grid[np.any(grid == 1, axis=1)]
-        return extreme_points
-
     n_objectives = samples.shape[1]
     if ref_front is None:
         ref_front = get_limits_of_hypercube(n_dims=n_objectives)
@@ -100,6 +126,18 @@ def get_PC_entropy(samples, ref_front=None):
     return float(pc_ent)
 
 
+def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation="l2"):
+    points = np.random.randn(n, d)
+    points = np.abs(points)  # positive quadrant
+    if normalisation == "l2":
+        points /= np.linalg.norm(points, axis=1, keepdims=True)
+    elif normalisation == "l1":
+        points /= np.sum(points, axis=1, keepdims=True)
+    else:
+        raise ValueError(f"Unknown normalisation {normalisation}")
+    return points
+
+
 def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation: str = "l2"):
     """
     Partition a hypersphere into k clusters.
@@ -119,18 +157,6 @@ def partition_hypersphere(k: int, d: int, n_samples: int = 10000, normalisation:
         v: np.ndarray
             Array of shape (k, d) containing the cluster centers
     """
-
-    def sample_positiveQuadrant_ndim_sphere(n=10, d=2, normalisation="l2"):
-        points = np.random.randn(n, d)
-        points = np.abs(points)  # positive quadrant
-        if normalisation == "l2":
-            points /= np.linalg.norm(points, axis=1, keepdims=True)
-        elif normalisation == "l1":
-            points /= np.sum(points, axis=1, keepdims=True)
-        else:
-            raise ValueError(f"Unknown normalisation {normalisation}")
-        return points
-
     points = sample_positiveQuadrant_ndim_sphere(n_samples, d, normalisation)
     v = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(points).cluster_centers_
     if normalisation == "l2":
