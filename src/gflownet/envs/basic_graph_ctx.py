@@ -43,6 +43,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
             "v": [0, 1],  # Imagine this is as colors
         }
         self._num_rw_feat = 8
+        self.not_a_molecule_env = True
 
         self.num_new_node_values = len(self.node_attr_values["v"])
         self.num_node_attr_logits = None
@@ -160,7 +161,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        if self.graph_data is not None:
+        if self.graph_data is not None and False:
             # This caching achieves two things, first we'll speed things up
             gidx = self.get_graph_idx(g)
             if gidx in self._cache:

@@ -915,10 +915,29 @@ def main():
         "algo": {"global_batch_size": 512, "tb": {"do_subtb": True}, "max_nodes": 6, "offline_ratio": 1 / 4},
         "task": {"basic_graph": {"do_supervised": False, "do_tabular_model": True, "train_ratio": 1}},  #
     }
+
+    hps = {
+        "num_training_steps": 20000,
+        "validate_every": 100,
+        "num_workers": 0,
+        "log_dir": "./logs/basic_graphs/run_6n_pb2",
+        "model": {"num_layers": 2, "num_emb": 256},
+        # WARNING: SubTB is detached targets! -- not
+        "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2},
+        # "opt": {"adam_eps": 1e-8, "learning_rate": 3e-2, "momentum": 0.0, "lr_decay": 1e10, "opt": "RMSProp"},
+        # "opt": {"opt": "SGD", "learning_rate": 1e-2, "momentum": 0},
+        "algo": {
+            "global_batch_size": 512,
+            "tb": {"do_subtb": True, "do_parameterize_p_b": False},
+            "max_nodes": 6,
+            "offline_ratio": 0 / 4,
+        },
+        "task": {"basic_graph": {"do_supervised": False, "do_tabular_model": False, "train_ratio": 1}},  #
+    }
     if hps["task"]["basic_graph"]["do_supervised"]:
-        trial = BGSupervisedTrainer(hps, torch.device("cuda"))
+        trial = BGSupervisedTrainer(hps)
     else:
-        trial = BasicGraphTaskTrainer(hps, torch.device("cuda"))
+        trial = BasicGraphTaskTrainer(hps)
         torch.set_num_threads(1)
     trial.verbose = True
     trial.print_every = 1
