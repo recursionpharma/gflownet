@@ -351,20 +351,20 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     # -1 because we'd be removing the single bond and replacing it with a double/triple/aromatic bond
                     is_ok = all([explicit_valence[n] + self._bond_valence[bond_type] - 1 <= max_valence[n] for n in e])
                     set_edge_attr_mask[i, sl + ti] = float(is_ok)
-        edge_index = np.int64([e for i, j in g.edges for e in [(i, j), (j, i)]]).reshape((-1, 2)).T
+        edge_index = np.array([e for i, j in g.edges for e in [(i, j), (j, i)]]).reshape((-1, 2)).T.astype(np.int64)
 
         if self.max_edges is not None and len(g.edges) >= self.max_edges:
             non_edge_index = np.zeros((2, 0), dtype=np.int64)
         else:
             edges = set(g.edges)
-            non_edge_index = np.int64(
+            non_edge_index = np.array(
                 [
                     (u, v)
                     for u in range(len(g))
-                    for v in range(len(g))
+                    for v in range(u + 1, len(g))
                     if (
-                        u != v
-                        and (u, v) not in edges
+                        (u, v) not in edges
+                        and (v, u) not in edges
                         and explicit_valence[u] + 1 <= max_valence[u]
                         and explicit_valence[v] + 1 <= max_valence[v]
                     )
@@ -374,11 +374,11 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             x=x,
             edge_index=edge_index,
             edge_attr=edge_attr,
-            non_edge_index=non_edge_index,
+            non_edge_index=non_edge_index.astype(np.int64).reshape((-1, 2)).T,
             stop_mask=np.ones((1, 1)) * (len(g.nodes) > 0),  # Can only stop if there's at least a node
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
-            add_edge_mask=np.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
+            add_edge_mask=np.ones((non_edge_index.shape[0], 1)),  # Already filtered by checking for valence
             set_edge_attr_mask=set_edge_attr_mask,
             remove_node_mask=remove_node_mask,
             remove_node_attr_mask=remove_node_attr_mask,
