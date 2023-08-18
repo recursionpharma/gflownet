@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType
+from gflownet.utils.transforms import thermometer
 
 
 class GraphSampler:
@@ -121,7 +122,8 @@ class GraphSampler:
             ci = cond_info[not_done_mask]
             if self.input_timestep:
                 remaining = min(1, (self.max_len - t) / self.max_len_actual)
-                ci = torch.cat([ci, torch.tensor([[remaining]], device=dev).repeat(ci.shape[0], 1)], dim=1)
+                remaining = torch.tensor([remaining], device=dev).repeat(ci.shape[0])
+                ci = torch.cat([ci, thermometer(remaining, 32)], dim=1)
             fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), ci)
             if random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks

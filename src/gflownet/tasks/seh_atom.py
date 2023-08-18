@@ -124,7 +124,7 @@ class SEHAtomTrainer(StandardOnlineTrainer):
         cfgp.algo.input_timestep = True
         cfgp.algo.illegal_action_logreward = -10
         ctxp = copy.deepcopy(self.ctx)
-        ctxp.num_cond_dim += 1  # Add an extra dimension for the timestep input
+        ctxp.num_cond_dim += 32  # Add an extra dimension for the timestep input
         ctxp.action_type_order = ctxp.action_type_order + ctxp.bck_action_type_order  # Merge fwd and bck action types
         ctxp.bck_action_type_order = ctxp.action_type_order  # Make sure the backward action types are the same
         self.greedy_algo = QLearning(self.env, ctxp, self.rng, cfgp)

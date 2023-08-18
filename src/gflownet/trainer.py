@@ -352,6 +352,7 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
+            # for asdasd in range(10000):
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
             self.log(info, it, "train")
             if it % self.print_every == 0:

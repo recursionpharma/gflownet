@@ -16,6 +16,7 @@ from gflownet.envs.graph_building_env import (
     generate_forward_trajectory,
 )
 from gflownet.trainer import GFNAlgorithm
+from gflownet.utils.transforms import thermometer
 
 
 class QLearning(GFNAlgorithm):
@@ -128,8 +129,11 @@ class QLearning(GFNAlgorithm):
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         if self.graph_sampler.input_timestep:
-            batch.timesteps = torch.tensor([t / self.max_len for tj in trajs for t in range(len(tj["traj"]))])
+            batch.timesteps = torch.tensor(
+                [min(1, (len(tj["traj"]) - t) / self.max_len) for tj in trajs for t in range(len(tj["traj"]))]
+            )
         batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
+        batch.trajs = trajs
         return batch
 
     def compute_batch_losses(self, model: nn.Module, batch: gd.Batch, lagged_model: nn.Module, num_bootstrap: int = 0):
@@ -160,7 +164,7 @@ class QLearning(GFNAlgorithm):
         # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         if self.graph_sampler.input_timestep:
-            ci = torch.cat([batch.cond_info[batch_idx], batch.timesteps.unsqueeze(1)], dim=1)
+            ci = torch.cat([batch.cond_info[batch_idx], thermometer(batch.timesteps, 32)], dim=1)
         else:
             ci = batch.cond_info[batch_idx]
         Q: GraphActionCategorical
@@ -181,7 +185,7 @@ class QLearning(GFNAlgorithm):
         Q_sa = Q.log_prob(batch.actions, logprobs=Q.logits)
 
         # We now need to compute the target, \hat Q = R_t + V_soft(s_t+1)
-        # Shift t+1-> t, pad last state with a 0, multiply by gamma
+        # Shift t+1->t, pad last state with a 0, multiply by gamma
         shifted_V = self.gamma * torch.cat([V_s[1:], torch.zeros_like(V_s[:1])])
         # Replace V(s_T) with R(tau). Since we've shifted the values in the array, V(s_T) is V(s_0)
         # of the next trajectory in the array, and rewards are terminal (0 except at s_T).
@@ -190,6 +194,7 @@ class QLearning(GFNAlgorithm):
         hat_Q = shifted_V
 
         # losses = (Q_sa - hat_Q).pow(2)
+        # losses = nn.functional.huber_loss(Q_sa[final_graph_idx], hat_Q[final_graph_idx], reduction="none")
         losses = nn.functional.huber_loss(Q_sa, hat_Q, reduction="none")
         # OOOOF this is stupid but I don't have a transition replay buffer
         if 0:
@@ -201,20 +206,20 @@ class QLearning(GFNAlgorithm):
             iid_mask = torch.zeros(losses.shape[0], device=dev)
             iid_mask[iid_idx] = 1
             losses = losses * iid_mask
-        traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
+        # traj_losses = scatter(losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
         loss = losses.mean()
         invalid_mask = 1 - batch.is_valid
         info = {
             "mean_loss": loss,
-            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+            # "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+            # "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
-            "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+            # "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             "Q_sa": Q_sa.mean().item(),
             "traj_lens": batch.traj_lens[num_trajs // 2 :].float().mean().item(),
         }
 
-        if not torch.isfinite(traj_losses).all():
-            raise ValueError("loss is not finite")
+        # if not torch.isfinite(traj_losses).all():
+        #    raise ValueError("loss is not finite")
         return loss, info

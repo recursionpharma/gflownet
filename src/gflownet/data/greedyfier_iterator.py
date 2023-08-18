@@ -13,7 +13,12 @@ from torch.utils.data import Dataset, IterableDataset
 
 from gflownet.trainer import GFNTask, GFNAlgorithm
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import (
+    GraphActionCategorical,
+    GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
+)
 from gflownet.algo.graph_sampling import GraphSampler
 
 
@@ -151,6 +156,7 @@ class GreedyfierIterator(IterableDataset):
                 )
 
                 # improved_trajs = sampler.sample_from_model(
+                # self.second_algo.graph_sampler.sample_temp = 0.2
                 improved_trajs = self.second_algo.create_training_data_from_own_samples(
                     self.second_model,
                     self.batch_size - 1,
@@ -158,6 +164,7 @@ class GreedyfierIterator(IterableDataset):
                     random_action_prob=self.random_action_prob,
                     starts=[i["result"] for i in start_trajs[: self.batch_size - 1]],
                 )
+                # self.second_algo.graph_sampler.sample_temp = 0.0
                 # This will always be the same trajectory, because presumably the second model is
                 # a deterministic greedy model, and we are sampling from it with random_action_prob=0, so just need to
                 # have 1 sample.
@@ -198,9 +205,12 @@ class GreedyfierIterator(IterableDataset):
                 # Override trajectories in case they are too long or not sane
                 if not is_valid[i] and i >= self.batch_size:
                     trajs_for_first[i] = trajs_for_first[i - self.batch_size]
-                    trajs_for_first[i]["is_valid"] = is_valid[i - self.batch_size].item()
+                    # I shouldn't need to do this, already replacing the whole traj...
+                    # trajs_for_first[i]["is_valid"] = is_valid[i - self.batch_size].item()
                     improved_trajs[i - self.batch_size]["is_valid"] = 0
                     flat_rewards[i] = flat_rewards[i - self.batch_size]
+                    is_valid[i] = is_valid[i - self.batch_size]
+            # There's a mistake above, it's possible for an improved_traj to be valid but somehow be replaced by
 
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
@@ -241,9 +251,14 @@ class GreedyfierIterator(IterableDataset):
 
             # Construct batch
             batch = self.first_algo.construct_batch(
-                trajs_for_first, cond_info["encoding"].repeat(2, 1), first_log_rewards
+                trajs_for_first,
+                cond_info["encoding"].repeat(2, 1),
+                first_log_rewards
+                # trajs_for_first[: self.batch_size],
+                # cond_info["encoding"],
+                # first_log_rewards[: self.batch_size],
             )
-            batch.num_online = len(trajs_for_first)
+            batch.num_online = len(trajs_for_first)  # // 2
             batch.num_offline = 0
             batch.flat_rewards = flat_rewards
 
@@ -294,6 +309,15 @@ class GreedyfierIterator(IterableDataset):
         self.log.insert_many(data, data_labels)
 
     def validate_batch(self, model, batch, trajs, ctx):
+        env = GraphBuildingEnv()
+        for traj in trajs:
+            tp = traj["traj"] + [(traj["result"], None)]
+            for t in range(len(tp) - 1):
+                if tp[t][1].action == GraphActionType.Stop:
+                    continue
+                gp = env.step(tp[t][0], tp[t][1])
+                assert nx.is_isomorphic(gp, tp[t + 1][0], lambda a, b: a == b, lambda a, b: a == b)
+
         for actions, atypes in [(batch.actions, ctx.action_type_order)] + (
             [(batch.bck_actions, ctx.bck_action_type_order)]
             if hasattr(batch, "bck_actions") and hasattr(ctx, "bck_action_type_order")

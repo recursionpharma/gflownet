@@ -47,6 +47,11 @@ def graph_without_edge_attr(g, e, a):
     return gp
 
 
+def relabel_graph_and_attrs(g):
+    rmap = dict(zip(g.nodes, range(len(g.nodes))))
+    return nx.relabel_nodes(g, rmap)
+
+
 class GraphActionType(enum.Enum):
     # Forward actions
     Stop = enum.auto()
@@ -205,7 +210,7 @@ class GraphBuildingEnv:
             assert g.has_node(action.source)
             gp = graph_without_node(gp, action.source)
             if relabel:
-                gp = nx.relabel_nodes(gp, dict(zip(gp.nodes, range(len(gp.nodes)))))
+                gp = relabel_graph_and_attrs(gp)
         elif action.action is GraphActionType.RemoveNodeAttr:
             assert g.has_node(action.source)
             gp = graph_without_node_attr(gp, action.source, action.attr)
@@ -331,7 +336,18 @@ class GraphBuildingEnv:
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
-    """Sample (uniformly) a trajectory that generates `g`"""
+    """Sample (uniformly) a trajectory that generates `g`
+
+    Note that g is assumed to be an undirected graph, or to be directed but with special constraints. In particular,
+    this function will remap node ids and may flip edges directions.
+    This remapping includes a special case for directed graphs, where attributes prefixed with 'src_' or 'dst_'
+    are "attached" to the source or destination node of the edge. If the edge is flipped, we remap the attribute to the
+    other node, i.e. 'src_...' becomes 'dst_...'.
+    This assumes that it is ok to regenerate a directed graph with DIFFERENT DIRECTIONS for the
+    edges, which is not always the case. For example if G=(A->B) and the (A, B) edge has a
+    'src_attr'=<something related to A> attribute, then we're assuming that its fine to generate a
+    trajectory that results in (B->A) with the (B, A) edge now having a 'dst_attr'=<something related to A> attribute.
+    This is NOT OK for the general case of generating a directed graph where (A->B) != (B->A)."""
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
@@ -339,6 +355,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
     traj = []
     # This map keeps track of node labels in gn, since we have to start from 0
     relabeling_map: Dict[int, int] = {}
+    original_edges = set(g.edges)
     while len(stack):
         # We pop from the stack until all nodes and edges have been
         # generated and their attributes have been set. Uninserted
@@ -351,17 +368,13 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
         gt = gn.copy()  # This is a shallow copy
         if len(i) > 1:  # i is an edge
             e = relabeling_map.get(i[0], None), relabeling_map.get(i[1], None)
+            is_this_edge_flipped = i not in original_edges
             if e in gn.edges:
                 # i exists in the new graph, that means some of its attributes need to be added.
-                #
-                # This remap is a special case for the fragment environment, due to the (poor) design
-                # choice of treating directed edges as undirected edges. Until we have routines for
-                # directed graphs, this may need to stay.
-                def possibly_remap(attr):
-                    if attr == f"{i[0]}_attach":
-                        return f"{e[0]}_attach"
-                    elif attr == f"{i[1]}_attach":
-                        return f"{e[1]}_attach"
+
+                def possibly_remap(attr):  # See docstring!
+                    if attr.startswith("src_") or attr.startswith("dst_") and is_this_edge_flipped:
+                        return ["src_", "dst_"][attr.startswith("src_")] + attr[4:]
                     return attr
 
                 attrs = [j for j in g.edges[i] if possibly_remap(j) not in gn.edges[e]]
