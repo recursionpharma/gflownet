@@ -8,9 +8,9 @@ import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter, scatter_sum
 
+from gflownet.algo.config import TBVariant
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
-from gflownet.algo.config import TBVariant
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
