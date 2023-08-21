@@ -128,11 +128,11 @@ def main():
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
         "num_training_steps": 10_000,
-        "num_workers": 0,
+        "num_workers": 8,
         "opt": {
             "lr_decay": 20000,
         },
-        "algo": {"sampling_tau": 0.99, "tb": {"variant": "DB", "do_parameterize_p_b": True}},
+        "algo": {"sampling_tau": 0.99},
         "cond": {
             "temperature": {
                 "sample_dist": "uniform",
