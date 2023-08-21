@@ -10,6 +10,7 @@ from torch_scatter import scatter, scatter_sum
 
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
+from gflownet.algo.config import TBVariant
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
@@ -40,7 +41,7 @@ def cross(x: torch.Tensor):
 
 
 def subTB(v: torch.tensor, x: torch.Tensor):
-    """
+    r"""
     Compute the SubTB(1):
     $\forall i \leq j: D[i,j] =
         \log \frac{F(s_i) \prod_{k=i}^{j} P_F(s_{k+1}|s_k)}
@@ -100,12 +101,12 @@ class TrajectoryBalance(GFNAlgorithm):
         self.cfg = cfg.algo.tb
         self.max_len = cfg.algo.max_len
         self.max_nodes = cfg.algo.max_nodes
+        self.length_normalize_losses = cfg.algo.tb.do_length_normalize
         # Experimental flags
         self.reward_loss_is_mae = True
         self.tb_loss_is_mae = False
         self.tb_loss_is_huber = False
         self.mask_invalid_rewards = False
-        self.length_normalize_losses = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
@@ -120,7 +121,7 @@ class TrajectoryBalance(GFNAlgorithm):
             correct_idempotent=self.cfg.do_correct_idempotent,
             pad_with_terminal_state=self.cfg.do_parameterize_p_b,
         )
-        if self.cfg.do_subtb:
+        if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
 
@@ -368,7 +369,7 @@ class TrajectoryBalance(GFNAlgorithm):
             # If we're modeling P_B then trajectories are padded with a virtual terminal state sF,
             # zero-out the logP_F of those states
             log_p_F[final_graph_idx] = 0
-            if self.cfg.do_subtb:
+            if self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.DB:
                 # Force the pad states' F(s) prediction to be R
                 per_graph_out[final_graph_idx, 0] = clip_log_R
 
@@ -391,7 +392,7 @@ class TrajectoryBalance(GFNAlgorithm):
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
-        if self.cfg.do_subtb:
+        if self.cfg.variant == TBVariant.SubTB1:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             if self.cfg.cum_subtb:
                 traj_losses = self.subtb_cum(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
@@ -399,6 +400,15 @@ class TrajectoryBalance(GFNAlgorithm):
                 traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
 
             # The position of the first graph of each trajectory
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            log_Z = per_graph_out[first_graph_idx, 0]
+        elif self.cfg.variant == TBVariant.DB:
+            F_sn = per_graph_out[:, 0]
+            F_sm = per_graph_out[:, 0].roll(-1)
+            F_sm[final_graph_idx] = clip_log_R
+            transition_losses = (F_sn + log_p_F - F_sm - log_p_B).pow(2)
+            traj_losses = scatter(transition_losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
             first_graph_idx = torch.zeros_like(batch.traj_lens)
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             log_Z = per_graph_out[first_graph_idx, 0]
