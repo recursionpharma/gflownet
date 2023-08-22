@@ -27,7 +27,7 @@ class GraphTransformer(nn.Module):
 
     The per node outputs are the final (post graph-convolution) node embeddings.
 
-    The per graph outputs are the concatenation of a global mean pooling operation, of the final 
+    The per graph outputs are the concatenation of a global mean pooling operation, of the final
     node embeddings, and of the final virtual node embeddings.
     """
 
