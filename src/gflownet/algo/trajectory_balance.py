@@ -66,10 +66,23 @@ class TrajectoryBalanceModel(nn.Module):
 
 
 class TrajectoryBalance(GFNAlgorithm):
-    """TB implementation, see
-    "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
-    Emmanuel Bengio, Chen Sun, Yoshua Bengio"
-    https://arxiv.org/abs/2201.13259"""
+    """Trajectory-based GFN loss implementations. Implements
+    - TB: Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
+    Emmanuel Bengio, Chen Sun, Yoshua Bengio
+    https://arxiv.org/abs/2201.13259
+
+    - SubTB(1): Learning GFlowNets from partial episodes for improved convergence and stability, Kanika Madan, Jarrid
+    Rector-Brooks, Maksym Korablyov, Emmanuel Bengio, Moksh Jain, Andrei Cristian Nica, Tom Bosc, Yoshua Bengio,
+    Nikolay Malkin
+    https://arxiv.org/abs/2209.12782
+    Note: We implement the lambda=1 version of SubTB here (this choice is based on empirical results from the paper)
+
+    - DB: GFlowNet Foundations, Yoshua Bengio, Salem Lahlou, Tristan Deleu, Edward J. Hu, Mo Tiwari, Emmanuel Bengio
+    https://arxiv.org/abs/2111.09266
+    Note: This is the trajectory version of Detailed Balance (i.e. transitions are not iid, but trajectories are).
+    Empirical results in subsequent papers suggest that DB may be improved by training on iid transitions (sampled from
+    a replay buffer) instead of trajectories.
+    """
 
     def __init__(
         self,
@@ -78,10 +91,7 @@ class TrajectoryBalance(GFNAlgorithm):
         rng: np.random.RandomState,
         cfg: Config,
     ):
-        """TB implementation, see
-        "Trajectory Balance: Improved Credit Assignment in GFlowNets Nikolay Malkin, Moksh Jain,
-        Emmanuel Bengio, Chen Sun, Yoshua Bengio"
-        https://arxiv.org/abs/2201.13259
+        """Instanciate a TB algorithm.
 
         Parameters
         ----------
