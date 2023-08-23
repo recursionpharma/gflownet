@@ -109,6 +109,7 @@ class TrajectoryBalance(GFNAlgorithm):
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
+        self.model_is_autoregressive = False
 
         self.graph_sampler = GraphSampler(
             ctx,
@@ -243,10 +244,15 @@ class TrajectoryBalance(GFNAlgorithm):
         batch: gd.Batch
              A (CPU) Batch object with relevant attributes added
         """
-        torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
-        actions = [
-            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
-        ]
+        if self.model_is_autoregressive:
+            torch_graphs = [self.ctx.graph_to_Data(tj["traj"][-1][0]) for tj in trajs]
+            actions = [self.ctx.GraphAction_to_aidx(g, i[1]) for g, tj in zip(torch_graphs, trajs) for i in tj["traj"]]
+        else:
+            torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
+            actions = [
+                self.ctx.GraphAction_to_aidx(g, a)
+                for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
+            ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
@@ -325,7 +331,10 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.do_parameterize_p_b:
             fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
         else:
-            fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
+            if self.model_is_autoregressive:
+                fwd_cat, per_graph_out = model(batch, cond_info, batched=True)
+            else:
+                fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]

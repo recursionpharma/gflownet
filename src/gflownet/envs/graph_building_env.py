@@ -3,7 +3,7 @@ import enum
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -423,10 +423,11 @@ class GraphActionCategorical:
         self,
         graphs: gd.Batch,
         logits: List[torch.Tensor],
-        keys: List[str],
+        keys: List[Union[str, None]],
         types: List[GraphActionType],
         deduplicate_edge_index=True,
         masks: List[torch.Tensor] = None,
+        slice_dict: Optional[dict[str, torch.Tensor]] = None,
     ):
         """A multi-type Categorical compatible with generating structured actions.
 
@@ -461,13 +462,16 @@ class GraphActionCategorical:
             be graph-level (i.e. if there are `k` graphs in the Batch
             object, this logit tensor would have shape `(k, m)`)
         types: List[GraphActionType]
-           The action type each logit corresponds to.
+            The action type each logit corresponds to.
         deduplicate_edge_index: bool, default=True
-           If true, this means that the 'edge_index' keys have been reduced
-           by e_i[::2] (presumably because the graphs are undirected)
+            If true, this means that the 'edge_index' keys have been reduced
+            by e_i[::2] (presumably because the graphs are undirected)
         masks: List[Tensor], default=None
-           If not None, a list of broadcastable tensors that multiplicatively
-           mask out logits of invalid actions
+            If not None, a list of broadcastable tensors that multiplicatively
+            mask out logits of invalid actions
+        slice_dist: Optional[dict[str, Tensor]], default=None
+            If not None, a map of tensors that indicate the start (and end) the graph index
+            of each object keyed. If None, uses the `_slice_dict` attribute of the graphs.
         """
         self.num_graphs = graphs.num_graphs
         assert all([i.ndim == 2 for i in logits])
@@ -504,9 +508,9 @@ class GraphActionCategorical:
             for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
+        slice_dict = graphs._slice_dict if slice_dict is None else slice_dict
         self.slice = [
-            graphs._slice_dict[k].to(dev) if k is not None else torch.arange(graphs.num_graphs + 1, device=dev)
-            for k in keys
+            slice_dict[k].to(dev) if k is not None else torch.arange(graphs.num_graphs + 1, device=dev) for k in keys
         ]
         self.logprobs = None
 

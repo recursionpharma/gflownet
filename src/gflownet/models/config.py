@@ -22,4 +22,5 @@ class ModelConfig:
 
     num_layers: int = 3
     num_emb: int = 128
+    dropout: float = 0
     graph_transformer: GraphTransformerConfig = GraphTransformerConfig()

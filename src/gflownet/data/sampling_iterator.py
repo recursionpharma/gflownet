@@ -100,7 +100,6 @@ class SamplingIterator(IterableDataset):
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
         self.do_validate_batch = False  # Turn this on for debugging
-        self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env")  # TODO: make this a proper flag
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
         # then "offline" now refers to cond info and online to x, so no duplication and we don't end
@@ -232,9 +231,6 @@ class SamplingIterator(IterableDataset):
                     # Override the is_valid key in case the task made some mols invalid
                     for i in range(num_online):
                         trajs[num_offline + i]["is_valid"] = is_valid[num_offline + i].item()
-                    if self.log_molecule_smis:
-                        for i, m in zip(valid_idcs, valid_mols):
-                            trajs[i]["smi"] = Chem.MolToSmiles(m)
 
             # Compute scalar rewards from conditional information & flat rewards
             flat_rewards = torch.stack(flat_rewards)
@@ -355,13 +351,10 @@ class SamplingIterator(IterableDataset):
                 raise ValueError("Found an action that was masked out", trajs[traj_idx]["traj"][timestep])
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
-        if self.log_molecule_smis:
-            mols = [
-                Chem.MolToSmiles(self.ctx.graph_to_mol(trajs[i]["result"])) if trajs[i]["is_valid"] else ""
-                for i in range(len(trajs))
-            ]
+        if hasattr(self.ctx, "object_to_log_repr"):
+            mols = [self.ctx.object_to_log_repr(t["result"]) if t["is_valid"] else "" for t in trajs]
         else:
-            mols = [nx.algorithms.graph_hashing.weisfeiler_lehman_graph_hash(t["result"], None, "v") for t in trajs]
+            mols = [""] * len(trajs)
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         rewards = rewards.data.numpy().tolist()
