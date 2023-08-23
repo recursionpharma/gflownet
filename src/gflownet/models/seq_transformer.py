@@ -1,12 +1,11 @@
+import math
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import math
-import numpy as np
 
+from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
-from gflownet.config import Config
 
 
 class MLP(nn.Module):

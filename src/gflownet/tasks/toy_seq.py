@@ -1,15 +1,11 @@
 import os
 import shutil
 import socket
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch_geometric.data as gd
-from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import Dataset
 
 from gflownet.config import Config
 from gflownet.envs.seq_building_env import GenericSeqBuildingContext, SeqBuildingEnv

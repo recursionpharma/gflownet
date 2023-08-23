@@ -4,11 +4,10 @@ from collections.abc import Iterable
 from copy import deepcopy
 from typing import Callable, List
 
-import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
-from rdkit import Chem, RDLogger
+from rdkit import RDLogger
 from torch.utils.data import Dataset, IterableDataset
 
 from gflownet.data.replay_buffer import ReplayBuffer
@@ -222,7 +221,6 @@ class SamplingIterator(IterableDataset):
                     ), "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
                     # The task may decide some of the mols are invalid, we have to again filter those
                     valid_idcs = valid_idcs[m_is_valid]
-                    valid_mols = [m for m, v in zip(mols, m_is_valid) if v]
                     pred_reward = torch.zeros((num_online, online_flat_rew.shape[1]))
                     pred_reward[valid_idcs - num_offline] = online_flat_rew
                     is_valid[num_offline:] = False

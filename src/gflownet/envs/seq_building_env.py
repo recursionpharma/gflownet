@@ -1,13 +1,17 @@
-from typing import Any, List, Tuple
 from copy import deepcopy
+from typing import Any, List, Tuple
 
 import torch
-import torch_geometric.data as gd
-from torch_geometric.data import Data
 from torch.nn.utils.rnn import pad_sequence
+from torch_geometric.data import Data
 
-from gflownet.envs.graph_building_env import Graph, GraphAction
-from .graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnv, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import (
+    Graph,
+    GraphAction,
+    GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
+)
 
 
 # For typing's sake, we'll pretend that a sequence is a graph.
