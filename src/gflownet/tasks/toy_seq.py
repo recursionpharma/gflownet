@@ -8,7 +8,7 @@ import torch
 from torch import Tensor
 
 from gflownet.config import Config
-from gflownet.envs.seq_building_env import GenericSeqBuildingContext, SeqBuildingEnv
+from gflownet.envs.seq_building_env import AutoregressiveSeqBuildingContext, SeqBuildingEnv
 from gflownet.models.seq_transformer import SeqTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
@@ -16,7 +16,8 @@ from gflownet.utils.conditioning import TemperatureConditional
 
 
 class ToySeqTask(GFNTask):
-    """Sets up a task where the reward is the number of times some sequences appear in the input"""
+    """Sets up a task where the reward is the number of times some sequences appear in the input. Normalized to be
+    in [0,1]"""
 
     def __init__(
         self,
@@ -88,13 +89,16 @@ class ToySeqTrainer(StandardOnlineTrainer):
 
     def setup_env_context(self):
         self.env = SeqBuildingEnv(None)
-        self.ctx = GenericSeqBuildingContext(
+        self.ctx = AutoregressiveSeqBuildingContext(
             "abc",
             self.task.num_cond_dim,
         )
 
     def setup_algo(self):
         super().setup_algo()
+        # If the algo implements it, avoid giving, ["A", "AB", "ABC", ...] as a sequence of inputs, and instead give
+        # "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using a transformer with
+        # causal self-attention.
         self.algo.model_is_autoregressive = True
 
 

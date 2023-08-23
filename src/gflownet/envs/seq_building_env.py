@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Any, List, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -63,9 +63,12 @@ class SeqBatch:
         self.x = pad_sequence(seqs, batch_first=False, padding_value=pad)
         self.mask = self.x.eq(pad).T
         self.lens = torch.tensor([len(i) for i in seqs], dtype=torch.long)
+        # This tells where (in the flattened array of outputs) the non-masked outputs are.
+        # E.g. if the batch is [["ABC", "VWXYZ"]], logit_idx would be [0, 1, 2, 5, 6, 7, 8, 9]
         self.logit_idx = self.x.ne(pad).flatten().nonzero().flatten()
+        # Since we're feeding this batch object to graph-based algorithms, we have to use this naming, but this
+        # is the total number of timesteps.
         self.num_graphs = self.lens.sum().item()
-        # self.batch = torch.tensor([[i] * len(s) for i, s in enumerate(seqs)])
 
     def to(self, device):
         for name in dir(self):
@@ -75,8 +78,13 @@ class SeqBatch:
         return self
 
 
-class GenericSeqBuildingContext(GraphBuildingEnvContext):
-    def __init__(self, alphabet, num_cond_dim=0):
+class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
+    """This class masquerades as a GraphBuildingEnvContext, but actually generates sequences of tokens.
+
+    This context gets an agent to generate sequences of tokens from left to right, i.e. in an autoregressive fashion.
+    """
+
+    def __init__(self, alphabet: Sequence[str], num_cond_dim=0):
         self.alphabet = alphabet
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode]
 
@@ -87,6 +95,7 @@ class GenericSeqBuildingContext(GraphBuildingEnvContext):
         self.num_cond_dim = num_cond_dim
 
     def aidx_to_GraphAction(self, g: Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
+        # Since there's only one "object" per timestep to act upon (in graph parlance), the row is always == 0
         act_type, _, act_col = [int(i) for i in action_idx]
         t = self.action_type_order[act_type]
         if t is GraphActionType.Stop:
@@ -118,7 +127,7 @@ class GenericSeqBuildingContext(GraphBuildingEnvContext):
 
     def graph_to_mol(self, g: Graph):
         s: Seq = g  # type: ignore
-        return "".join(self.alphabet[i] for i in s.seq)
+        return "".join(self.alphabet[int(i)] for i in s.seq)
 
     def object_to_log_repr(self, g: Graph):
         return self.graph_to_mol(g)

@@ -109,6 +109,9 @@ class TrajectoryBalance(GFNAlgorithm):
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
+        # When the model is autoregressive, we can avoid giving it ["A", "AB", "ABC", ...] as a sequence of inputs, and
+        # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
+        # like a transformer with causal self-attention.
         self.model_is_autoregressive = False
 
         self.graph_sampler = GraphSampler(

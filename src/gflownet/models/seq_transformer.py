@@ -1,3 +1,4 @@
+# This code is adapted from https://github.com/MJ10/mo_gfn
 import math
 
 import torch
@@ -8,9 +9,9 @@ from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildi
 from gflownet.envs.seq_building_env import SeqBatch
 
 
-class MLP(nn.Module):
+class MLPWithDropout(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_layers, dropout_prob, init_drop=False):
-        super(MLP, self).__init__()
+        super(MLPWithDropout, self).__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
         layers = [nn.Linear(in_dim, hidden_layers[0]), nn.ReLU()]
@@ -20,11 +21,13 @@ class MLP(nn.Module):
         layers.append(nn.Linear(hidden_layers[-1], out_dim))
         self.model = nn.Sequential(*layers)
 
-    def forward(self, x, with_uncertainty=False):
+    def forward(self, x):
         return self.model(x)
 
 
 class SeqTransformerGFN(nn.Module):
+    """A standard transformer-encoder based GFN model for sequences."""
+
     ctx: GraphBuildingEnvContext
 
     def __init__(
@@ -34,10 +37,9 @@ class SeqTransformerGFN(nn.Module):
         num_state_out=1,
     ):
         super().__init__()
-        # num_hid, cond_dim, max_len, vocab_size, num_actions, dropout, num_layers, num_head, use_cond, **kwargs
         self.ctx = env_ctx
         num_hid = cfg.model.num_emb
-        num_outs = env_ctx.num_outputs + num_state_out
+        num_outs = env_ctx.num_actions + num_state_out
         mc = cfg.model
         self.pos = PositionalEncoding(num_hid, dropout=cfg.model.dropout, max_len=cfg.algo.max_len + 2)
         self.use_cond = env_ctx.num_cond_dim > 0
@@ -48,13 +50,25 @@ class SeqTransformerGFN(nn.Module):
         self.encoder = nn.TransformerEncoder(encoder_layers, mc.num_layers)
         self.logZ = nn.Linear(env_ctx.num_cond_dim, 1)
         if self.use_cond:
-            self.output = MLP(num_hid + num_hid, num_outs, [4 * num_hid, 4 * num_hid], mc.dropout)
+            self.output = MLPWithDropout(num_hid + num_hid, num_outs, [4 * num_hid, 4 * num_hid], mc.dropout)
             self.cond_embed = nn.Linear(env_ctx.num_cond_dim, num_hid)
         else:
-            self.output = MLP(num_hid, num_outs, [2 * num_hid, 2 * num_hid], mc.dropout)
+            self.output = MLPWithDropout(num_hid, num_outs, [2 * num_hid, 2 * num_hid], mc.dropout)
         self.num_hid = num_hid
 
     def forward(self, xs: SeqBatch, cond, batched=False):
+        """Returns a GraphActionCategorical and a tensor of state predictions.
+
+        Parameters
+        ----------
+        xs: SeqBatch
+            A batch of sequences.
+        cond: torch.Tensor
+            A tensor of conditional information.
+        batched: bool
+            If True, the it's assumed that the cond tensor is constant along a sequence, and the output is given
+            at each timestep (of the autoregressive process), which works because we are using causal self-attenion.
+            If False, only the last timesteps' output is returned, which one would use to sample the next token."""
         x = self.embedding(xs.x)
         x = self.pos(x)  # (time, batch, nemb)
         x = self.encoder(x, src_key_padding_mask=xs.mask, mask=generate_square_subsequent_mask(x.shape[0]).to(x.device))
@@ -71,6 +85,8 @@ class SeqTransformerGFN(nn.Module):
         if batched:
             # out is (time, batch, nout)
             out = out.transpose(1, 0).contiguous().reshape((-1, out.shape[2]))  # (batch * time, nout)
+            # logit_idx tells us where (in the flattened array of outputs) the non-masked outputs are.
+            # E.g. if the batch is [["ABC", "VWXYZ"]], logit_idx would be [0, 1, 2, 5, 6, 7, 8, 9]
             stop_logits = out[xs.logit_idx, 0:1]  # (proper_time, 1)
             state_preds = out[xs.logit_idx, 1:2]  # (proper_time, 1)
             add_node_logits = out[xs.logit_idx, 2:]  # (proper_time, nout - 1)
