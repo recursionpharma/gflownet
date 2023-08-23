@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Any, List, Sequence, Tuple
+from typing import Any, List, Tuple, Sequence
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -20,7 +20,7 @@ class Seq(Graph):
         self.seq: list[Any] = []
 
     def __repr__(self):
-        return "".join(self.seq)
+        return "".join(map(str, self.seq))
 
     @property
     def nodes(self):
@@ -65,7 +65,7 @@ class SeqBatch:
         self.lens = torch.tensor([len(i) for i in seqs], dtype=torch.long)
         # This tells where (in the flattened array of outputs) the non-masked outputs are.
         # E.g. if the batch is [["ABC", "VWXYZ"]], logit_idx would be [0, 1, 2, 5, 6, 7, 8, 9]
-        self.logit_idx = self.x.ne(pad).flatten().nonzero().flatten()
+        self.logit_idx = self.x.ne(pad).T.flatten().nonzero().flatten()
         # Since we're feeding this batch object to graph-based algorithms, we have to use this naming, but this
         # is the total number of timesteps.
         self.num_graphs = self.lens.sum().item()
@@ -91,7 +91,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
         self.num_tokens = len(alphabet) + 2  # Alphabet + BOS + PAD
         self.bos_token = len(alphabet)
         self.pad_token = len(alphabet) + 1
-        self.num_outputs = len(alphabet) + 1  # Alphabet + Stop
+        self.num_actions = len(alphabet) + 1  # Alphabet + Stop
         self.num_cond_dim = num_cond_dim
 
     def aidx_to_GraphAction(self, g: Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:

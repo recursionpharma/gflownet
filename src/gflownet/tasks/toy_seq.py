@@ -70,7 +70,7 @@ class ToySeqTrainer(StandardOnlineTrainer):
         cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
-        cfg.algo.tb.Z_learning_rate = 1e-3
+        cfg.algo.tb.Z_learning_rate = 1e-2
         cfg.algo.tb.Z_lr_decay = 50_000
         cfg.algo.tb.do_parameterize_p_b = False
 
@@ -108,14 +108,17 @@ def main():
         "log_dir": "./logs/debug_run_toy_seq",
         "device": "cuda",
         "overwrite_existing_exp": True,
-        "num_training_steps": 10_000,
+        "num_training_steps": 2_000,
+        "checkpoint_every": 200,
         "num_workers": 4,
         "cond": {
             "temperature": {
-                "sample_dist": "uniform",
-                "dist_params": [2.0, 2.01],
+                "sample_dist": "constant",
+                "dist_params": [2.0],
+                "num_thermometer_dim": 1,
             }
         },
+        "algo": {"train_random_action_prob": 0.05},
     }
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:
