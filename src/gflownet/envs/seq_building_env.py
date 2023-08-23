@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Any, List, Tuple, Sequence
+from typing import Any, List, Sequence, Tuple
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
