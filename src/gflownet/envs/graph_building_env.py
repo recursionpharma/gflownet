@@ -879,3 +879,7 @@ class GraphBuildingEnvContext:
             The corresponding Graph representation of that molecule.
         """
         raise NotImplementedError()
+
+    def object_to_log_repr(self, g: Graph) -> str:
+        """Convert a Graph to a string representation for logging purposes"""
+        return ""

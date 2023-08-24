@@ -38,6 +38,7 @@ class SeqTransformerGFN(nn.Module):
     ):
         super().__init__()
         self.ctx = env_ctx
+        self.num_state_out = num_state_out
         num_hid = cfg.model.num_emb
         num_outs = env_ctx.num_actions + num_state_out
         mc = cfg.model
@@ -82,14 +83,15 @@ class SeqTransformerGFN(nn.Module):
             final_rep = x if batched else pooled_x
 
         out: torch.Tensor = self.output(final_rep)
+        ns = self.num_state_out
         if batched:
             # out is (time, batch, nout)
             out = out.transpose(1, 0).contiguous().reshape((-1, out.shape[2]))  # (batch * time, nout)
             # logit_idx tells us where (in the flattened array of outputs) the non-masked outputs are.
             # E.g. if the batch is [["ABC", "VWXYZ"]], logit_idx would be [0, 1, 2, 5, 6, 7, 8, 9]
-            stop_logits = out[xs.logit_idx, 0:1]  # (proper_time, 1)
-            state_preds = out[xs.logit_idx, 1:2]  # (proper_time, 1)
-            add_node_logits = out[xs.logit_idx, 2:]  # (proper_time, nout - 1)
+            state_preds = out[xs.logit_idx, 0:ns]  # (proper_time, num_state_out)
+            stop_logits = out[xs.logit_idx, ns : ns + 1]  # (proper_time, 1)
+            add_node_logits = out[xs.logit_idx, ns + 1 :]  # (proper_time, nout - 1)
             # `time` above is really max_time, whereas proper_time = sum(len(traj) for traj in xs))
             # which is what we need to give to GraphActionCategorical
         else:
@@ -97,9 +99,9 @@ class SeqTransformerGFN(nn.Module):
             # GraphActionCategorical knows how many "graphs" (sequence inputs) there are
             xs.num_graphs = out.shape[0]
             # out is (batch, nout)
-            stop_logits = out[:, 0:1]
-            state_preds = out[:, 1:2]
-            add_node_logits = out[:, 2:]
+            state_preds = out[:, 0:ns]
+            stop_logits = out[:, ns : ns + 1]
+            add_node_logits = out[:, ns + 1 :]
 
         return (
             GraphActionCategorical(
