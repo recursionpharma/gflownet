@@ -7,6 +7,7 @@ import torch.nn as nn
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
+from gflownet.models.config import SeqPosEnc
 
 
 class MLPWithDropout(nn.Module):
@@ -42,12 +43,13 @@ class SeqTransformerGFN(nn.Module):
         num_hid = cfg.model.num_emb
         num_outs = env_ctx.num_actions + num_state_out
         mc = cfg.model
-        self.pos = PositionalEncoding(num_hid, dropout=cfg.model.dropout, max_len=cfg.algo.max_len + 2)
+        if mc.seq_transformer.posenc == SeqPosEnc.Pos:
+            self.pos = PositionalEncoding(num_hid, dropout=cfg.model.dropout, max_len=cfg.algo.max_len + 2)
+        elif mc.seq_transformer.posenc == SeqPosEnc.Rotary:
+            self.pos = RotaryEmbedding(num_hid)
         self.use_cond = env_ctx.num_cond_dim > 0
         self.embedding = nn.Embedding(env_ctx.num_tokens, num_hid)
-        encoder_layers = nn.TransformerEncoderLayer(
-            num_hid, mc.graph_transformer.num_heads, num_hid, dropout=mc.dropout
-        )
+        encoder_layers = nn.TransformerEncoderLayer(num_hid, mc.seq_transformer.num_heads, num_hid, dropout=mc.dropout)
         self.encoder = nn.TransformerEncoder(encoder_layers, mc.num_layers)
         self.logZ = nn.Linear(env_ctx.num_cond_dim, 1)
         if self.use_cond:
@@ -135,3 +137,34 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[: x.size(0), :]
         return self.dropout(x)
+
+
+# This is adapted from https://github.com/lucidrains/x-transformers
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim, interpolation_factor=1.0, base=10000, base_rescale_factor=1.0):
+        super().__init__()
+        # proposed by reddit user bloc97, to rescale rotary embeddings to longer sequence length without fine-tuning
+        # has some connection to NTK literature
+        # https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/
+        base *= base_rescale_factor ** (dim / (dim - 2))
+
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+
+        assert interpolation_factor >= 1.0
+        self.interpolation_factor = interpolation_factor
+
+    def get_emb(self, seq_len, device):
+        t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
+        t = t / self.interpolation_factor
+
+        freqs = torch.einsum("i , j -> i j", t, self.inv_freq)
+        freqs = torch.cat((freqs, freqs), dim=-1)
+
+        return freqs
+
+    def forward(self, x, scale=1):
+        x1, x2 = x.reshape(x.shape[:-1] + (2, -1)).unbind(dim=-2)
+        xrot = torch.cat((-x2, x1), dim=-1)
+        freqs = self.get_emb(x.shape[0], x.device)[:, None, :]
+        return (x * freqs.cos() * scale) + (xrot * freqs.sin() * scale)
