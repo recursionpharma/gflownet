@@ -460,4 +460,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def object_to_log_repr(self, g: Graph):
         """Convert a Graph to a string representation"""
-        return Chem.MolToSmiles(self.graph_to_mol(g))
+        try:
+            mol = self.graph_to_mol(g)
+            assert mol is not None
+            return Chem.MolToSmiles(mol)
+        except Exception:
+            return ""

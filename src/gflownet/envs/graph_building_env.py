@@ -1,5 +1,6 @@
 import copy
 import enum
+import json
 import re
 from collections import defaultdict
 from functools import cached_property
@@ -882,4 +883,6 @@ class GraphBuildingEnvContext:
 
     def object_to_log_repr(self, g: Graph) -> str:
         """Convert a Graph to a string representation for logging purposes"""
-        return ""
+        return json.dumps(
+            [[(i, g.nodes[i]) for i in g.nodes], [(e, g.edges[e]) for e in g.edges]], separators=(",", ":")
+        )
