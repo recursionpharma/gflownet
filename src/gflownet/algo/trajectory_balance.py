@@ -22,6 +22,40 @@ from gflownet.envs.graph_building_env import (
 from gflownet.trainer import GFNAlgorithm
 
 
+def shift_right(x: torch.Tensor, z=0):
+    "Shift x right by 1, and put z in the first position"
+    x = torch.roll(x, 1, dims=0)
+    x[0] = z
+    return x
+
+
+def cross(x: torch.Tensor):
+    """
+    Calculate $y_{ij} = \sum_{t=i}^j x_t$.
+    The lower triangular portion is the inverse of the upper triangular one.
+    """
+    assert x.ndim == 1
+    y = torch.cumsum(x, 0)
+    return y[None] - shift_right(y)[:, None]
+
+
+def subTB(v: torch.tensor, x: torch.Tensor):
+    """
+    Compute the SubTB(1):
+    $\forall i \leq j: D[i,j] =
+        \log \frac{F(s_i) \prod_{k=i}^{j} P_F(s_{k+1}|s_k)}
+        {F(s_{j + 1}) \prod_{k=i}^{j} P_B(s_k|s_{k+1})}$
+      for a single trajectory.
+    Note that x_k should be P_F(s_{k+1}|s_k) - P_B(s_k|s_{k+1}).
+    """
+    assert v.ndim == x.ndim == 1
+    # D[i,j] = V[i] - V[j + 1]
+    D = v[:-1, None] - v[None, 1:]
+    # cross(x)[i, j] = sum(x[i:j+1])
+    D = D + cross(x)
+    return torch.triu(D)
+
+
 class TrajectoryBalanceModel(nn.Module):
     def forward(self, batch: gd.Batch) -> Tuple[GraphActionCategorical, Tensor]:
         raise NotImplementedError()
@@ -292,7 +326,6 @@ class TrajectoryBalance(GFNAlgorithm):
             fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
         else:
             fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
-
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]
@@ -349,7 +382,7 @@ class TrajectoryBalance(GFNAlgorithm):
             # We also have access to the is_sink attribute, which tells us when P_B must = 1, which
             # we'll use to ignore the last padding state(s) of each trajectory. This by the same
             # occasion masks out the first P_B of the "next" trajectory that we've shifted.
-            log_p_B = torch.cat([log_p_B[1:], log_p_B[:1]]) * (1 - batch.is_sink)
+            log_p_B = torch.roll(log_p_B, -1, 0) * (1 - batch.is_sink)
         else:
             log_p_B = batch.log_p_B
         assert log_p_F.shape == log_p_B.shape
@@ -360,7 +393,11 @@ class TrajectoryBalance(GFNAlgorithm):
 
         if self.cfg.do_subtb:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
-            traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
+            if self.cfg.cum_subtb:
+                traj_losses = self.subtb_cum(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
+            else:
+                traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
+
             # The position of the first graph of each trajectory
             first_graph_idx = torch.zeros_like(batch.traj_lens)
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
@@ -423,7 +460,6 @@ class TrajectoryBalance(GFNAlgorithm):
             "logZ": log_Z.mean(),
             "loss": loss.item(),
         }
-
         return loss, info
 
     def _init_subtb(self, dev):
@@ -514,4 +550,25 @@ class TrajectoryBalance(GFNAlgorithm):
             F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
             F_end = F_and_R[fidces]
             total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+        return total_loss
+
+    def subtb_cum(self, P_F, P_B, F, R, traj_lengths):
+        """
+        Calcualte the subTB(1) loss (all arguments on log-scale) using dynamic programming.
+
+        See also `subTB`
+        """
+        dev = traj_lengths.device
+        num_trajs = len(traj_lengths)
+        total_loss = torch.zeros(num_trajs, device=dev)
+        x = torch.cumsum(traj_lengths, 0)
+        # P_B is already shifted
+        pdiff = P_F - P_B
+        for ep, (s_idx, e_idx) in enumerate(zip(shift_right(x), x)):
+            if self.cfg.do_parameterize_p_b:
+                e_idx -= 1
+            n = e_idx - s_idx
+            fr = torch.cat([F[s_idx:e_idx], torch.tensor([R[ep]], device=F.device)])
+            p = pdiff[s_idx:e_idx]
+            total_loss[ep] = subTB(fr, p).pow(2).sum() / (n * n + n) * 2
         return total_loss

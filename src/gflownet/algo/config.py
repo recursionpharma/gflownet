@@ -37,6 +37,7 @@ class TBConfig:
     subtb_max_len: int = 128
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
+    cum_subtb: bool = True
 
 
 @dataclass
