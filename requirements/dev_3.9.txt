@@ -256,7 +256,7 @@ torch==1.13.1
     #   pyro-ppl
 torch-cluster==1.6.0
     # via gflownet (pyproject.toml)
-torch-geometric==2.0.3
+torch-geometric==2.3.1
     # via gflownet (pyproject.toml)
 torch-scatter==2.1.1
     # via gflownet (pyproject.toml)

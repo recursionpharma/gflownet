@@ -57,10 +57,7 @@ requires-python = ">=3.8,<3.10"
 dynamic = ["version"]
 dependencies = [
     "torch==1.13.1",
-    # These pins are specific on purpose, some of these packages have
-    # unstable APIs since they are fairly new. We could instead pin
-    # them as >= in dev until something breaks?
-    "torch-geometric==2.0.3",
+    "torch-geometric",
     "torch-scatter",
     "torch-sparse",
     "torch-cluster",
