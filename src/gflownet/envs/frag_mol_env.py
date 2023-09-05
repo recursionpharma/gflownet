@@ -331,3 +331,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         if mol is None:
             return False
         return True
+
+    def object_to_log_repr(self, g: Graph):
+        """Convert a Graph to a string representation"""
+        return Chem.MolToSmiles(self.graph_to_mol(g))
