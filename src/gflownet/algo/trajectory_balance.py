@@ -190,7 +190,7 @@ class TrajectoryBalance(GFNAlgorithm):
         if hasattr(self.ctx, "relabel"):
             relabel = self.ctx.relabel
         else:
-            relabel = lambda *x: x
+            relabel = lambda *x: x  # noqa: E731
         trajs = [{"traj": [relabel(*t) for t in generate_forward_trajectory(i)]} for i in graphs]
         for traj in trajs:
             n_back = [

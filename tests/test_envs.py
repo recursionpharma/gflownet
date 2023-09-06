@@ -7,10 +7,10 @@ from omegaconf import OmegaConf
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
+from gflownet.envs.basic_graph_ctx import BasicGraphContext
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.envs.graph_building_env import GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.envs.basic_graph_ctx import BasicGraphContext
 from gflownet.models import bengio2021flow
 
 
