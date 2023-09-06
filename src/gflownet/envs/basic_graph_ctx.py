@@ -38,6 +38,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
     def __init__(self, max_nodes=7, num_cond_dim=0, graph_data=None, output_gid=False):
         self.max_nodes = max_nodes
         self.output_gid = output_gid
+        self.use_graph_cache = False
 
         self.node_attr_values = {
             "v": [0, 1],  # Imagine this is as colors
@@ -159,9 +160,9 @@ class BasicGraphContext(GraphBuildingEnvContext):
             type_idx = self.bck_action_type_order.index(action.action)
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, t: int = 0) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        if self.graph_data is not None and False:
+        if self.graph_data is not None and self.use_graph_cache:
             # This caching achieves two things, first we'll speed things up
             gidx = self.get_graph_idx(g)
             if gidx in self._cache:
@@ -207,7 +208,7 @@ class BasicGraphContext(GraphBuildingEnvContext):
                 gid=gid,
             )
         )
-        if self.graph_data is not None:
+        if self.graph_data is not None and self.use_graph_cache:
             self._cache[gidx] = data
         return data
 

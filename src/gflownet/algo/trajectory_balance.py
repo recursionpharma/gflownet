@@ -577,7 +577,7 @@ class TrajectoryBalance(GFNAlgorithm):
             P_F_sums = scatter_sum(P_F[idces + offset], dests)
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
             F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
-            F_end = F_and_R[fidces]  # .detach()
+            F_end = F_and_R[fidces]
             total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
         return total_loss
 
