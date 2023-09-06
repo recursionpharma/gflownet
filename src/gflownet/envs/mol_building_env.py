@@ -8,13 +8,7 @@ import torch_geometric.data as gd
 from rdkit.Chem import Mol
 from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import (
-    Graph,
-    GraphAction,
-    GraphActionType,
-    GraphBuildingEnvContext,
-    graph_without_edge,
-)
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
@@ -35,7 +29,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         expl_H_range=[0, 1],
         allow_explicitly_aromatic=False,
         allow_5_valence_nitrogen=False,
-        num_rw_feat=8,
+        num_rw_feat=0,
         max_nodes=None,
         max_edges=None,
     ):
@@ -58,7 +52,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             generate a Kekulized version of aromatic rings and we rely on rdkit to recover aromaticity.
             (default False)
         num_rw_feat: int
-            If >0, augments the feature representation with n-step random walk features. (default n=8).
+            If >0, augments the feature representation with n-step random walk features (default n=0). These can be slow
+            to compute for large graphs.
         max_nodes: int
             If not None, then the maximum number of nodes in the graph. Corresponding actions are masked. (default None)
         max_edges: int
@@ -262,17 +257,18 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
+        x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
-        add_node_mask = torch.ones((x.shape[0], self.num_new_node_values))
+        add_node_mask = np.ones((x.shape[0], self.num_new_node_values))
         if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
             add_node_mask *= 0
-        remove_node_mask = torch.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
-        remove_node_attr_mask = torch.zeros((x.shape[0], len(self.settable_atom_attrs)))
+        remove_node_mask = np.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
+        remove_node_attr_mask = np.zeros((x.shape[0], len(self.settable_atom_attrs)))
 
         explicit_valence = {}
         max_valence = {}
-        set_node_attr_mask = torch.ones((x.shape[0], self.num_node_attr_logits))
+        set_node_attr_mask = np.ones((x.shape[0], self.num_node_attr_logits))
+        bridges = set(nx.bridges(g))
         if not len(g.nodes):
             set_node_attr_mask *= 0
         for i, n in enumerate(g.nodes):
@@ -330,14 +326,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 s, e = self.atom_attr_logit_slice["expl_H"]
                 set_node_attr_mask[i, s:e] = 0
 
-        remove_edge_mask = torch.zeros((len(g.edges), 1))
-        for i, (u, v) in enumerate(g.edges):
-            if g.degree(u) > 1 and g.degree(v) > 1:
-                if nx.algorithms.is_connected(graph_without_edge(g, (u, v))):
-                    remove_edge_mask[i] = 1
-        edge_attr = torch.zeros((len(g.edges) * 2, self.num_edge_dim))
-        set_edge_attr_mask = torch.zeros((len(g.edges), self.num_edge_attr_logits))
-        remove_edge_attr_mask = torch.zeros((len(g.edges), len(self.bond_attrs)))
+        remove_edge_mask = np.zeros((len(g.edges), 1))
+        for i, e in enumerate(g.edges):
+            if e not in bridges:
+                remove_edge_mask[i] = 1
+
+        edge_attr = np.zeros((len(g.edges) * 2, self.num_edge_dim))
+        set_edge_attr_mask = np.zeros((len(g.edges), self.num_edge_attr_logits))
+        remove_edge_attr_mask = np.zeros((len(g.edges), len(self.bond_attrs)))
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             for k, sl in zip(self.bond_attrs, self.bond_attr_slice):
@@ -355,35 +351,41 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                     # -1 because we'd be removing the single bond and replacing it with a double/triple/aromatic bond
                     is_ok = all([explicit_valence[n] + self._bond_valence[bond_type] - 1 <= max_valence[n] for n in e])
                     set_edge_attr_mask[i, sl + ti] = float(is_ok)
-        edge_index = (
-            torch.tensor([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=torch.long).reshape((-1, 2)).T
-        )
-
-        def is_ok_non_edge(e):
-            return all([explicit_valence[i] + 1 <= max_valence[i] for i in e])
+        edge_index = np.array([e for i, j in g.edges for e in [(i, j), (j, i)]]).reshape((-1, 2)).T.astype(np.int64)
 
         if self.max_edges is not None and len(g.edges) >= self.max_edges:
-            non_edge_index = torch.zeros((2, 0), dtype=torch.long)
+            non_edge_index = np.zeros((2, 0), dtype=np.int64)
         else:
-            gc = nx.complement(g)
-            non_edge_index = (
-                torch.tensor([i for i in gc.edges if is_ok_non_edge(i)], dtype=torch.long).reshape((-1, 2)).T
+            edges = set(g.edges)
+            non_edge_index = np.array(
+                [
+                    (u, v)
+                    for u in range(len(g))
+                    for v in range(u + 1, len(g))
+                    if (
+                        (u, v) not in edges
+                        and (v, u) not in edges
+                        and explicit_valence[u] + 1 <= max_valence[u]
+                        and explicit_valence[v] + 1 <= max_valence[v]
+                    )
+                ]
             )
-        data = gd.Data(
-            x,
-            edge_index,
-            edge_attr,
-            non_edge_index=non_edge_index,
-            stop_mask=torch.ones((1, 1)) * (len(g.nodes) > 0),  # Can only stop if there's at least a node
+        data = dict(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            non_edge_index=non_edge_index.astype(np.int64).reshape((-1, 2)).T,
+            stop_mask=np.ones((1, 1)) * (len(g.nodes) > 0),  # Can only stop if there's at least a node
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
-            add_edge_mask=torch.ones((non_edge_index.shape[1], 1)),  # Already filtered by is_ok_non_edge
+            add_edge_mask=np.ones((non_edge_index.shape[0], 1)),  # Already filtered by checking for valence
             set_edge_attr_mask=set_edge_attr_mask,
             remove_node_mask=remove_node_mask,
             remove_node_attr_mask=remove_node_attr_mask,
             remove_edge_mask=remove_edge_mask,
             remove_edge_attr_mask=remove_edge_attr_mask,
         )
+        data = gd.Data(**{k: torch.from_numpy(v) for k, v in data.items()})
         if self.num_rw_feat > 0:
             data.x = torch.cat([data.x, random_walk_probs(data, self.num_rw_feat, skip_odd=True)], 1)
         return data
@@ -457,3 +459,12 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         if mol is None:
             return False
         return True
+
+    def object_to_log_repr(self, g: Graph):
+        """Convert a Graph to a string representation"""
+        try:
+            mol = self.graph_to_mol(g)
+            assert mol is not None
+            return Chem.MolToSmiles(mol)
+        except Exception:
+            return ""
