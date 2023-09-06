@@ -125,16 +125,14 @@ def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
         "log_dir": "./logs/debug_run_seh_frag",
-        "device": torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
         "num_training_steps": 10_000,
         "num_workers": 8,
         "opt": {
             "lr_decay": 20000,
         },
-        "algo": {
-            "sampling_tau": 0.99,
-        },
+        "algo": {"sampling_tau": 0.99},
         "cond": {
             "temperature": {
                 "sample_dist": "uniform",

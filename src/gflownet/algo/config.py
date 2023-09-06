@@ -1,5 +1,14 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
+
+
+class TBVariant(Enum):
+    """See algo.trajectory_balance.TrajectoryBalance for details."""
+
+    TB = 0
+    SubTB1 = 1
+    DB = 2
 
 
 @dataclass
@@ -14,12 +23,14 @@ class TBConfig:
         The epsilon parameter in log-flow smoothing (see paper)
     reward_loss_multiplier : float
         The multiplier for the reward loss when bootstrapping the reward. (deprecated)
-    do_subtb : bool
-        Whether to use the full N^2 subTB loss
+    variant : TBVariant
+        The loss variant. See algo.trajectory_balance.TrajectoryBalance for details.
     do_correct_idempotent : bool
         Whether to correct for idempotent actions
     do_parameterize_p_b : bool
         Whether to parameterize the P_B distribution (otherwise it is uniform)
+    do_length_normalize : bool
+        Whether to normalize the loss by the length of the trajectory
     subtb_max_len : int
         The maximum length trajectories, used to cache subTB computation indices
     Z_learning_rate : float
@@ -31,9 +42,10 @@ class TBConfig:
     bootstrap_own_reward: bool = False
     epsilon: Optional[float] = None
     reward_loss_multiplier: float = 1.0
-    do_subtb: bool = False
+    variant: TBVariant = TBVariant.TB
     do_correct_idempotent: bool = False
     do_parameterize_p_b: bool = False
+    do_length_normalize: bool = False
     subtb_max_len: int = 128
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
