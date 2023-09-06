@@ -108,7 +108,7 @@ class GFNTrainer:
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
         self.sampling_model: nn.Module
-        self.replay_buffer: Optional[ReplayBuffer]
+        self.replay_buffer: Optional[ReplayBuffer] = None
         self.mb_size: int
         self.env: GraphBuildingEnv
         self.ctx: GraphBuildingEnvContext
@@ -188,7 +188,11 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
-        replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
+        replay_buffer, _ = (
+            self._wrap_for_mp(self.replay_buffer, send_to_device=False)
+            if self.replay_buffer is not None
+            else (None, None)
+        )
         iterator = SamplingIterator(
             self.training_data,
             model,

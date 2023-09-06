@@ -332,7 +332,7 @@ def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[G
     # TODO: should this be a method of GraphBuildingEnv? handle set_node_attr flags and so on?
     gn = Graph()
     # Choose an arbitrary starting point, add to the stack
-    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)]
+    stack: List[Tuple[int, ...]] = [(np.random.randint(0, len(g.nodes)),)] if len(g.nodes) > 0 else []
     traj = []
     # This map keeps track of node labels in gn, since we have to start from 0
     relabeling_map: Dict[int, int] = {}
@@ -782,6 +782,7 @@ class GraphBuildingEnvContext:
     """A context class defines what the graphs are, how they map to and from data"""
 
     device: torch.device
+    num_cond_dim: int = 0
     action_type_order: List[GraphActionType]
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:

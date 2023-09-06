@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import traceback
 from collections.abc import Iterable
 from copy import deepcopy
 from typing import Callable, List
@@ -110,9 +111,14 @@ class SamplingIterator(IterableDataset):
         # don't want to initialize per-worker things just yet, such as where the log the worker writes
         # to. This must be done in __iter__, which is called by the DataLoader once this instance
         # has been copied into a new python process.
-        self.log_dir = log_dir
+        import warnings
+
+        warnings.warn("Fix dependency on cfg.log_sampled_data")
+        self.log_dir = log_dir  # if cfg.log_sampled_data else None
         self.log = SQLiteLog()
         self.log_hooks: List[Callable] = []
+        # TODO: make this a proper flag / make a separate class for logging sampled molecules to a SQLite db
+        self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env") and self.log_dir is not None
 
     def add_log_hook(self, hook: Callable):
         self.log_hooks.append(hook)
@@ -156,6 +162,14 @@ class SamplingIterator(IterableDataset):
         return len(self.data)
 
     def __iter__(self):
+        try:
+            for x in self.iterator():
+                yield x
+        except Exception as e:
+            traceback.print_exc()
+            raise e
+
+    def iterator(self):
         worker_info = torch.utils.data.get_worker_info()
         self._wid = worker_info.id if worker_info is not None else 0
         # Now that we know we are in a worker instance, we can initialize per-worker things
@@ -187,9 +201,7 @@ class SamplingIterator(IterableDataset):
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
                 num_offline = 0
-                cond_info = self.task.encode_conditional_information(
-                    steer_info=torch.stack([self.data[i] for i in idcs])
-                )
+                cond_info = self.task.encode_conditional_information(torch.stack([self.data[i] for i in idcs]))
                 trajs, flat_rewards = [], []
 
             # Sample some on-policy data
@@ -244,7 +256,7 @@ class SamplingIterator(IterableDataset):
             #  note: we convert back into natural rewards for logging purposes
             #  (allows to take averages and plot in objective space)
             #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
-            rewards = torch.exp(log_rewards / cond_info["beta"])
+            rewards = torch.exp(log_rewards / (cond_info["beta"] if "beta" in cond_info else 1.0))
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(
                     deepcopy(trajs[num_offline:]),
@@ -252,6 +264,8 @@ class SamplingIterator(IterableDataset):
                     deepcopy(flat_rewards[num_offline:]),
                     {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
                 )
+
+            extra_info = {}
             if num_online > 0:
                 for hook in self.log_hooks:
                     extra_info.update(
@@ -314,6 +328,7 @@ class SamplingIterator(IterableDataset):
             batch.preferences = cond_info.get("preferences", None)
             batch.focus_dir = cond_info.get("focus_dir", None)
             batch.extra_info = extra_info
+            batch.trajs = trajs
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
 
