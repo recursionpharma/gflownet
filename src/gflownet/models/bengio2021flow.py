@@ -10,6 +10,7 @@ target proxy used in that paper (sEH binding affinity prediction).
 import gzip
 import os
 import pickle  # nosec
+from pathlib import Path
 
 import numpy as np
 import requests  # type: ignore
@@ -153,15 +154,42 @@ class MPNNet(nn.Module):
         return per_mol_out
 
 
-def load_original_model():
-    num_feat = 14 + 1 + NUM_ATOMIC_NUMBERS
-    mpnn = MPNNet(num_feat=num_feat, num_vec=0, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_conv_steps=12)
-    f = requests.get(
+def request():
+    return requests.get(
         "https://github.com/GFNOrg/gflownet/raw/master/mols/data/pretrained_proxy/best_params.pkl.gz",
         stream=True,
         timeout=30,
     )
-    params = pickle.load(gzip.open(f.raw))  # nosec
+
+
+def download(location):
+    f = request()
+    location.parent.mkdir(exist_ok=True)
+    with open(location, "wb") as fd:
+        for chunk in f.iter_content(chunk_size=128):
+            fd.write(chunk)
+
+
+def load_weights(cache, location):
+    if not cache:
+        return pickle.load(gzip.open(request().raw))  # nosec
+
+    try:
+        gz = gzip.open(location)
+    except gzip.BadGzipFile:
+        download(location)
+        gz = gzip.open(location)
+    except FileNotFoundError:
+        download(location)
+        gz = gzip.open(location)
+    return pickle.load(gz)  # nosec
+
+
+def load_original_model(cache=True, location=Path(__file__).parent / "cache" / "bengio2021flow_proxy.pkl.gz"):
+    num_feat = 14 + 1 + NUM_ATOMIC_NUMBERS
+    mpnn = MPNNet(num_feat=num_feat, num_vec=0, dim=64, num_out_per_mol=1, num_out_per_stem=105, num_conv_steps=12)
+
+    params = load_weights(cache, location)
     param_map = {
         "lin0.weight": params[0],
         "lin0.bias": params[1],
