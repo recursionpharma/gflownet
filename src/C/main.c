@@ -54,7 +54,7 @@ Graph_init(Graph *self, PyObject *args, PyObject *kwds)
     return 0;
 }
 
-static PyMemberDef Custom_members[] = {
+static PyMemberDef Graph_members[] = {
     {"graph_def", T_OBJECT_EX, offsetof(Graph, graph_def), 0,
      "node values"},
     {NULL} /* Sentinel */
@@ -208,19 +208,7 @@ Graph_add_edge(Graph *self, PyObject *args, PyObject *kwds)
     Py_RETURN_NONE;
 }
 
-static int
-NodeView_setitem(PyObject *self, PyObject *k, PyObject *v)
-{
-    PyObject_Print(k, stdout, 0);
-    PyObject_Print(v, stdout, 0);
-    return 0;
-}
-
-static PyMappingMethods Custom_seqmeth = {
-    .mp_ass_subscript = NodeView_setitem,
-};
-
-static PyMethodDef Custom_methods[] = {
+static PyMethodDef Graph_methods[] = {
     {"add_node", (PyCFunction)Graph_add_node, METH_VARARGS | METH_KEYWORDS, "Add a node"},
     {"add_edge", (PyCFunction)Graph_add_edge, METH_VARARGS | METH_KEYWORDS, "Add an edge"},
     {NULL} /* Sentinel */
@@ -239,7 +227,6 @@ Graph_getnodes(Graph *self, void *closure)
 static PyObject *
 Graph_getedges(Graph *self, void *closure)
 {
-    printf("new edgeview \n");
     // Return a new EdgeView
     PyObject *args = PyTuple_Pack(1, self);
     PyObject *obj = PyObject_CallObject((PyObject *)&EdgeViewType, args);
@@ -247,7 +234,7 @@ Graph_getedges(Graph *self, void *closure)
     return obj;
 }
 
-static PyGetSetDef Custom_getsetters[] = {
+static PyGetSetDef Graph_getsetters[] = {
     {"nodes", (getter)Graph_getnodes, NULL, "nodes", NULL},
     {"edges", (getter)Graph_getedges, NULL, "edges", NULL},
     {NULL} /* Sentinel */
@@ -263,16 +250,15 @@ static PyTypeObject GraphType = {
     .tp_new = Graph_new,
     .tp_init = (initproc)Graph_init,
     .tp_dealloc = (destructor)Graph_dealloc,
-    .tp_members = Custom_members,
-    .tp_methods = Custom_methods,
-    .tp_getset = Custom_getsetters,
-    .tp_as_mapping = &Custom_seqmeth,
+    .tp_members = Graph_members,
+    .tp_methods = Graph_methods,
+    .tp_getset = Graph_getsetters,
+    // let's not have that for now: .tp_as_mapping = &Custom_seqmeth,
 };
 
 PyObject *Graph_getnodeattr(Graph *self, int index, PyObject *k)
 {
     GraphDef *gt = (GraphDef *)self->graph_def;
-    // printf("Graph_getnodeattr %p %d %p\n", self, index, gt->node_values);
     PyObject *value_list = PyDict_GetItem(gt->node_values, k);
     if (value_list == NULL)
     {
@@ -283,7 +269,6 @@ PyObject *Graph_getnodeattr(Graph *self, int index, PyObject *k)
     int true_node_index = -1;
     for (int i = 0; i < self->num_nodes; i++)
     {
-        // printf("%d %d %d\n", self->num_nodes, self->nodes[i], index);
         if (self->nodes[i] == index)
         {
             true_node_index = i;
@@ -298,7 +283,6 @@ PyObject *Graph_getnodeattr(Graph *self, int index, PyObject *k)
 
     for (int i = 0; i < self->num_node_attrs; i++)
     {
-        printf("%d %d %d\n", self->node_attrs[i * 3], self->node_attrs[i * 3 + 1], self->node_attrs[i * 3 + 2]);
         if (self->node_attrs[i * 3] == index && self->node_attrs[i * 3 + 1] == attr_index)
         {
             return PyList_GetItem(value_list, self->node_attrs[i * 3 + 2]);
@@ -353,14 +337,12 @@ PyObject *Graph_setnodeattr(Graph *self, int index, PyObject *k, PyObject *v)
     self->node_attrs[new_idx * 3] = index;
     self->node_attrs[new_idx * 3 + 1] = attr_index;
     self->node_attrs[new_idx * 3 + 2] = value_idx;
-    printf("setnodeattr %d %d %d resulted in realloc\n", index, attr_index, value_idx);
     Py_RETURN_NONE;
 }
 
 PyObject *Graph_getedgeattr(Graph *self, int index, PyObject *k)
 {
     GraphDef *gt = (GraphDef *)self->graph_def;
-    printf("Graph_getedgeattr %p %d %p\n", self, index, gt->edge_values);
     PyObject *value_list = PyDict_GetItem(gt->edge_values, k);
     if (value_list == NULL)
     {
@@ -377,7 +359,6 @@ PyObject *Graph_getedgeattr(Graph *self, int index, PyObject *k)
 
     for (int i = 0; i < self->num_edge_attrs; i++)
     {
-        printf("%d %d %d\n", self->edge_attrs[i * 3], self->edge_attrs[i * 3 + 1], self->edge_attrs[i * 3 + 2]);
         if (self->edge_attrs[i * 3] == index && self->edge_attrs[i * 3 + 1] == attr_index)
         {
             return PyList_GetItem(value_list, self->edge_attrs[i * 3 + 2]);
@@ -388,11 +369,6 @@ PyObject *Graph_getedgeattr(Graph *self, int index, PyObject *k)
 }
 PyObject *Graph_setedgeattr(Graph *self, int index, PyObject *k, PyObject *v)
 {
-    printf("setedgeattr %d %p %p\n", index, k, v);
-    PyObject_Print(k, stdout, 0);
-    printf(" ");
-    PyObject_Print(v, stdout, 0);
-    puts("");
     GraphDef *gt = (GraphDef *)self->graph_def;
     PyObject *edge_values = PyDict_GetItem(gt->edge_values, k);
     if (edge_values == NULL)
@@ -422,7 +398,6 @@ PyObject *Graph_setedgeattr(Graph *self, int index, PyObject *k, PyObject *v)
     self->edge_attrs[new_idx * 3] = index;
     self->edge_attrs[new_idx * 3 + 1] = attr_index;
     self->edge_attrs[new_idx * 3 + 2] = value_idx;
-    printf("setedgeattr %d %d %d resulted in realloc\n", index, attr_index, value_idx);
     Py_RETURN_NONE;
 }
 
@@ -474,25 +449,20 @@ PyInit__C(void)
         Py_DECREF(m);
         return NULL;
     }
-    printf("SpamError %p %p\n", SpamError, m);
     PyTypeObject *types[] = {
         &GraphType, &GraphDefType,
         &NodeViewType, &EdgeViewType};
     char *names[] = {"Graph", "GraphDef", "NodeView", "EdgeView"};
-    for (int i = 0; i < sizeof(types) / sizeof(PyTypeObject *); i++)
+    for (int i = 0; i < (int)(sizeof(types) / sizeof(PyTypeObject *)); i++)
     {
         if (PyType_Ready(types[i]) < 0)
         {
-            printf("Could not ready %s\n", names[i]);
             Py_DECREF(m);
             return NULL;
         }
         Py_XINCREF(types[i]);
-        PyObject_Print((PyObject *)types[i], stdout, 0);
-        printf(" %s\n", names[i]);
         if (PyModule_AddObject(m, names[i], (PyObject *)types[i]) < 0)
         {
-            printf("Could not add %s\n", names[i]);
             Py_XDECREF(types[i]);
             Py_DECREF(m);
             return NULL;

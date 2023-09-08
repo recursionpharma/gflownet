@@ -37,10 +37,6 @@ GraphDef_init(GraphDef *self, PyObject *args, PyObject *kwds)
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO", kwlist, &node_values, &edge_values))
         return -1;
 
-    PyObject_Print(node_values, stdout, 0);
-    puts("");
-    PyObject_Print(edge_values, stdout, 0);
-    puts("");
     if (node_values && edge_values)
     {
         if (!(PyDict_Check(node_values) && PyDict_Check(edge_values)))

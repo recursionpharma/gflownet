@@ -51,7 +51,6 @@ static int
 NodeView_setitem(PyObject *_self, PyObject *k, PyObject *v)
 {
     NodeView *self = (NodeView *)_self;
-    printf("NodeView.__setitem__ %p %p %d\n", self, self->graph, self->index);
     if (self->index < 0)
     {
         PyErr_SetString(PyExc_KeyError, "Cannot assign to a node");
@@ -65,9 +64,6 @@ static PyObject *
 NodeView_getitem(PyObject *_self, PyObject *k)
 {
     NodeView *self = (NodeView *)_self;
-    printf("NodeView.__getitem__ %p %p %d ", self, self->graph, self->index);
-    PyObject_Print(k, stdout, 0);
-    puts("");
     if (self->index < 0)
     {
         PyObject *args = PyTuple_Pack(2, self->graph, k);
@@ -78,9 +74,44 @@ NodeView_getitem(PyObject *_self, PyObject *k)
     return Graph_getnodeattr(self->graph, self->index, k);
 }
 
-static PyMappingMethods NodeView_seqmeth = {
+static int NodeView_contains(PyObject *_self, PyObject *v)
+{
+    NodeView *self = (NodeView *)_self;
+    if (self->index < 0)
+    {
+        // Graph_containsnode
+        if (!PyLong_Check(v))
+        {
+            PyErr_SetString(PyExc_TypeError, "NodeView.__contains__ only accepts integers");
+            return -1;
+        }
+        int index = PyLong_AsLong(v);
+        for (int i = 0; i < self->graph->num_nodes; i++)
+        {
+            if (self->graph->nodes[i] == index)
+            {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    // Graph_nodehasattr
+    PyObject *attr = Graph_getnodeattr(self->graph, self->index, v);
+    if (attr == NULL)
+    {
+        PyErr_Clear();
+        return 0;
+    }
+    return 1;
+}
+
+static PyMappingMethods NodeView_mapmeth = {
     .mp_subscript = NodeView_getitem,
     .mp_ass_subscript = NodeView_setitem,
+};
+
+static PySequenceMethods NodeView_seqmeth = {
+    .sq_contains = NodeView_contains,
 };
 
 static PyMethodDef NodeView_methods[] = {
@@ -99,5 +130,6 @@ PyTypeObject NodeViewType = {
     .tp_dealloc = (destructor)NodeView_dealloc,
     .tp_members = NodeView_members,
     .tp_methods = NodeView_methods,
-    .tp_as_mapping = &NodeView_seqmeth,
+    .tp_as_mapping = &NodeView_mapmeth,
+    .tp_as_sequence = &NodeView_seqmeth,
 };

@@ -40,7 +40,6 @@ EdgeView_init(EdgeView *self, PyObject *args, PyObject *kwds)
         Py_XDECREF(tmp);
         self->index = index;
     }
-    printf("New EdgeView %p %p %d\n", self, self->graph, self->index);
     return 0;
 }
 
@@ -52,7 +51,6 @@ static int
 EdgeView_setitem(PyObject *_self, PyObject *k, PyObject *v)
 {
     EdgeView *self = (EdgeView *)_self;
-    printf("EdgeView.__setitem__ %p %p %d\n", self, self->graph, self->index);
     if (self->index < 0)
     {
         PyErr_SetString(PyExc_KeyError, "Cannot assign to a node");
@@ -62,37 +60,42 @@ EdgeView_setitem(PyObject *_self, PyObject *k, PyObject *v)
     return r == NULL ? -1 : 0;
 }
 
+int get_edge_index(Graph *g, PyObject *k)
+{
+
+    if (!PyTuple_Check(k) || PyTuple_Size(k) != 2)
+    {
+        PyErr_SetString(PyExc_KeyError, "EdgeView key must be a tuple of length 2");
+        return -1;
+    }
+    int u = PyLong_AsLong(PyTuple_GetItem(k, 0));
+    int v = PyLong_AsLong(PyTuple_GetItem(k, 1));
+    if (u > v)
+    {
+        int tmp = u;
+        u = v;
+        v = tmp;
+    }
+    for (int i = 0; i < g->num_edges; i++)
+    {
+        if (g->edges[2 * i] == u && g->edges[2 * i + 1] == v)
+        {
+            return i;
+        }
+    }
+    return -2;
+}
+
 static PyObject *
 EdgeView_getitem(PyObject *_self, PyObject *k)
 {
     EdgeView *self = (EdgeView *)_self;
-    printf("EdgeView.__getitem__ %p %p %d ", self, self->graph, self->index);
-    PyObject_Print(k, stdout, 0);
-    puts("");
     if (self->index < 0)
     {
-        int edge_idx = -1;
-        int u, v;
-        if (!PyTuple_Check(k) || PyTuple_Size(k) != 2)
+        int edge_idx = get_edge_index(self->graph, k);
+        if (edge_idx < 0)
         {
-            PyErr_SetString(PyExc_KeyError, "EdgeView key must be a tuple of length 2");
             return NULL;
-        }
-        u = PyLong_AsLong(PyTuple_GetItem(k, 0));
-        v = PyLong_AsLong(PyTuple_GetItem(k, 1));
-        if (u > v)
-        {
-            int tmp = u;
-            u = v;
-            v = tmp;
-        }
-        for (int i = 0; i < self->graph->num_edges; i++)
-        {
-            if (self->graph->edges[2 * i] == u && self->graph->edges[2 * i + 1] == v)
-            {
-                edge_idx = i;
-                break;
-            }
         }
         PyObject *idx = PyLong_FromLong(edge_idx);
         PyObject *args = PyTuple_Pack(2, self->graph, idx);
@@ -104,9 +107,34 @@ EdgeView_getitem(PyObject *_self, PyObject *k)
     return Graph_getedgeattr(self->graph, self->index, k);
 }
 
-static PyMappingMethods EdgeView_seqmeth = {
+static int EdgeView_contains(PyObject *_self, PyObject *v)
+{
+    EdgeView *self = (EdgeView *)_self;
+    if (self->index < 0)
+    {
+        int index = get_edge_index(self->graph, v); // Returns -2 if not found, -1 on error
+        if (index == -1)
+        {
+            return -1; // There was an error
+        }
+        return index >= 0;
+    }
+    PyObject *attr = Graph_getedgeattr(self->graph, self->index, v);
+    if (attr == NULL)
+    {
+        PyErr_Clear();
+        return 0;
+    }
+    return 1;
+}
+
+static PyMappingMethods EdgeView_mapmeth = {
     .mp_subscript = EdgeView_getitem,
     .mp_ass_subscript = EdgeView_setitem,
+};
+
+static PySequenceMethods EdgeView_seqmeth = {
+    .sq_contains = EdgeView_contains,
 };
 
 static PyMethodDef EdgeView_methods[] = {
@@ -125,5 +153,6 @@ PyTypeObject EdgeViewType = {
     .tp_dealloc = (destructor)EdgeView_dealloc,
     .tp_members = EdgeView_members,
     .tp_methods = EdgeView_methods,
-    .tp_as_mapping = &EdgeView_seqmeth,
+    .tp_as_mapping = &EdgeView_mapmeth,
+    .tp_as_sequence = &EdgeView_seqmeth,
 };
