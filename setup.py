@@ -2,7 +2,7 @@ import os
 from ast import literal_eval
 from subprocess import check_output  # nosec - command is hard-coded, no possibility of injection
 
-from setuptools import setup
+from setuptools import Extension, setup
 
 
 def _get_next_version():
@@ -25,4 +25,5 @@ def _get_next_version():
     return f"{major}.{minor}.{latest_patch+1}"
 
 
-setup(name="gflownet", version=_get_next_version())
+ext = [Extension(name="gflownet._C", sources=["src/C/main.c", "src/C/node_view.c", "src/C/graph_def.c"])]
+setup(name="gflownet", version=_get_next_version(), ext_modules=ext)
