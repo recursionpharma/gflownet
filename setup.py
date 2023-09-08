@@ -25,5 +25,9 @@ def _get_next_version():
     return f"{major}.{minor}.{latest_patch+1}"
 
 
-ext = [Extension(name="gflownet._C", sources=["src/C/main.c", "src/C/node_view.c", "src/C/graph_def.c"])]
+ext = [
+    Extension(
+        name="gflownet._C", sources=["src/C/main.c", "src/C/node_view.c", "src/C/graph_def.c", "src/C/edge_view.c"]
+    )
+]
 setup(name="gflownet", version=_get_next_version(), ext_modules=ext)
