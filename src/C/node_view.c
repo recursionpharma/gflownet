@@ -1,44 +1,48 @@
 #define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include "structmember.h"
 #include "./main.h"
+#include "structmember.h"
+#include <Python.h>
 
-static void
-NodeView_dealloc(NodeView *self)
-{
+static void NodeView_dealloc(NodeView *self) {
     Py_XDECREF(self->graph);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-static PyObject *
-NodeView_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
-{
+static PyObject *NodeView_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
     NodeView *self;
     self = (NodeView *)type->tp_alloc(type, 0);
-    if (self != NULL)
-    {
+    if (self != NULL) {
         self->graph = NULL;
     }
     return (PyObject *)self;
 }
 
-static int
-NodeView_init(NodeView *self, PyObject *args, PyObject *kwds)
-{
+static int NodeView_init(NodeView *self, PyObject *args, PyObject *kwds) {
     static char *kwlist[] = {"graph", "index", NULL};
     PyObject *graph = NULL, *tmp;
-    int index = -1;
+    int node_id = -1;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|i", kwlist, &graph, &index))
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|i", kwlist, &graph, &node_id))
         return -1;
 
-    if (graph)
-    {
+    if (graph) {
         tmp = (PyObject *)self->graph;
         Py_INCREF(graph);
         self->graph = (Graph *)graph;
         Py_XDECREF(tmp);
-        self->index = index;
+        self->index = node_id;
+        if (node_id >= 0) {
+            int node_exists = 0;
+            for (int i = 0; i < self->graph->num_nodes; i++) {
+                if (self->graph->nodes[i] == node_id) {
+                    node_exists = 1;
+                }
+            }
+            if (!node_exists) {
+                PyErr_SetString(PyExc_KeyError, "Trying to create a view with a node that does not exist");
+                return -1;
+            }
+        }
     }
     return 0;
 }
@@ -47,12 +51,9 @@ static PyMemberDef NodeView_members[] = {
     {NULL} /* Sentinel */
 };
 
-static int
-NodeView_setitem(PyObject *_self, PyObject *k, PyObject *v)
-{
+static int NodeView_setitem(PyObject *_self, PyObject *k, PyObject *v) {
     NodeView *self = (NodeView *)_self;
-    if (self->index < 0)
-    {
+    if (self->index < 0) {
         PyErr_SetString(PyExc_KeyError, "Cannot assign to a node");
         return -1;
     }
@@ -60,12 +61,9 @@ NodeView_setitem(PyObject *_self, PyObject *k, PyObject *v)
     return r == NULL ? -1 : 0;
 }
 
-static PyObject *
-NodeView_getitem(PyObject *_self, PyObject *k)
-{
+static PyObject *NodeView_getitem(PyObject *_self, PyObject *k) {
     NodeView *self = (NodeView *)_self;
-    if (self->index < 0)
-    {
+    if (self->index < 0) {
         PyObject *args = PyTuple_Pack(2, self->graph, k);
         PyObject *res = PyObject_CallObject((PyObject *)&NodeViewType, args);
         Py_DECREF(args);
@@ -74,22 +72,17 @@ NodeView_getitem(PyObject *_self, PyObject *k)
     return Graph_getnodeattr(self->graph, self->index, k);
 }
 
-static int NodeView_contains(PyObject *_self, PyObject *v)
-{
+static int NodeView_contains(PyObject *_self, PyObject *v) {
     NodeView *self = (NodeView *)_self;
-    if (self->index < 0)
-    {
+    if (self->index < 0) {
         // Graph_containsnode
-        if (!PyLong_Check(v))
-        {
+        if (!PyLong_Check(v)) {
             PyErr_SetString(PyExc_TypeError, "NodeView.__contains__ only accepts integers");
             return -1;
         }
         int index = PyLong_AsLong(v);
-        for (int i = 0; i < self->graph->num_nodes; i++)
-        {
-            if (self->graph->nodes[i] == index)
-            {
+        for (int i = 0; i < self->graph->num_nodes; i++) {
+            if (self->graph->nodes[i] == index) {
                 return 1;
             }
         }
@@ -97,12 +90,29 @@ static int NodeView_contains(PyObject *_self, PyObject *v)
     }
     // Graph_nodehasattr
     PyObject *attr = Graph_getnodeattr(self->graph, self->index, v);
-    if (attr == NULL)
-    {
+    if (attr == NULL) {
         PyErr_Clear();
         return 0;
     }
     return 1;
+}
+
+PyObject *NodeView_iter(PyObject *_self) {
+    NodeView *self = (NodeView *)_self;
+    if (self->index != -1) {
+        PyErr_SetString(PyExc_TypeError, "A bound NodeView is not iterable");
+        return NULL;
+    }
+    return _self;
+}
+
+PyObject *NodeView_iternext(PyObject *_self) {
+    NodeView *self = (NodeView *)_self;
+    self->index++;
+    if (self->index >= self->graph->num_nodes) {
+        return NULL;
+    }
+    return PyLong_FromLong(self->graph->nodes[self->index]);
 }
 
 static PyMappingMethods NodeView_mapmeth = {
@@ -119,8 +129,7 @@ static PyMethodDef NodeView_methods[] = {
 };
 
 PyTypeObject NodeViewType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-        .tp_name = "_C.NodeView",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "_C.NodeView",
     .tp_doc = PyDoc_STR("Constrained NodeView object"),
     .tp_basicsize = sizeof(NodeView),
     .tp_itemsize = 0,
@@ -132,4 +141,6 @@ PyTypeObject NodeViewType = {
     .tp_methods = NodeView_methods,
     .tp_as_mapping = &NodeView_mapmeth,
     .tp_as_sequence = &NodeView_seqmeth,
+    .tp_iter = NodeView_iter,
+    .tp_iternext = NodeView_iternext,
 };

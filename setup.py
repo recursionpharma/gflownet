@@ -27,7 +27,14 @@ def _get_next_version():
 
 ext = [
     Extension(
-        name="gflownet._C", sources=["src/C/main.c", "src/C/node_view.c", "src/C/graph_def.c", "src/C/edge_view.c"]
+        name="gflownet._C",
+        sources=[
+            "src/C/main.c",
+            "src/C/node_view.c",
+            "src/C/graph_def.c",
+            "src/C/edge_view.c",
+            "src/C/mol_graph_to_Data.c",
+        ],
     )
 ]
 setup(name="gflownet", version=_get_next_version(), ext_modules=ext)

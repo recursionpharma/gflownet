@@ -61,16 +61,20 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         """
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
-            "v": atoms + ["*"],
+            "v": atoms,  # + ["*"],
             "chi": chiral_types,
             "charge": charges,
             "expl_H": expl_H_range,
             "no_impl": [False, True],
-            "fill_wildcard": [None] + atoms,  # default is, there is nothing
+            # "fill_wildcard": [None] + atoms,  # default is, there is nothing
+            # Note to self, there's a much simpler fill_wildcard impl, make '*' a possible 'v' attribute
+            # but prevent the agent from using it in AddNode. Prevent the agent from setting fill_wildcard
+            # if v != '*'. Bam, no negative attribute weirdness
         }
         self.num_rw_feat = num_rw_feat
         self.max_nodes = max_nodes
         self.max_edges = max_edges
+        self._graph_cls = Graph
 
         self.default_wildcard_replacement = "C"
         self.negative_attrs = ["fill_wildcard"]
@@ -396,7 +400,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def mol_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
-        g = Graph()
+        g = self._graph_cls()
         mol = Mol(mol)  # Make a copy
         if not self.allow_explicitly_aromatic:
             # If we disallow aromatic bonds, ask rdkit to Kekulize mol and remove aromatic bond flags
