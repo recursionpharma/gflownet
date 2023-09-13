@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from functools import cached_property
 from typing import Any, Dict, List, Optional, Tuple, Union
+import warnings
 
 import networkx as nx
 import numpy as np
@@ -14,6 +15,14 @@ from networkx.algorithms.isomorphism import is_isomorphic
 from rdkit.Chem import Mol
 from torch_scatter import scatter, scatter_max
 
+try:
+    from gflownet._C import mol_graph_to_Data, Graph as C_Graph, GraphDef
+
+    C_Graph_available = True
+except ImportError:
+    warnings.warn("Could not import mol_graph_to_Data, Graph, GraphDef from _C, using pure python implementation")
+    C_Graph_available = False
+
 
 class Graph(nx.Graph):
     # Subclassing nx.Graph for debugging purposes
@@ -22,6 +31,9 @@ class Graph(nx.Graph):
 
     def __repr__(self):
         return f'<{list(self.nodes)}, {list(self.edges)}, {list(self.nodes[i]["v"] for i in self.nodes)}>'
+
+    def bridges(self):
+        return list(nx.bridges(self))
 
 
 def graph_without_edge(g, e):
@@ -120,7 +132,7 @@ class GraphBuildingEnv:
         - we can generate a legal action for any attribute that isn't a default one.
     """
 
-    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
+    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True, graph_def=None):
         """A graph building environment instance
 
         Parameters
@@ -136,8 +148,11 @@ class GraphBuildingEnv:
         self.allow_add_edge = allow_add_edge
         self.allow_node_attr = allow_node_attr
         self.allow_edge_attr = allow_edge_attr
+        self.graph_def = graph_def
 
     def new(self):
+        if C_Graph_available:
+            return C_Graph(self.graph_def)
         return Graph()
 
     def step(self, g: Graph, action: GraphAction) -> Graph:
@@ -296,17 +311,22 @@ class GraphBuildingEnv:
             return len(self.parents(g))
         c = 0
         deg = [g.degree[i] for i in range(len(g.nodes))]
+        has_connected_edge_attr = [False] * len(g.nodes)
+        bridges = g.bridges()
         for a, b in g.edges:
             if deg[a] > 1 and deg[b] > 1 and len(g.edges[(a, b)]) == 0:
                 # Can only remove edges connected to non-leaves and without
                 # attributes (the agent has to remove the attrs, then remove
                 # the edge). Removal cannot disconnect the graph.
-                new_g = graph_without_edge(g, (a, b))
-                if nx.algorithms.is_connected(new_g):
+                if (a, b) not in bridges and (b, a) not in bridges:
                     c += 1
-            c += len(g.edges[(a, b)])  # One action per edge attr
+            num_attrs = len(g.edges[(a, b)])
+            c += num_attrs  # One action per edge attr
+            if num_attrs > 0:
+                has_connected_edge_attr[a] = True
+                has_connected_edge_attr[b] = True
         for i in g.nodes:
-            if deg[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
+            if deg[i] == 1 and len(g.nodes[i]) == 1 and not has_connected_edge_attr[i]:
                 c += 1
             c += len(g.nodes[i]) - 1  # One action per node attr, except 'v'
             if len(g.nodes) == 1 and len(g.nodes[i]) == 1:

@@ -49,7 +49,7 @@ int get_edge_index_from_pos(Graph *g, int u_pos, int v_pos);
 
 PyObject *mol_graph_to_Data(PyObject *self, PyObject *args);
 
-typedef struct {
+typedef struct NodeView {
     PyObject_HEAD;
     Graph *graph;
     int index;
@@ -57,13 +57,20 @@ typedef struct {
 
 extern PyTypeObject NodeViewType;
 
-typedef struct {
+typedef struct EdgeView {
     PyObject_HEAD;
     Graph *graph;
     int index;
 } EdgeView;
 
 extern PyTypeObject EdgeViewType;
+
+typedef struct {
+    PyObject_HEAD;
+    Graph *graph;
+} DegreeView;
+
+extern PyTypeObject DegreeViewType;
 
 #define SELF_SET(v)                                                                                                    \
     {                                                                                                                  \

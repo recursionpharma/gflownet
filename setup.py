@@ -30,9 +30,10 @@ ext = [
         name="gflownet._C",
         sources=[
             "src/C/main.c",
-            "src/C/node_view.c",
             "src/C/graph_def.c",
+            "src/C/node_view.c",
             "src/C/edge_view.c",
+            "src/C/degree_view.c",
             "src/C/mol_graph_to_Data.c",
         ],
     )

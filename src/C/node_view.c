@@ -97,12 +97,29 @@ static int NodeView_contains(PyObject *_self, PyObject *v) {
     return 1;
 }
 
+static Py_ssize_t NodeView_len(PyObject *_self) {
+    NodeView *self = (NodeView *)_self;
+    if (self->index != -1) {
+        // This is inefficient, much like a lot of this codebase... but it's in C. For our graph sizes
+        // it's not a big deal (and unsurprisingly, it's fast)
+        Py_ssize_t num_attrs = 0;
+        for (int i = 0; i < self->graph->num_node_attrs; i++) {
+            if (self->graph->node_attrs[3 * i] == self->index) {
+                num_attrs++;
+            }
+        }
+        return num_attrs;
+    }
+    return self->graph->num_nodes;
+}
+
 PyObject *NodeView_iter(PyObject *_self) {
     NodeView *self = (NodeView *)_self;
     if (self->index != -1) {
         PyErr_SetString(PyExc_TypeError, "A bound NodeView is not iterable");
         return NULL;
     }
+    Py_INCREF(_self); // We have to return a new reference, not a borrowed one
     return _self;
 }
 
@@ -115,6 +132,21 @@ PyObject *NodeView_iternext(PyObject *_self) {
     return PyLong_FromLong(self->graph->nodes[self->index]);
 }
 
+PyObject *NodeView_get(PyObject *_self, PyObject *args) {
+    PyObject *key;
+    PyObject *default_value = Py_None;
+    if (!PyArg_ParseTuple(args, "O|O", &key, &default_value)) {
+        return NULL;
+    }
+    PyObject *res = NodeView_getitem(_self, key);
+    if (res == NULL) {
+        PyErr_Clear();
+        Py_INCREF(default_value);
+        return default_value;
+    }
+    return res;
+}
+
 static PyMappingMethods NodeView_mapmeth = {
     .mp_subscript = NodeView_getitem,
     .mp_ass_subscript = NodeView_setitem,
@@ -122,10 +154,11 @@ static PyMappingMethods NodeView_mapmeth = {
 
 static PySequenceMethods NodeView_seqmeth = {
     .sq_contains = NodeView_contains,
+    .sq_length = NodeView_len,
 };
 
 static PyMethodDef NodeView_methods[] = {
-    {NULL} /* Sentinel */
+    {"get", (PyCFunction)NodeView_get, METH_VARARGS, "dict-like get"}, {NULL} /* Sentinel */
 };
 
 PyTypeObject NodeViewType = {

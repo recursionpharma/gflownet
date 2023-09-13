@@ -107,6 +107,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     }
 
     int node_feat_shape = maxi(1, g->num_nodes);
+    int is_float[] = {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int shapes[13][2] = {
         {node_feat_shape, gd->num_node_dim},            // node_Feat
         {2, g->num_edges * 2},                          // edge_index
@@ -126,7 +127,8 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     Py_ssize_t num_items = 0;
     for (int i = 0; i < 13; i++) {
         offsets[i] = num_items;
-        num_items += shapes[i][0] * shapes[i][1];
+        // we need twice the space for longs
+        num_items += shapes[i][0] * shapes[i][1] * (2 - is_float[i]);
     }
     // Allocate the memory for the Data object in a way we can return it to Python
     // (and let Python free it when it's done)
@@ -135,9 +137,9 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     memset(dataptr, 0, num_items * sizeof(float));
 
     float *node_feat = (float *)(dataptr + offsets[0]);
-    int *edge_index = (int *)(dataptr + offsets[1]);
+    long *edge_index = (long *)(dataptr + offsets[1]);
     float *edge_feat = (float *)(dataptr + offsets[2]);
-    int *non_edge_index = (int *)(dataptr + offsets[3]);
+    long *non_edge_index = (long *)(dataptr + offsets[3]);
     float *stop_mask = (float *)(dataptr + offsets[4]);
     float *add_node_mask = (float *)(dataptr + offsets[5]);
     float *set_node_attr_mask = (float *)(dataptr + offsets[6]);
@@ -158,6 +160,8 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     int *_edge_attrs[1] = {bond_val};
     if (g->num_nodes == 0) {
         node_feat[gd->num_node_dim - 1] = 1;
+        memsetf(add_node_mask, 1, gd->num_new_node_values);
+        remove_node_mask[0] = 1;
     }
     for (int i = 0; i < g->num_nodes; i++) {
         if (g->degrees[i] <= 1 && !has_connecting_edge_attr_set[i]) {
@@ -202,7 +206,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                 if (used_valences[g->edges[2 * i]] + bond_valence[k] > max_valence[g->edges[2 * i]] ||
                     used_valences[g->edges[2 * i + 1]] + bond_valence[k] > max_valence[g->edges[2 * i + 1]])
                     continue;
-                set_edge_attr_mask[i * gd->num_settable_edge_attrs + logit_slice_start + k] = 1;
+                set_edge_attr_mask[i * gd->num_edge_attr_logits + logit_slice_start + k] = 1;
             }
         }
         edge_index[2 * i] = g->edges[2 * i];
@@ -224,12 +228,13 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     }
 
     *stop_mask = g->num_nodes > 0 ? 1 : 0;
-    return data;
+
     // The following lines take about 80% of the runtime of the function on ~50 node graphs :"(
     PyObject *res = PyDict_New();
     PyObject *frombuffer = PyObject_GetAttrString(torch_module, "frombuffer");
+    PyObject *empty = PyObject_GetAttrString(torch_module, "empty");
     PyObject *dtype_f32 = PyObject_GetAttrString(torch_module, "float32");
-    PyObject *dtype_i32 = PyObject_GetAttrString(torch_module, "int32");
+    PyObject *dtype_i64 = PyObject_GetAttrString(torch_module, "int64");
     PyObject *fb_args = PyTuple_Pack(1, data);
     PyObject *fb_kwargs = PyDict_New();
     char *names[] = {"x",
@@ -245,12 +250,24 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                      "remove_node_attr_mask",
                      "remove_edge_mask",
                      "remove_edge_attr_mask"};
-    int is_float[] = {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    int do_del_kw = 0;
     for (int i = 0; i < 13; i++) {
-        PyDict_SetItemString(fb_kwargs, "dtype", is_float[i] ? dtype_f32 : dtype_i32);
-        PyDict_SetItemString(fb_kwargs, "offset", PyLong_FromLong(offsets[i] * sizeof(float)));
-        PyDict_SetItemString(fb_kwargs, "count", PyLong_FromLong(shapes[i][0] * shapes[i][1]));
-        PyObject *tensor = PyObject_Call(frombuffer, fb_args, fb_kwargs);
+        int i_num_items = shapes[i][0] * shapes[i][1];
+        PyObject *tensor;
+        PyDict_SetItemString(fb_kwargs, "dtype", is_float[i] ? dtype_f32 : dtype_i64);
+        if (i_num_items == 0) {
+            if (do_del_kw) {
+                PyDict_DelItemString(fb_kwargs, "offset");
+                PyDict_DelItemString(fb_kwargs, "count");
+                do_del_kw = 0;
+            }
+            tensor = PyObject_Call(empty, PyTuple_Pack(1, PyLong_FromLong(0)), fb_kwargs);
+        } else {
+            PyDict_SetItemString(fb_kwargs, "offset", PyLong_FromLong(offsets[i] * sizeof(float)));
+            PyDict_SetItemString(fb_kwargs, "count", PyLong_FromLong(i_num_items));
+            do_del_kw = 1;
+            tensor = PyObject_Call(frombuffer, fb_args, fb_kwargs);
+        }
         PyObject *reshaped_tensor = PyObject_CallMethod(tensor, "view", "ii", shapes[i][0], shapes[i][1]);
         PyDict_SetItemString(res, names[i], reshaped_tensor);
         Py_DECREF(tensor);
@@ -258,7 +275,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     }
     Py_DECREF(frombuffer);
     Py_DECREF(dtype_f32);
-    Py_DECREF(dtype_i32);
+    Py_DECREF(dtype_i64);
     Py_DECREF(fb_args);
     Py_DECREF(fb_kwargs);
     Py_DECREF(data);

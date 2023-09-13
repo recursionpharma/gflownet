@@ -1,8 +1,11 @@
+import copy
 import torch
 from gflownet._C import Graph, GraphDef, mol_graph_to_Data
 import networkx as nx
-from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.envs.mol_building_env import MolBuildingEnvContext, Graph as PyGraph
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphAction, GraphActionType
 from rdkit import Chem
+from rdkit.Chem.rdchem import BondType, ChiralType
 
 
 def test_Graph():
@@ -18,12 +21,9 @@ def test_Graph():
     g = Graph(gdef)
     g.add_node(0, v=20, q="a")
     g.add_node(4, v=21)
-    print(g.nodes[4]["v"], "should be 21")
+    assert g.nodes[4]["v"] == 21
 
     g.add_edge(0, 4, z="foo")
-    print(g)
-    print(g.nodes)
-    print(list(g))
     assert 0 in g.nodes
     assert 1 not in g.nodes
     assert 4 in g.nodes
@@ -35,9 +35,6 @@ def test_Graph():
     g.nodes[4]["q"] = "b"
     assert g.nodes[0]["q"] == "a"
     assert g.nodes[4]["q"] == "b"
-    print(g.edges)
-    print(g.edges[0, 4])
-    print(g.edges[4, 0]["z"])
     assert g.edges[0, 4]["z"] == "foo"
     g.edges[0, 4]["z"] = "bar"
     assert g.edges[0, 4]["z"] == "bar"
@@ -47,12 +44,8 @@ def test_Graph():
     g.edges[4, 1]["z"] = "bar"
     assert "z" in g.edges[1, 4]
     assert g.edges[1, 4]["z"] == "bar"
-    print("Doing bridges now")
-    print(b)
-    print(g.bridges())
 
     gnx = nx.generators.random_graphs.connected_watts_strogatz_graph(60, 3, 0.2, seed=42)
-    # gnx = nx.generators.random_graphs.gnp_random_graph(60, 0.08, seed=43)
     assert nx.is_connected(gnx)
     g = Graph(GraphDef({"v": [0]}, {}))
     for i in gnx.nodes:
@@ -60,6 +53,10 @@ def test_Graph():
     for i, j in gnx.edges:
         g.add_edge(i, j)
     assert set([tuple(sorted(i)) for i in nx.bridges(gnx)]) == set([tuple(sorted(i)) for i in g.bridges()])
+    assert sorted(gnx.edges) == sorted(g.edges)
+
+
+def timing_tests():
     # print("bridges", list(nx.bridges(gnx)))
     # print("bridges", g.bridges())
     # print(list(gnx.edges))
@@ -119,5 +116,63 @@ def test_Graph2():
         print("C", t1 - t0)
 
 
+def test_Graph3():
+    ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
+    moldef = GraphDef(ctx.atom_attr_values, ctx.bond_attr_values)
+    # ctx._graph_cls = lambda: Graph(moldef)
+    mol = Graph(moldef)
+    data = ctx.graph_to_Data(mol)
+    print(data)
+    print(data.x, data.edge_index, data.edge_attr, data.add_node_mask, data.set_node_attr_mask, data.remove_node_mask)
+
+    ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
+    ctx._graph_cls = PyGraph
+    import gflownet.envs.mol_building_env as mbe
+
+    mbe.C_Graph_available = False
+    mol = PyGraph()
+    data = ctx.graph_to_Data(mol)
+    print(data)
+    print(data.x, data.edge_index, data.edge_attr, data.add_node_mask, data.set_node_attr_mask, data.remove_node_mask)
+
+
+def test_Graph_step():
+    env = GraphBuildingEnv()
+    ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
+    env.graph_def = ctx.graph_def
+    g = Graph(env.graph_def)  # env.new()
+    g.add_node(0, v="C")
+    print(g.nodes[0])
+    print(list(g.nodes))
+    g = env.new()
+    g = env.step(g, GraphAction(GraphActionType.AddNode, source=0, value="C"))
+    for i in g.nodes:
+        print(i, g.nodes[i])
+    print(list(g.nodes), list(g.edges))
+    g = env.new().copy()
+    g = env.step(g, GraphAction(GraphActionType.AddNode, source=0, value="C"))
+    print(list(g.nodes), list(g.edges))
+    gp = copy.deepcopy(g)
+
+    gp.add_node(1, v="C")
+    gp.add_node(2, v="N")
+    gp.add_node(3, v="O")
+    gp.add_node(4, v="F")
+    gp.add_edge(0, 1)
+    gp.add_edge(1, 2, type=BondType.DOUBLE)
+    gp.add_edge(0, 3)
+    gp.add_edge(3, 4)
+    gp.remove_edge(3, 4)
+    gp.remove_node(4)
+    n, e = list(gp.nodes), list(gp.edges)
+    print(n, e)
+    g = gp
+    mol = ctx.graph_to_mol(g)
+    data = ctx.graph_to_Data(g)
+    import pdb
+
+    pdb.set_trace()
+
+
 if __name__ == "__main__":
-    test_Graph2()
+    test_Graph_step()

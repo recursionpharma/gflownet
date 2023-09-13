@@ -33,7 +33,10 @@ static int Graph_init(Graph *self, PyObject *args, PyObject *kwds) {
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &graph_def))
         return -1;
-
+    if (PyObject_TypeCheck(graph_def, &GraphDefType) == 0) {
+        PyErr_SetString(PyExc_TypeError, "Graph: graph_def must be a GraphDef");
+        return -1;
+    }
     if (graph_def) {
         SELF_SET(graph_def);
     }
@@ -43,6 +46,15 @@ static int Graph_init(Graph *self, PyObject *args, PyObject *kwds) {
 static PyMemberDef Graph_members[] = {
     {"graph_def", T_OBJECT_EX, offsetof(Graph, graph_def), 0, "node values"}, {NULL} /* Sentinel */
 };
+
+int graph_get_node_pos(Graph *g, int node_id) {
+    for (int i = 0; i < g->num_nodes; i++) {
+        if (g->nodes[i] == node_id) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 static PyObject *Graph_add_node(Graph *self, PyObject *args, PyObject *kwds) {
     PyObject *node = NULL;
@@ -54,11 +66,9 @@ static PyObject *Graph_add_node(Graph *self, PyObject *args, PyObject *kwds) {
             return NULL;
         }
         int node_id = PyLong_AsLong(node);
-        for (int i = 0; i < self->num_nodes; i++) {
-            if (self->nodes[i] == node_id) {
-                PyErr_SetString(PyExc_KeyError, "node already exists");
-                return NULL;
-            }
+        if (graph_get_node_pos(self, node_id) >= 0) {
+            PyErr_SetString(PyExc_KeyError, "node already exists");
+            return NULL;
         }
         int node_pos = self->num_nodes;
         self->num_nodes++;
@@ -208,8 +218,8 @@ PyObject *Graph_bridges(PyObject *_self, PyObject *args) {
     Graph *self = (Graph *)_self;
     // from:
     // https://cp-algorithms.com/graph/bridge-searching.html
-    int n = self->num_nodes; // number of nodes
-    int **adj = malloc(n * sizeof(int *));
+    const int n = self->num_nodes; // number of nodes
+    int *adj[n];
     for (int i = 0; i < n; i++) {
         adj[i] = malloc(self->degrees[i] * sizeof(int));
     }
@@ -259,23 +269,157 @@ PyObject *Graph_bridges(PyObject *_self, PyObject *args) {
     for (int i = 0; i < n; i++) {
         free(adj[i]);
     }
-    free(adj);
     return 0; // success
+}
+
+PyObject *Graph_copy(PyObject *_self, PyObject *unused_args) {
+    Graph *self = (Graph *)_self;
+    PyObject *args = PyTuple_Pack(1, self->graph_def);
+    Graph *obj = (Graph *)PyObject_CallObject((PyObject *)&GraphType, args);
+    Py_DECREF(args);
+    obj->num_nodes = self->num_nodes;
+    obj->num_edges = self->num_edges;
+    obj->nodes = malloc(self->num_nodes * sizeof(int));
+    memcpy(obj->nodes, self->nodes, self->num_nodes * sizeof(int));
+    obj->edges = malloc(self->num_edges * 2 * sizeof(int));
+    memcpy(obj->edges, self->edges, self->num_edges * 2 * sizeof(int));
+    obj->num_node_attrs = self->num_node_attrs;
+    obj->num_edge_attrs = self->num_edge_attrs;
+    obj->node_attrs = malloc(self->num_node_attrs * 3 * sizeof(int));
+    memcpy(obj->node_attrs, self->node_attrs, self->num_node_attrs * 3 * sizeof(int));
+    obj->edge_attrs = malloc(self->num_edge_attrs * 3 * sizeof(int));
+    memcpy(obj->edge_attrs, self->edge_attrs, self->num_edge_attrs * 3 * sizeof(int));
+    obj->degrees = malloc(self->num_nodes * sizeof(int));
+    memcpy(obj->degrees, self->degrees, self->num_nodes * sizeof(int));
+    return (PyObject *)obj;
+}
+
+PyObject *Graph_has_edge(PyObject *_self, PyObject *args) {
+    int u, v;
+    if (!PyArg_ParseTuple(args, "ii", &u, &v))
+        return NULL;
+    if (get_edge_index((Graph *)_self, u, v) >= 0) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
+
+PyObject *Graph_remove_node(PyObject *_self, PyObject *args) {
+    Graph *self = (Graph *)_self;
+    int u;
+    if (!PyArg_ParseTuple(args, "i", &u))
+        return NULL;
+    int pos = graph_get_node_pos(self, u);
+    if (pos < 0) {
+        PyErr_SetString(PyExc_KeyError, "node not found");
+        return NULL;
+    }
+    // Check if any edge has this node
+    for (int i = 0; i < self->num_edges; i++) {
+        if (self->edges[i * 2] == pos || self->edges[i * 2 + 1] == pos) {
+            PyErr_SetString(PyExc_KeyError, "node has edges");
+            return NULL;
+        }
+    }
+    // Remove the node
+    int *old_nodes = self->nodes;
+    self->nodes = malloc((self->num_nodes - 1) * sizeof(int));
+    memcpy(self->nodes, old_nodes, pos * sizeof(int));
+    memcpy(self->nodes + pos, old_nodes + pos + 1, (self->num_nodes - pos - 1) * sizeof(int));
+    free(old_nodes);
+    int *old_degrees = self->degrees;
+    self->degrees = malloc((self->num_nodes - 1) * sizeof(int));
+    memcpy(self->degrees, old_degrees, pos * sizeof(int));
+    memcpy(self->degrees + pos, old_degrees + pos + 1, (self->num_nodes - pos - 1) * sizeof(int));
+    free(old_degrees);
+    self->num_nodes--;
+    // Remove the node attributes
+    int *old_node_attrs = self->node_attrs;
+    int num_rem = 0;
+    for (int i = 0; i < self->num_node_attrs; i++) {
+        if (self->node_attrs[i * 3] == pos) {
+            num_rem++;
+        }
+    }
+    if (num_rem) {
+        self->node_attrs = malloc((self->num_node_attrs - num_rem) * 3 * sizeof(int));
+        int i, j = 0;
+        for (i = 0; i < self->num_node_attrs; i++) {
+            if (old_node_attrs[i * 3] == pos) {
+                memcpy(self->node_attrs + j * 3, old_node_attrs + j * 3, (i - j) * 3 * sizeof(int));
+                j = i + 1;
+            }
+        }
+        memcpy(self->node_attrs + j * 3, old_node_attrs + j * 3, (i - j) * 3 * sizeof(int));
+        self->num_node_attrs -= num_rem;
+        free(old_node_attrs);
+    }
+    Py_RETURN_NONE;
+}
+
+PyObject *Graph_remove_edge(PyObject *_self, PyObject *args) {
+    Graph *self = (Graph *)_self;
+    int u, v;
+    if (!PyArg_ParseTuple(args, "ii", &u, &v))
+        return NULL;
+    int edge_index = get_edge_index((Graph *)_self, u, v);
+    if (edge_index < 0) {
+        PyErr_SetString(PyExc_KeyError, "edge not found");
+        return NULL;
+    }
+    // Decrease degree
+    self->degrees[self->edges[edge_index * 2]]--;
+    self->degrees[self->edges[edge_index * 2 + 1]]--;
+    // Remove the edge
+    int *old_edges = self->edges;
+    self->edges = malloc((self->num_edges - 1) * 2 * sizeof(int));
+    memcpy(self->edges, old_edges, edge_index * 2 * sizeof(int));
+    memcpy(self->edges + edge_index * 2, old_edges + edge_index * 2 + 2,
+           (self->num_edges - edge_index - 1) * 2 * sizeof(int));
+    free(old_edges);
+    self->num_edges--;
+    // Remove the edge attributes
+    int *old_edge_attrs = self->edge_attrs;
+    int num_rem = 0;
+    for (int i = 0; i < self->num_edge_attrs; i++) {
+        if (self->edge_attrs[i * 3] == edge_index) {
+            num_rem++;
+        }
+    }
+    if (num_rem) {
+        self->edge_attrs = malloc((self->num_edge_attrs - num_rem) * 3 * sizeof(int));
+        int i, j = 0;
+        for (i = 0; i < self->num_edge_attrs; i++) {
+            if (old_edge_attrs[i * 3] == edge_index) {
+                memcpy(self->edge_attrs + j * 3, old_edge_attrs + j * 3, (i - j) * 3 * sizeof(int));
+                j = i + 1;
+            }
+        }
+        memcpy(self->edge_attrs + j * 3, old_edge_attrs + j * 3, (i - j) * 3 * sizeof(int));
+        self->num_edge_attrs -= num_rem;
+        free(old_edge_attrs);
+    }
+    Py_RETURN_NONE;
 }
 
 static PyMethodDef Graph_methods[] = {
     {"add_node", (PyCFunction)Graph_add_node, METH_VARARGS | METH_KEYWORDS, "Add a node"},
     {"add_edge", (PyCFunction)Graph_add_edge, METH_VARARGS | METH_KEYWORDS, "Add an edge"},
+    {"has_edge", (PyCFunction)Graph_has_edge, METH_VARARGS, "Check if an edge is present"},
+    {"remove_node", (PyCFunction)Graph_remove_node, METH_VARARGS, "Remove a node"},
+    {"remove_edge", (PyCFunction)Graph_remove_edge, METH_VARARGS, "Remove an edge"},
     {"is_directed", (PyCFunction)Graph_isdirected, METH_NOARGS, "Is the graph directed?"},
     {"is_multigraph", (PyCFunction)Graph_isdirected, METH_NOARGS, "Is the graph a multigraph?"},
     {"bridges", (PyCFunction)Graph_bridges, METH_NOARGS, "Find the bridges of the graph"},
+    {"copy", (PyCFunction)Graph_copy, METH_VARARGS, "Copy the graph"},
+    {"__deepcopy__", (PyCFunction)Graph_copy, METH_VARARGS, "Copy the graph"},
     {NULL} /* Sentinel */
 };
 
 static PyObject *Graph_getnodes(Graph *self, void *closure) {
     // Return a new NodeView
     PyObject *args = PyTuple_Pack(1, self);
-    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args);
+    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args); // new ref
     Py_DECREF(args);
     return obj;
 }
@@ -288,9 +432,17 @@ static PyObject *Graph_getedges(Graph *self, void *closure) {
     return obj;
 }
 
+static PyObject *Graph_getdegree(Graph *self, void *closure) {
+    PyObject *args = PyTuple_Pack(1, self);
+    PyObject *obj = PyObject_CallObject((PyObject *)&DegreeViewType, args);
+    Py_DECREF(args);
+    return obj;
+}
+
 static PyGetSetDef Graph_getsetters[] = {
     {"nodes", (getter)Graph_getnodes, NULL, "nodes", NULL},
     {"edges", (getter)Graph_getedges, NULL, "edges", NULL},
+    {"degree", (getter)Graph_getdegree, NULL, "degree", NULL},
     {NULL} /* Sentinel */
 };
 
@@ -299,11 +451,10 @@ static PyObject *Graph_contains(Graph *self, PyObject *v) {
         PyErr_SetString(PyExc_TypeError, "Graph.__contains__ only accepts integers");
         return NULL;
     }
-    int index = PyLong_AsLong(v);
-    for (int i = 0; i < self->num_nodes; i++) {
-        if (self->nodes[i] == index) {
-            Py_RETURN_TRUE;
-        }
+    int node_id = PyLong_AsLong(v);
+    int pos = graph_get_node_pos(self, node_id);
+    if (pos >= 0) {
+        Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
 }
@@ -317,15 +468,14 @@ static PySequenceMethods Graph_seqmeth = {
 
 static PyObject *Graph_iter(PyObject *self) {
     PyObject *args = PyTuple_Pack(1, self);
-    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args);
+    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args); // new ref
     Py_DECREF(args);
-    printf("iter created %p -> %p\n", self, obj);
     return obj;
 }
 
 static PyObject *Graph_getitem(PyObject *self, PyObject *key) {
     PyObject *args = PyTuple_Pack(2, self, key);
-    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args);
+    PyObject *obj = PyObject_CallObject((PyObject *)&NodeViewType, args); // new ref
     Py_DECREF(args);
     return obj;
 }
@@ -352,7 +502,7 @@ PyTypeObject GraphType = {
 
 PyObject *Graph_getnodeattr(Graph *self, int index, PyObject *k) {
     GraphDef *gt = (GraphDef *)self->graph_def;
-    PyObject *value_list = PyDict_GetItem(gt->node_values, k);
+    PyObject *value_list = PyDict_GetItem(gt->node_values, k); // borrowed ref
     if (value_list == NULL) {
         PyErr_SetString(PyExc_KeyError, "key not found");
         return NULL;
@@ -372,7 +522,10 @@ PyObject *Graph_getnodeattr(Graph *self, int index, PyObject *k) {
 
     for (int i = 0; i < self->num_node_attrs; i++) {
         if (self->node_attrs[i * 3] == true_node_index && self->node_attrs[i * 3 + 1] == attr_index) {
-            return PyList_GetItem(value_list, self->node_attrs[i * 3 + 2]);
+            // borrowed ref so we have to increase its refcnt because we are returning it
+            PyObject *r = PyList_GetItem(value_list, self->node_attrs[i * 3 + 2]);
+            Py_INCREF(r);
+            return r;
         }
     }
     PyErr_SetString(PyExc_KeyError, "attribute not set for this node");
@@ -391,6 +544,9 @@ PyObject *Graph_setnodeattr(Graph *self, int index, PyObject *k, PyObject *v) {
     if (true_node_index == -1) {
         PyErr_SetString(PyExc_KeyError, "node not found");
         return NULL;
+    }
+    if (v == NULL) {
+        printf("del node attempted\n");
     }
     PyObject *node_values = PyDict_GetItem(gt->node_values, k);
     if (node_values == NULL) {
@@ -421,7 +577,7 @@ PyObject *Graph_setnodeattr(Graph *self, int index, PyObject *k, PyObject *v) {
 
 PyObject *Graph_getedgeattr(Graph *self, int index, PyObject *k) {
     GraphDef *gt = (GraphDef *)self->graph_def;
-    PyObject *value_list = PyDict_GetItem(gt->edge_values, k);
+    PyObject *value_list = PyDict_GetItem(gt->edge_values, k); // borrowed ref
     if (value_list == NULL) {
         PyErr_SetString(PyExc_KeyError, "key not found");
         return NULL;
@@ -436,7 +592,10 @@ PyObject *Graph_getedgeattr(Graph *self, int index, PyObject *k) {
 
     for (int i = 0; i < self->num_edge_attrs; i++) {
         if (self->edge_attrs[i * 3] == index && self->edge_attrs[i * 3 + 1] == attr_index) {
-            return PyList_GetItem(value_list, self->edge_attrs[i * 3 + 2]);
+            // borrowed ref so we have to increase its refcnt because we are returning it
+            PyObject *r = PyList_GetItem(value_list, self->edge_attrs[i * 3 + 2]);
+            Py_INCREF(r);
+            return r;
         }
     }
     PyErr_SetString(PyExc_KeyError, "attribute not set for this node");
@@ -512,8 +671,8 @@ PyMODINIT_FUNC PyInit__C(void) {
         Py_DECREF(m);
         return NULL;
     }
-    PyTypeObject *types[] = {&GraphType, &GraphDefType, &NodeViewType, &EdgeViewType};
-    char *names[] = {"Graph", "GraphDef", "NodeView", "EdgeView"};
+    PyTypeObject *types[] = {&GraphType, &GraphDefType, &NodeViewType, &EdgeViewType, &DegreeViewType};
+    char *names[] = {"Graph", "GraphDef", "NodeView", "EdgeView", "DegreeView"};
     for (int i = 0; i < (int)(sizeof(types) / sizeof(PyTypeObject *)); i++) {
         if (PyType_Ready(types[i]) < 0) {
             Py_DECREF(m);

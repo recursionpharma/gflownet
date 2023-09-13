@@ -92,9 +92,6 @@ static PyObject *EdgeView_getitem(PyObject *_self, PyObject *k) {
     EdgeView *self = (EdgeView *)_self;
     if (self->index < 0) {
         int edge_idx = get_edge_index_py(self->graph, k);
-        // printf("EdgeView_getitem: %d %d\n", self->index, edge_idx);
-        // PyObject_Print(k, stdout, 0);
-        // printf("\n");
         if (edge_idx < 0) {
             if (edge_idx == -2)
                 PyErr_SetString(PyExc_KeyError, "Edge not found");
@@ -127,6 +124,57 @@ static int EdgeView_contains(PyObject *_self, PyObject *v) {
     }
     return 1;
 }
+PyObject *EdgeView_iter(PyObject *_self) {
+    EdgeView *self = (EdgeView *)_self;
+    if (self->index != -1) {
+        PyErr_SetString(PyExc_TypeError, "A bound EdgeView is not iterable");
+        return NULL;
+    }
+    Py_INCREF(_self); // We have to return a new reference, not a borrowed one
+    return _self;
+}
+
+PyObject *EdgeView_iternext(PyObject *_self) {
+    EdgeView *self = (EdgeView *)_self;
+    self->index++;
+    if (self->index >= self->graph->num_edges) {
+        return NULL;
+    }
+    int u = self->graph->nodes[self->graph->edges[2 * self->index]];
+    int v = self->graph->nodes[self->graph->edges[2 * self->index + 1]];
+    return PyTuple_Pack(2, PyLong_FromLong(u), PyLong_FromLong(v));
+}
+
+Py_ssize_t EdgeView_len(PyObject *_self) {
+    EdgeView *self = (EdgeView *)_self;
+    if (self->index != -1) {
+        // This is inefficient, much like a lot of this codebase... but it's in C. For our graph sizes
+        // it's not a big deal (and unsurprisingly, it's fast)
+        Py_ssize_t num_attrs = 0;
+        for (int i = 0; i < self->graph->num_edge_attrs; i++) {
+            if (self->graph->edge_attrs[3 * i] == self->index) {
+                num_attrs++;
+            }
+        }
+        return num_attrs;
+    }
+    return self->graph->num_edges;
+}
+
+PyObject *EdgeView_get(PyObject *_self, PyObject *args) {
+    PyObject *key;
+    PyObject *default_value = Py_None;
+    if (!PyArg_ParseTuple(args, "O|O", &key, &default_value)) {
+        return NULL;
+    }
+    PyObject *res = EdgeView_getitem(_self, key);
+    if (res == NULL) {
+        PyErr_Clear();
+        Py_INCREF(default_value);
+        return default_value;
+    }
+    return res;
+}
 
 static PyMappingMethods EdgeView_mapmeth = {
     .mp_subscript = EdgeView_getitem,
@@ -135,10 +183,11 @@ static PyMappingMethods EdgeView_mapmeth = {
 
 static PySequenceMethods EdgeView_seqmeth = {
     .sq_contains = EdgeView_contains,
+    .sq_length = EdgeView_len,
 };
 
 static PyMethodDef EdgeView_methods[] = {
-    {NULL} /* Sentinel */
+    {"get", (PyCFunction)EdgeView_get, METH_VARARGS, "dict-like get"}, {NULL} /* Sentinel */
 };
 
 PyTypeObject EdgeViewType = {
@@ -154,4 +203,6 @@ PyTypeObject EdgeViewType = {
     .tp_methods = EdgeView_methods,
     .tp_as_mapping = &EdgeView_mapmeth,
     .tp_as_sequence = &EdgeView_seqmeth,
+    .tp_iter = EdgeView_iter,
+    .tp_iternext = EdgeView_iternext,
 };
