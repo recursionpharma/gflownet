@@ -36,6 +36,9 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     int chi_idx = PyLong_AsLong(PyDict_GetItemString(gd->node_keypos, "chi"));
     int noImpl_val[g->num_nodes];
     int noImpl_idx = PyLong_AsLong(PyDict_GetItemString(gd->node_keypos, "no_impl"));
+    PyObject *N_str = PyUnicode_FromString("N");
+    Py_ssize_t nitro_attr_value = PySequence_Index(PyDict_GetItemString(gd->node_values, "v"), N_str);
+    Py_DECREF(N_str);
     for (int i = 0; i < g->num_nodes; i++) {
         used_valences[i] = max_valence[i] = v_val[i] = charge_val[i] = explH_val[i] = chi_val[i] = noImpl_val[i] = 0;
     }
@@ -83,6 +86,10 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     }
     char can_create_edge[g->num_nodes][g->num_nodes];
     for (int i = 0; i < g->num_nodes; i++) {
+        // We'll hijack this loop over nodes to correct Nitrogen atoms
+        if (v_val[i] == nitro_attr_value && charge_val[i] == 1) {
+            max_valence[i] = 5;
+        }
         for (int j = 0; j < g->num_nodes; j++) {
             can_create_edge[i][j] =
                 (used_valences[i] + 1 <= max_valence[i]) && (used_valences[j] + 1 <= max_valence[j]);
@@ -109,7 +116,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     int node_feat_shape = maxi(1, g->num_nodes);
     int is_float[] = {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int shapes[13][2] = {
-        {node_feat_shape, gd->num_node_dim},            // node_Feat
+        {node_feat_shape, gd->num_node_dim},            // node_feat
         {2, g->num_edges * 2},                          // edge_index
         {2 * g->num_edges, gd->num_edge_dim},           // edge_feat
         {2, num_creatable_edges},                       // non_edge_index
@@ -202,11 +209,13 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
             remove_edge_attr_mask[i * gd->num_settable_edge_attrs + j] = 1;
         } else {
             // TODO: we're not using aromatics here, instead single-double-triple is hardcoded
-            for (int k = 0; k < 3; k++) {
+            // k starts at 1 because the default value (0) is the single bond
+            for (int k = 1; k < 3; k++) {
                 if (used_valences[g->edges[2 * i]] + bond_valence[k] > max_valence[g->edges[2 * i]] ||
                     used_valences[g->edges[2 * i + 1]] + bond_valence[k] > max_valence[g->edges[2 * i + 1]])
                     continue;
-                set_edge_attr_mask[i * gd->num_edge_attr_logits + logit_slice_start + k] = 1;
+                // use k - 1 because the default value (0) doesn't have an associated logit
+                set_edge_attr_mask[i * gd->num_edge_attr_logits + logit_slice_start + k - 1] = 1;
             }
         }
         edge_index[2 * i] = g->edges[2 * i];

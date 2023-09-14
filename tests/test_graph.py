@@ -86,7 +86,7 @@ def timing_tests():
 
         ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
         moldef = GraphDef(ctx.atom_attr_values, ctx.bond_attr_values)
-        ctx._graph_cls = lambda: Graph(moldef)
+        ctx.graph_cls = lambda: Graph(moldef)
         mol = ctx.mol_to_graph(Chem.MolFromSmiles(smi))
         print(mol.bridges())
         data = mol_graph_to_Data(mol, ctx, torch)
@@ -107,7 +107,7 @@ def test_Graph2():
     for smi in ["CCOC1NC=CC=1", "C1C=CNC1NC1NCC=C1CC1CC1CN" * 4]:
         ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
         moldef = GraphDef(ctx.atom_attr_values, ctx.bond_attr_values)
-        ctx._graph_cls = lambda: Graph(moldef)
+        ctx.graph_cls = lambda: Graph(moldef)
         mol = ctx.mol_to_graph(Chem.MolFromSmiles(smi))
         t0 = time.time()
         for i in range(100000):
@@ -126,7 +126,7 @@ def test_Graph3():
     print(data.x, data.edge_index, data.edge_attr, data.add_node_mask, data.set_node_attr_mask, data.remove_node_mask)
 
     ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
-    ctx._graph_cls = PyGraph
+    ctx.graph_cls = PyGraph
     import gflownet.envs.mol_building_env as mbe
 
     mbe.C_Graph_available = False
@@ -138,7 +138,7 @@ def test_Graph3():
 
 def test_Graph_step():
     env = GraphBuildingEnv()
-    ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F"], max_nodes=10)
+    ctx = MolBuildingEnvContext(atoms=["C", "N", "O", "F", "Cl"], max_nodes=10)
     env.graph_def = ctx.graph_def
     g = Graph(env.graph_def)  # env.new()
     g.add_node(0, v="C")
@@ -165,14 +165,28 @@ def test_Graph_step():
     gp.remove_edge(3, 4)
     gp.remove_node(4)
     n, e = list(gp.nodes), list(gp.edges)
-    print(n, e)
     g = gp
     mol = ctx.graph_to_mol(g)
     data = ctx.graph_to_Data(g)
-    import pdb
+    assert data.set_edge_attr_mask[1].sum() == 1
 
-    pdb.set_trace()
+
+def test_Graph_nitrogen():
+    ctx = MolBuildingEnvContext(
+        ["C", "N", "O", "S", "F", "Cl", "Br"], charges=[0], chiral_types=[ChiralType.CHI_UNSPECIFIED], max_nodes=10
+    )
+    g = Graph(ctx.graph_def)
+    g.add_node(0, v="N")
+    g.add_node(1, v="C")
+    g.add_node(2, v="F")
+    g.add_node(3, v="Cl")
+    g.add_edge(0, 1)
+    g.add_edge(0, 2)
+    g.add_edge(0, 3)
+    mol = ctx.graph_to_mol(g)
+    data = ctx.graph_to_Data(g)
+    assert data.set_edge_attr_mask[0].sum() == 0
 
 
 if __name__ == "__main__":
-    test_Graph_step()
+    test_Graph_nitrogen()

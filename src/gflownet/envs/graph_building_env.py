@@ -15,14 +15,6 @@ from networkx.algorithms.isomorphism import is_isomorphic
 from rdkit.Chem import Mol
 from torch_scatter import scatter, scatter_max
 
-try:
-    from gflownet._C import mol_graph_to_Data, Graph as C_Graph, GraphDef
-
-    C_Graph_available = True
-except ImportError:
-    warnings.warn("Could not import mol_graph_to_Data, Graph, GraphDef from _C, using pure python implementation")
-    C_Graph_available = False
-
 
 class Graph(nx.Graph):
     # Subclassing nx.Graph for debugging purposes
@@ -148,11 +140,11 @@ class GraphBuildingEnv:
         self.allow_add_edge = allow_add_edge
         self.allow_node_attr = allow_node_attr
         self.allow_edge_attr = allow_edge_attr
-        self.graph_def = graph_def
+        self.graph_cls = None
 
     def new(self):
-        if C_Graph_available:
-            return C_Graph(self.graph_def)
+        if self.graph_cls is not None:
+            return self.graph_cls()
         return Graph()
 
     def step(self, g: Graph, action: GraphAction) -> Graph:
@@ -704,15 +696,19 @@ class GraphActionCategorical:
         if torch.isfinite(type_max_val).logical_not_().any():
             raise ValueError("Non finite max value in sample", (type_max_val, x))
 
+        assert dim_size == type_max_idx.shape[0]
+        ar = torch.arange(type_max_idx.shape[0], device=type_max_idx.device)
         # Now we can return the indices of where the actions occured
         # in the form List[(type, row, column)]
-        assert dim_size == type_max_idx.shape[0]
-        argmaxes = []
-        for i in range(type_max_idx.shape[0]):
-            t = type_max_idx[i]
-            # Subtract from the slice of that type and index, since the computed
-            # row position is batch-wise rather graph-wise
-            argmaxes.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
+        # Subtract from the slice of that type and index, since the computed
+        # row position is batch-wise rather graph-wise
+        argmaxes = torch.stack(
+            [
+                type_max_idx,
+                (torch.stack(row_pos) - torch.stack(self.slice)[:, :-1])[type_max_idx, ar],
+                torch.stack([i.indices for i in col_max])[type_max_idx, ar],
+            ]
+        ).T
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
         return argmaxes

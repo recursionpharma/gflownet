@@ -172,9 +172,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.device = torch.device("cpu")
         if C_Graph_available:
             self.graph_def = GraphDef(self.atom_attr_values, self.bond_attr_values)
-            self._graph_cls = lambda: C_Graph(self.graph_def)
+            self.graph_cls = lambda: C_Graph(self.graph_def)
         else:
-            self._graph_cls = Graph
+            self.graph_cls = Graph
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
@@ -418,7 +418,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def mol_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
-        g = self._graph_cls()
+        g = self.graph_cls()
         mol = Mol(mol)  # Make a copy
         if not self.allow_explicitly_aromatic:
             # If we disallow aromatic bonds, ask rdkit to Kekulize mol and remove aromatic bond flags

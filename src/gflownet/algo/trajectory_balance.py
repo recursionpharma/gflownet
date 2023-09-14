@@ -120,6 +120,7 @@ class TrajectoryBalance(GFNAlgorithm):
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
+        self.clip_Z = self.cfg.clip_Z_to_0
         # When the model is autoregressive, we can avoid giving it ["A", "AB", "ABC", ...] as a sequence of inputs, and
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
         # like a transformer with causal self-attention.
@@ -436,7 +437,7 @@ class TrajectoryBalance(GFNAlgorithm):
             log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective
-            numerator = log_Z + traj_log_p_F
+            numerator = (log_Z.clip(0) if self.clip_Z else log_Z) + traj_log_p_F
             denominator = clip_log_R + traj_log_p_B
 
             if self.mask_invalid_rewards:
@@ -481,16 +482,21 @@ class TrajectoryBalance(GFNAlgorithm):
         else:
             reward_loss = 0
 
-        loss = traj_losses.mean() + reward_loss
+        if 1:
+            Z_reg = (log_Z * (log_Z < 0)).pow(2).mean()
+
+        loss = traj_losses.mean() + reward_loss + Z_reg
         info = {
-            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+            # "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
             "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
-            "reward_loss": reward_loss,
+            # "reward_loss": reward_loss,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
             "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             "logZ": log_Z.mean(),
             "loss": loss.item(),
+            "mean_R": log_rewards.exp().mean().item(),
+            "mean_logR": log_rewards.mean().item(),
         }
         return loss, info
 

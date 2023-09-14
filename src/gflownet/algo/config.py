@@ -50,6 +50,7 @@ class TBConfig:
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
     cum_subtb: bool = True
+    clip_Z_to_0: bool = True
 
 
 @dataclass
