@@ -144,7 +144,9 @@ class GraphSampler:
                 sample_cat = copy.copy(fwd_cat)
                 if self.sample_temp == 0:  # argmax with tie breaking
                     maxes = fwd_cat.max(fwd_cat.logits).values
-                    sample_cat.logits = [(maxes[b, None] != l) * -1000.0 for b, l in zip(fwd_cat.batch, fwd_cat.logits)]
+                    sample_cat.logits = [
+                        (maxes[b, None] != lg) * -1000.0 for b, lg in zip(fwd_cat.batch, fwd_cat.logits)
+                    ]
                 else:
                     sample_cat.logits = [i / self.sample_temp for i in fwd_cat.logits]
                 actions = sample_cat.sample()

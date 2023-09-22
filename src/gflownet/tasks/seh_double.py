@@ -1,8 +1,8 @@
+import copy
 import os
 import pathlib
 import shutil
 import socket
-import copy
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -13,16 +13,15 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from gflownet.algo.q_learning import QLearning
 from gflownet.config import Config
-from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.data.double_iterator import BatchTuple, DoubleIterator
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.data.double_iterator import DoubleIterator, BatchTuple
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
-from gflownet.algo.q_learning import QLearning
 
 
 class SEHTask(GFNTask):
@@ -222,7 +221,7 @@ class SEHDoubleModelTrainer(StandardOnlineTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": f"./logs/twomod/run_debug/",
+        "log_dir": "./logs/twomod/run_debug/",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
         "num_training_steps": 2000,

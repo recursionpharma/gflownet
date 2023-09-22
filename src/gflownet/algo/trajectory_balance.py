@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
@@ -91,16 +91,16 @@ class TrajectoryBalance(GFNAlgorithm):
             self._init_subtb(torch.device(self.global_cfg.device))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(
-        self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
-    ):
+        self, model: nn.Module, batch_size: int, cond_info: Tensor, random_action_prob: float = 0.0
+    ) -> List[Dict[str, Tensor]]:
         """Generate trajectories by sampling a model
 
         Parameters
         ----------
         model: TrajectoryBalanceModel
            The model being sampled
-        graphs: List[Graph]
-            List of N Graph endpoints
+        batch_size: int
+            Number of trajectories to sample
         cond_info: torch.tensor
             Conditional information, shape (N, n_info)
         random_action_prob: float
@@ -119,9 +119,9 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
+        data = self.graph_sampler.sample_from_model(model, batch_size, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
-        for i in range(n):
+        for i in range(batch_size):
             data[i]["logZ"] = logZ_pred[i].item()
         return data
 

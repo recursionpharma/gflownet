@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import rdkit.Chem as Chem
@@ -308,10 +308,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             afrag = g.nodes[a]["v"]
             bfrag = g.nodes[b]["v"]
             if self.fail_on_missing_attr:
-                assert f"src_attach" in g.edges[(a, b)] and f"dst_attach" in g.edges[(a, b)]
+                assert "src_attach" in g.edges[(a, b)] and "dst_attach" in g.edges[(a, b)]
             u, v = (
-                int(self.frags_stems[afrag][g.edges[(a, b)].get(f"src_attach", 0)] + offsets[a]),
-                int(self.frags_stems[bfrag][g.edges[(a, b)].get(f"dst_attach", 0)] + offsets[b]),
+                int(self.frags_stems[afrag][g.edges[(a, b)].get("src_attach", 0)] + offsets[a]),
+                int(self.frags_stems[bfrag][g.edges[(a, b)].get("dst_attach", 0)] + offsets[b]),
             )
             bond_atoms += [u, v]
             mol.AddBond(u, v, Chem.BondType.SINGLE)

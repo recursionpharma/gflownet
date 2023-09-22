@@ -1,7 +1,7 @@
 import copy
-from itertools import chain
 import os
 import pathlib
+from itertools import chain
 
 import git
 import torch

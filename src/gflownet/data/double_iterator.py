@@ -1,26 +1,24 @@
 import os
 import sqlite3
+import warnings
 from collections.abc import Iterable
 from copy import deepcopy
 from typing import Callable, List
-import warnings
 
 import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
-from rdkit import Chem, RDLogger
-from torch.utils.data import Dataset, IterableDataset
+from rdkit import Chem
+from torch.utils.data import IterableDataset
 
-from gflownet.trainer import GFNTask, GFNAlgorithm
-from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import (
     GraphActionCategorical,
     GraphActionType,
     GraphBuildingEnv,
     GraphBuildingEnvContext,
 )
-from gflownet.algo.graph_sampling import GraphSampler
+from gflownet.trainer import GFNAlgorithm, GFNTask
 
 
 class BatchTuple:
@@ -174,10 +172,10 @@ class DoubleIterator(IterableDataset):
             def safe(f, a, default):
                 try:
                     return f(a)
-                except Exception as e:
+                except Exception:
                     return default
 
-            results = [safe(self.ctx.graph_to_mol, i["result"], None) for i in trajs_for_first]
+            results = [safe(self.ctx.graph_to_mol, i["result"], None) for i in all_trajs]
             pred_reward, is_valid = self.first_task.compute_flat_rewards(results)
             assert pred_reward.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
             flat_rewards = list(pred_reward)
