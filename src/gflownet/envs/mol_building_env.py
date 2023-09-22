@@ -62,7 +62,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
             "v": atoms + ["*"],
-            "chi": chiral_types,
+            "chi": chiral_types if chiral_types is not None else [ChiralType.CHI_UNSPECIFIED],
             "charge": charges,
             "expl_H": expl_H_range,
             "no_impl": [False, True],
@@ -257,7 +257,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
+        if hasattr(g, "_cached_Data"):
+            return g._cached_Data
+        x = torch.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
         x[0, -1] = len(g.nodes) == 0
         add_node_mask = np.ones((x.shape[0], self.num_new_node_values))
         if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
@@ -388,6 +390,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         data = gd.Data(**{k: torch.from_numpy(v) for k, v in data.items()})
         if self.num_rw_feat > 0:
             data.x = torch.cat([data.x, random_walk_probs(data, self.num_rw_feat, skip_odd=True)], 1)
+        g._cached_Data = data
         return data
 
     def collate(self, graphs: List[gd.Data]):

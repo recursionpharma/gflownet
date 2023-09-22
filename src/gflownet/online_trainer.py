@@ -1,6 +1,7 @@
 import copy
 import os
 import pathlib
+from itertools import chain
 
 import git
 import torch
@@ -43,6 +44,9 @@ class StandardOnlineTrainer(GFNTrainer):
         self.training_data = []
         self.test_data = []
 
+    def _get_additional_parameters(self):
+        return []
+
     def setup(self):
         super().setup()
         self.offline_ratio = 0
@@ -56,7 +60,7 @@ class StandardOnlineTrainer(GFNTrainer):
             Z_params = []
             non_Z_params = list(self.model.parameters())
         self.opt = torch.optim.Adam(
-            non_Z_params,
+            chain(non_Z_params, self._get_additional_parameters()),
             self.cfg.opt.learning_rate,
             (self.cfg.opt.momentum, 0.999),
             weight_decay=self.cfg.opt.weight_decay,

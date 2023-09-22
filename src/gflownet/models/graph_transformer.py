@@ -171,6 +171,7 @@ class GraphTransformerGFN(nn.Module):
         cfg: Config,
         num_graph_out=1,
         do_bck=False,
+        merge_fwd_and_bck=False,
     ):
         """See `GraphTransformer` for argument values"""
         super().__init__()
@@ -215,9 +216,14 @@ class GraphTransformerGFN(nn.Module):
             mlps[atype.cname] = mlp(num_in, num_emb, num_out, cfg.model.graph_transformer.num_mlp_layers)
         self.mlps = nn.ModuleDict(mlps)
 
-        self.do_bck = do_bck
-        if do_bck:
-            self.bck_action_type_order = env_ctx.bck_action_type_order
+        if merge_fwd_and_bck:
+            assert do_bck
+            self.action_type_order = env_ctx.action_type_order + env_ctx.bck_action_type_order
+            self.do_bck = False  # We don't output bck logits separately, so turn off this flag
+        else:
+            self.do_bck = do_bck
+            if do_bck:
+                self.bck_action_type_order = env_ctx.bck_action_type_order
 
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
@@ -233,7 +239,7 @@ class GraphTransformerGFN(nn.Module):
     def _mask(self, x, m):
         # mask logit vector x with binary mask m, -1000 is a tiny log-value
         # Note to self: we can't use torch.inf here, because inf * 0 is nan (but also see issue #99)
-        return x * m + -1000 * (1 - m)
+        return x * m + -1000000 * (1 - m)
 
     def _make_cat(self, g, emb, action_types):
         return GraphActionCategorical(

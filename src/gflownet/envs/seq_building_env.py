@@ -36,10 +36,10 @@ class SeqBuildingEnv(GraphBuildingEnv):
     def new(self):
         return Seq()
 
-    def step(self, g: Graph, a: GraphAction):
+    def step(self, g: Graph, action: GraphAction, relabel: bool = False):
         s: Seq = deepcopy(g)  # type: ignore
-        if a.action == GraphActionType.AddNode:
-            s.seq.append(a.value)
+        if action.action == GraphActionType.AddNode:
+            s.seq.append(action.value)
         return s
 
     def count_backward_transitions(self, g: Graph, check_idempotent: bool = False):

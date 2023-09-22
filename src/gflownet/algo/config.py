@@ -47,6 +47,7 @@ class TBConfig:
     do_parameterize_p_b: bool = False
     do_length_normalize: bool = False
     subtb_max_len: int = 128
+    subtb_detach: bool = False
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
     cum_subtb: bool = True
@@ -121,6 +122,7 @@ class AlgoConfig:
     max_len: int = 128
     max_nodes: int = 128
     max_edges: int = 128
+    input_timestep: bool = False
     illegal_action_logreward: float = -100
     offline_ratio: float = 0.5
     valid_offline_ratio: float = 1
