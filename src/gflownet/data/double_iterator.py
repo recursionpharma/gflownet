@@ -22,12 +22,13 @@ from gflownet.trainer import GFNAlgorithm, GFNTask
 
 
 class BatchTuple:
-    def __init__(self, a, b):
+    def __init__(self, a, b, extra_info=None):
         self.a = a
         self.b = b
+        self.extra_info = extra_info
 
     def to(self, device):
-        return BatchTuple(self.a.to(device), self.b.to(device))
+        return BatchTuple(self.a.to(device), self.b.to(device), self.extra_info)
 
     def __getitem__(self, idx: int):
         if idx == 0:
@@ -161,7 +162,7 @@ class DoubleIterator(IterableDataset):
                     warnings.warn("If second_algo is a deterministic policy, this is probably not what you want!")
                 second_trajs = self.second_algo.create_training_data_from_own_samples(
                     self.second_model,
-                    self.batch_size - 1,
+                    self.batch_size,
                     cond_info["encoding"],
                     random_action_prob=self.random_action_prob,
                     **_optional_starts,
@@ -233,7 +234,12 @@ class DoubleIterator(IterableDataset):
             # self.validate_batch(self.second_model, second_batch, trajs_for_second, self.second_algo.ctx)
 
             self.train_it += worker_info.num_workers if worker_info is not None else 1
-            yield BatchTuple(batch, second_batch)
+            bt = BatchTuple(batch, second_batch)
+            bt.extra_info = {
+                "first_avg_len": sum([len(i["traj"]) for i in first_trajs]) / len(first_trajs),
+                "second_avg_len": sum([len(i["traj"]) for i in second_trajs]) / len(second_trajs),
+            }
+            yield bt
 
     def log_generated(self, trajs, rewards, flat_rewards, cond_info):
         if self.log_molecule_smis:

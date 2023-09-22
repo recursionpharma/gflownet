@@ -104,3 +104,4 @@ class Config:
     # TODO: this goes elsewhere
     mellowmax_omega: float = 128
     dqn_tau: float = 0.995
+    second_model_allow_back_and_forth: bool = False

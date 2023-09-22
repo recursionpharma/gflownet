@@ -22,60 +22,7 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
-
-
-class SEHTask(GFNTask):
-    """Sets up a task where the reward is computed using a proxy for the binding energy of a molecule to
-    Soluble Epoxide Hydrolases.
-
-    The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
-
-    This setup essentially reproduces the results of the Trajectory Balance paper when using the TB
-    objective, or of the original paper when using Flow Matching.
-    """
-
-    def __init__(
-        self,
-        dataset: Dataset,
-        cfg: Config,
-        rng: np.random.Generator = None,
-        wrap_model: Callable[[nn.Module], nn.Module] = None,
-    ):
-        self._wrap_model = wrap_model
-        self.rng = rng
-        self.models = self._load_task_models()
-        self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
-        self.num_cond_dim = self.temperature_conditional.encoding_size()
-
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y) / 8)
-
-    def inverse_flat_reward_transform(self, rp):
-        return rp * 8
-
-    def _load_task_models(self):
-        model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
-        return {"seh": model}
-
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        return self.temperature_conditional.sample(n)
-
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
-
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        graphs = [bengio2021flow.mol2graph(i) for i in mols]
-        is_valid = torch.tensor([i is not None for i in graphs]).bool()
-        if not is_valid.any():
-            return FlatRewards(torch.zeros((0, 1))), is_valid
-        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
-        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
-        preds[preds.isnan()] = 0
-        preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1, 1))
-        return FlatRewards(preds), is_valid
+from gflownet.tasks.seh_frag import SEHTask
 
 
 class SEHDoubleModelTrainer(StandardOnlineTrainer):
@@ -83,7 +30,7 @@ class SEHDoubleModelTrainer(StandardOnlineTrainer):
 
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
-        cfg.pickle_mp_messages = False
+        cfg.pickle_mp_messages = True
         cfg.num_workers = 8
         cfg.checkpoint_every = 1000
         cfg.opt.learning_rate = 1e-4
@@ -103,7 +50,7 @@ class SEHDoubleModelTrainer(StandardOnlineTrainer):
         cfg.algo.max_edges = 70
         cfg.algo.sampling_tau = 0.9
         cfg.algo.illegal_action_logreward = -256
-        cfg.algo.train_random_action_prob = 0.01
+        cfg.algo.train_random_action_prob = 0.05
         cfg.algo.valid_random_action_prob = 0.0
         cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
@@ -124,10 +71,13 @@ class SEHDoubleModelTrainer(StandardOnlineTrainer):
         cfgp.algo.illegal_action_logreward = -10
         ctxp = copy.deepcopy(self.ctx)
         ctxp.num_cond_dim += 32  # Add an extra dimension for the timestep input [do we still need that?]
-        ctxp.action_type_order = ctxp.action_type_order + ctxp.bck_action_type_order  # Merge fwd and bck action types
-        ctxp.bck_action_type_order = ctxp.action_type_order  # Make sure the backward action types are the same
+        if self.cfg.second_model_allow_back_and_forth:
+            # Merge fwd and bck action types
+            ctxp.action_type_order = ctxp.action_type_order + ctxp.bck_action_type_order
+            ctxp.bck_action_type_order = ctxp.action_type_order  # Make sure the backward action types are the same
+            self.second_algo.graph_sampler.compute_uniform_bck = False  # I think this might break things, to be checked
         self.second_algo = QLearning(self.env, ctxp, self.rng, cfgp)
-        self.second_algo.graph_sampler.compute_uniform_bck = False
+        # True is already the default, just leaving this as a reminder the we need to turn this off
         self.second_ctx = ctxp
 
     def setup_task(self):
@@ -226,11 +176,15 @@ def main():
         "overwrite_existing_exp": True,
         "num_training_steps": 2000,
         "validate_every": 0,
-        "num_workers": 0,
+        "num_workers": 8,
         "opt": {
             "lr_decay": 20000,
         },
-        "algo": {"sampling_tau": 0.95, "global_batch_size": 4, "tb": {"do_subtb": True}},
+        "algo": {
+            "sampling_tau": 0.95,
+            "global_batch_size": 64,  # This is a lie, since we're sampling for each model, so it's really 2N
+            "tb": {"variant": "SubTB1"},
+        },
         "cond": {
             "temperature": {
                 "sample_dist": "constant",

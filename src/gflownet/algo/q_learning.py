@@ -52,7 +52,7 @@ class QLearning(GFNAlgorithm):
         )
         self.graph_sampler.sample_temp = 0  # Greedy policy == infinitely low temperature
         self.gamma = 1
-        self.type = "ddqn"
+        self.type = "ddqn"  # TODO: add to config
 
     def create_training_data_from_own_samples(
         self,
@@ -209,11 +209,10 @@ class QLearning(GFNAlgorithm):
         loss = losses.mean()
         invalid_mask = 1 - batch.is_valid
         info = {
-            "mean_loss": loss,
+            "loss": loss,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             # "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
             "Q_sa": Q_sa.mean().item(),
-            "traj_lens": batch.traj_lens[num_trajs // 2 :].float().mean().item(),
         }
 
         return loss, info
