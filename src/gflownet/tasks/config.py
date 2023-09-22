@@ -62,6 +62,7 @@ class BasicGraphConfig:
     do_save_generated: bool = True
     data_root: str = "./data/basic_graph_task"
     reward_func: str = "count"  # One of cliques, even_neighbors, count, const
+    reward_param: float = 1.0  # Parameter for the reward w/ noise (std for gaussian, labmda for poisson)
     do_supervised: bool = False
     do_tabular_model: bool = False
     supervised_loss: str = "MSE"

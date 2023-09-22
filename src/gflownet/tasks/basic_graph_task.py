@@ -1,6 +1,8 @@
 import bz2
 import os
 import pickle
+import pathlib
+from omegaconf import OmegaConf
 from typing import Dict, List, Tuple
 
 import networkx as nx
@@ -65,6 +67,31 @@ def even_neighbors_reward(g):
 def count_reward(g):
     ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
+
+
+def count_gaussian_noise_reward(g, std=0.1):
+    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
+    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
+    return reward + np.random.normal(0, std, len(reward)) # this wont work
+    # need to make sure that the noise added is the same for a given graph 
+    # every time that graph gets samples ...
+    # current implementation will add different noise each time the graph is 
+    # sampled since noise is getting resampled each time.
+    # Potential fix: can we use the state/graph as seed for noise? 
+
+
+def count_laplace_noise_reward(g, std=0.05):
+    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
+    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
+    return reward + np.random.laplace(0, std, len(reward)) # wont work
+    # same as above for Gaussian
+
+
+def count_sparse_reward(g, lam=0.1):
+    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
+    sparsity = np.linalg.norm([g.nodes[i]["v"] for i in g], ord=1)
+    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
+    return reward - lam * sparsity
 
 
 def generate_two_col_data(data_root, max_nodes=7):
@@ -136,11 +163,13 @@ class TwoColorGraphDataset(Dataset):
         ratio=0.9,
         max_nodes=7,
         reward_func="cliques",
+        reward_param=None,
     ):
         self.data = data
         self.ctx = ctx
         self.output_graphs = output_graphs
         self.reward_func = reward_func
+        self.reward_param = reward_param
         self.idcs = [0]
         self.max_nodes = max_nodes
         if data is None:
@@ -175,6 +204,42 @@ class TwoColorGraphDataset(Dataset):
             return count_reward(g)
         elif self.reward_func == "const":
             return np.float32(0)
+        elif self.reward_func == "count_gaussian":
+            return count_gaussian_noise_reward(g, self.reward_param)
+        elif self.reward_func == "count_laplace":
+            return count_laplace_noise_reward(g, self.reward_param)
+    
+    def get_graph_idx(self, g, default=None):
+        def iso(u, v):
+            return is_isomorphic(u, v, lambda a, b: a == b, lambda a, b: a == b)
+
+        h = hashg(g)
+        if h not in self._hash_to_graphs:
+            if default is not None:
+                return default
+            else:
+                print("Graph not found in cache", h)
+                for i in g.nodes:
+                    print(i, g.nodes[i])
+                for i in g.edges:
+                    print(i, g.edges[i])
+        bucket = self._hash_to_graphs[h]
+        if len(bucket) == 1:
+            return bucket[0]
+        for i in bucket:
+            if iso(self.states[i], g):
+                return i
+        if default is not None:
+            return default
+        raise ValueError(g)
+      
+    def hashg_for_reward(self):
+        states = self.data
+        self._hash_to_graphs = {}
+        states_hash = [hashg(i) for i in tqdm(states, disable=True)]
+        for i, h in enumerate(states_hash):
+            self._hash_to_graphs[h] = self._hash_to_graphs.get(h, list()) + [i]
+        pass
 
     def collate_fn(self, batch):
         graphs, rewards, idcs = zip(*batch)
@@ -392,6 +457,13 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self._callbacks = {"true_px_error": self.exact_prob_cb}
         else:
             self._callbacks = {}
+            
+        os.makedirs(self.cfg.log_dir, exist_ok=True)
+        print("\n\nHyperparameters:\n")
+        yaml = OmegaConf.to_yaml(self.cfg)
+        print(yaml)
+        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
+            f.write(yaml)
 
     def build_callbacks(self):
         return self._callbacks

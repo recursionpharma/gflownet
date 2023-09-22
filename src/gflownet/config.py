@@ -81,6 +81,7 @@ class Config:
     """
 
     log_dir: str = MISSING
+    log_tags: Optional[list] = None
     log_sampled_data: bool = True
     device: str = "cuda"
     seed: int = 0
