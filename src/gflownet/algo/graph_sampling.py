@@ -117,7 +117,7 @@ class GraphSampler:
                 actions = sample_cat.sample().cpu()
             else:
                 actions = fwd_cat.sample().cpu()
-            graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
+            graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions.numpy())]
             log_probs = fwd_cat.log_prob(actions)
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
@@ -146,7 +146,7 @@ class GraphSampler:
                     # If no error, add to the trajectory
                     # P_B = uniform backward
                     n_back = self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
-                    bck_logprob[i].append(torch.tensor([1 / n_back], device=dev).log())
+                    bck_logprob[i].append(1 / n_back)
                     data[i]["is_sink"].append(0)
                     graphs[i] = gp
                 if done[i] and self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
@@ -176,7 +176,7 @@ class GraphSampler:
             # just report forward and backward logprobs
             data[i]["fwd_logprob"] = sum(fwd_logprob[i])
             data[i]["bck_logprob"] = sum(bck_logprob[i])
-            data[i]["bck_logprobs"] = torch.stack(bck_logprob[i]).reshape(-1)
+            data[i]["bck_logprobs"] = torch.tensor(bck_logprob[i], device=dev).float().log().reshape(-1)
             data[i]["result"] = graphs[i]
             data[i]["bck_a"] = bck_a[i]
             if self.pad_with_terminal_state:

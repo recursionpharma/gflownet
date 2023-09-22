@@ -11,6 +11,7 @@ static void Graph_dealloc(Graph *self) {
         free(self->nodes);
         free(self->node_attrs);
     }
+    free(self->degrees);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -22,7 +23,7 @@ static PyObject *Graph_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
         Py_INCREF(Py_None);
         self->num_nodes = 0;
         self->num_edges = 0;
-        self->nodes = self->edges = self->node_attrs = self->edge_attrs = NULL;
+        self->nodes = self->edges = self->node_attrs = self->edge_attrs = self->degrees = NULL;
     }
     return (PyObject *)self;
 }
@@ -99,7 +100,12 @@ static PyObject *Graph_add_node(Graph *self, PyObject *args, PyObject *kwds) {
             }
             Py_ssize_t value_idx = PySequence_Index(node_values, value);
             if (value_idx == -1) {
-                PyErr_SetString(PyExc_KeyError, "value not found in GraphDef");
+                PyObject *repr = PyObject_Repr(value);
+                PyObject *key_repr = PyObject_Repr(key);
+                PyErr_Format(PyExc_KeyError, "value %s not found in GraphDef for key %s", PyUnicode_AsUTF8(repr),
+                             PyUnicode_AsUTF8(key_repr));
+                Py_DECREF(repr);
+                // PyErr_SetString(PyExc_KeyError, "value not found in GraphDef");
                 return NULL;
             }
             int attr_index = PyLong_AsLong(PyDict_GetItem(gt->node_keypos, key));
@@ -304,6 +310,27 @@ PyObject *Graph_has_edge(PyObject *_self, PyObject *args) {
     Py_RETURN_FALSE;
 }
 
+// #define GRAPH_DEBUG
+// inline
+void _Graph_check(Graph *g) {
+#ifdef GRAPH_DEBUG
+    for (int i = 0; i < g->num_node_attrs; i++) {
+        if (g->node_attrs[i * 3] >= g->num_nodes) {
+            printf("Invalid node attr pointer %d %d\n", g->node_attrs[i * 3], g->num_nodes);
+            abort();
+        }
+    }
+    for (int i = 0; i < g->num_edge_attrs; i++) {
+        if (g->edge_attrs[i * 3] >= g->num_edges) {
+            printf("Invalid edge attr pointer %d %d\n", g->edge_attrs[i * 3], g->num_edges);
+            abort();
+        }
+    }
+#endif
+}
+
+PyObject *Graph_remove_edge(PyObject *, PyObject *); // fwd decl
+
 PyObject *Graph_remove_node(PyObject *_self, PyObject *args) {
     Graph *self = (Graph *)_self;
     int u;
@@ -317,11 +344,23 @@ PyObject *Graph_remove_node(PyObject *_self, PyObject *args) {
     // Check if any edge has this node
     for (int i = 0; i < self->num_edges; i++) {
         if (self->edges[i * 2] == pos || self->edges[i * 2 + 1] == pos) {
-            PyErr_SetString(PyExc_KeyError, "node has edges");
-            return NULL;
+            PyObject *u = PyLong_FromLong(self->nodes[self->edges[i * 2]]);
+            PyObject *v = PyLong_FromLong(self->nodes[self->edges[i * 2 + 1]]);
+            PyObject *rm_args = PyTuple_Pack(2, u, v);
+            // if so remove it
+            PyObject *rm_res = Graph_remove_edge(_self, rm_args);
+            Py_DECREF(u);
+            Py_DECREF(v);
+            Py_DECREF(rm_args);
+            if (rm_res == NULL) {
+                return NULL;
+            }
+            Py_DECREF(rm_res);
+            i--;
         }
     }
     // Remove the node
+    // self->nodes contains node "names", so we just pop one element from the array
     int *old_nodes = self->nodes;
     self->nodes = malloc((self->num_nodes - 1) * sizeof(int));
     memcpy(self->nodes, old_nodes, pos * sizeof(int));
@@ -336,24 +375,45 @@ PyObject *Graph_remove_node(PyObject *_self, PyObject *args) {
     // Remove the node attributes
     int *old_node_attrs = self->node_attrs;
     int num_rem = 0;
+    // first find out how many attributes we need to remove
     for (int i = 0; i < self->num_node_attrs; i++) {
         if (self->node_attrs[i * 3] == pos) {
             num_rem++;
         }
     }
     if (num_rem) {
+        // now remove them
         self->node_attrs = malloc((self->num_node_attrs - num_rem) * 3 * sizeof(int));
         int i, j = 0;
         for (i = 0; i < self->num_node_attrs; i++) {
             if (old_node_attrs[i * 3] == pos) {
-                memcpy(self->node_attrs + j * 3, old_node_attrs + j * 3, (i - j) * 3 * sizeof(int));
-                j = i + 1;
+                continue;
             }
+            int old_node_index = old_node_attrs[i * 3];
+            self->node_attrs[j * 3] = old_node_index;
+            self->node_attrs[j * 3 + 1] = old_node_attrs[i * 3 + 1];
+            self->node_attrs[j * 3 + 2] = old_node_attrs[i * 3 + 2];
+            j++;
         }
-        memcpy(self->node_attrs + j * 3, old_node_attrs + j * 3, (i - j) * 3 * sizeof(int));
         self->num_node_attrs -= num_rem;
         free(old_node_attrs);
     }
+    // since we removed the node at pos, all other node indices past that must be decremented
+    for (int i = 0; i < self->num_node_attrs; i++) {
+        if (self->node_attrs[i * 3] > pos) {
+            self->node_attrs[i * 3]--;
+        }
+    }
+    // We must also relabel the edges
+    for (int i = 0; i < self->num_edges; i++) {
+        if (self->edges[i * 2] > pos) {
+            self->edges[i * 2]--;
+        }
+        if (self->edges[i * 2 + 1] > pos) {
+            self->edges[i * 2 + 1]--;
+        }
+    }
+    _Graph_check(self);
     Py_RETURN_NONE;
 }
 
@@ -379,7 +439,6 @@ PyObject *Graph_remove_edge(PyObject *_self, PyObject *args) {
     free(old_edges);
     self->num_edges--;
     // Remove the edge attributes
-    int *old_edge_attrs = self->edge_attrs;
     int num_rem = 0;
     for (int i = 0; i < self->num_edge_attrs; i++) {
         if (self->edge_attrs[i * 3] == edge_index) {
@@ -387,18 +446,84 @@ PyObject *Graph_remove_edge(PyObject *_self, PyObject *args) {
         }
     }
     if (num_rem) {
+        int *old_edge_attrs = self->edge_attrs;
         self->edge_attrs = malloc((self->num_edge_attrs - num_rem) * 3 * sizeof(int));
         int i, j = 0;
         for (i = 0; i < self->num_edge_attrs; i++) {
-            if (old_edge_attrs[i * 3] == edge_index) {
-                memcpy(self->edge_attrs + j * 3, old_edge_attrs + j * 3, (i - j) * 3 * sizeof(int));
-                j = i + 1;
+            int old_edge_index = old_edge_attrs[i * 3];
+            if (old_edge_index == edge_index) {
+                continue;
             }
+            self->edge_attrs[j * 3] = old_edge_index;
+            self->edge_attrs[j * 3 + 1] = old_edge_attrs[i * 3 + 1];
+            self->edge_attrs[j * 3 + 2] = old_edge_attrs[i * 3 + 2];
+            j++;
         }
-        memcpy(self->edge_attrs + j * 3, old_edge_attrs + j * 3, (i - j) * 3 * sizeof(int));
+
         self->num_edge_attrs -= num_rem;
         free(old_edge_attrs);
     }
+    // since we removed the edge at edge_index, all other edge indices past that must be decremented
+    for (int i = 0; i < self->num_edge_attrs; i++) {
+        if (self->edge_attrs[i * 3] > edge_index) {
+            self->edge_attrs[i * 3]--;
+        }
+    }
+    _Graph_check(self);
+    Py_RETURN_NONE;
+}
+
+PyObject *Graph_relabel(PyObject *_self, PyObject *args) {
+    PyObject *mapping = NULL;
+    if (!PyArg_ParseTuple(args, "O", &mapping))
+        return NULL;
+    if (!PyDict_Check(mapping)) {
+        PyErr_SetString(PyExc_TypeError, "mapping must be a dict");
+        return NULL;
+    }
+    Graph *new = (Graph *)Graph_copy(_self, NULL); // new ref
+    for (int i = 0; i < new->num_nodes; i++) {
+        PyObject *node = PyLong_FromLong(new->nodes[i]);
+        PyObject *new_node = PyDict_GetItem(mapping, node);
+        if (new_node == NULL) {
+            PyErr_Format(PyExc_KeyError, "node %d not found in mapping", new->nodes[i]);
+            return NULL;
+        }
+        if (!PyLong_Check(new_node)) {
+            PyErr_SetString(PyExc_TypeError, "mapping must be a dict of ints");
+            return NULL;
+        }
+        new->nodes[i] = PyLong_AsLong(new_node);
+    }
+    _Graph_check((Graph *)_self);
+    return (PyObject *)new;
+}
+
+PyObject *Graph_inspect(PyObject *_self, PyObject *args) {
+    Graph *self = (Graph *)_self;
+    printf("Node labels:\n  ");
+    for (int i = 0; i < self->num_nodes; i++) {
+        printf("%d ", self->nodes[i]);
+    }
+    printf("\n");
+    printf("Edges:\n");
+    for (int i = 0; i < self->num_edges; i++) {
+        printf("  %d %d (%d %d)\n", self->nodes[self->edges[i * 2]], self->nodes[self->edges[i * 2 + 1]],
+               self->edges[i * 2], self->edges[i * 2 + 1]);
+    }
+    printf("Node attributes:\n");
+    for (int i = 0; i < self->num_node_attrs; i++) {
+        printf("  %d %d %d\n", self->node_attrs[i * 3], self->node_attrs[i * 3 + 1], self->node_attrs[i * 3 + 2]);
+    }
+    printf("Edge attributes:\n");
+    for (int i = 0; i < self->num_edge_attrs; i++) {
+        printf("  %d %d %d\n", self->edge_attrs[i * 3], self->edge_attrs[i * 3 + 1], self->edge_attrs[i * 3 + 2]);
+    }
+    printf("Degrees:\n  ");
+    for (int i = 0; i < self->num_nodes; i++) {
+        printf("%d ", self->degrees[i]);
+    }
+    printf("\n\n");
     Py_RETURN_NONE;
 }
 
@@ -412,7 +537,9 @@ static PyMethodDef Graph_methods[] = {
     {"is_multigraph", (PyCFunction)Graph_isdirected, METH_NOARGS, "Is the graph a multigraph?"},
     {"bridges", (PyCFunction)Graph_bridges, METH_NOARGS, "Find the bridges of the graph"},
     {"copy", (PyCFunction)Graph_copy, METH_VARARGS, "Copy the graph"},
+    {"relabel_nodes", (PyCFunction)Graph_relabel, METH_VARARGS, "relabel the graph"},
     {"__deepcopy__", (PyCFunction)Graph_copy, METH_VARARGS, "Copy the graph"},
+    {"_inspect", (PyCFunction)Graph_inspect, METH_VARARGS, "Print the graph's information"},
     {NULL} /* Sentinel */
 };
 
@@ -545,12 +672,28 @@ PyObject *Graph_setnodeattr(Graph *self, int index, PyObject *k, PyObject *v) {
         PyErr_SetString(PyExc_KeyError, "node not found");
         return NULL;
     }
-    if (v == NULL) {
-        printf("del node attempted\n");
-    }
     PyObject *node_values = PyDict_GetItem(gt->node_values, k);
     if (node_values == NULL) {
         PyErr_SetString(PyExc_KeyError, "key not found in GraphDef");
+        return NULL;
+    }
+    if (v == NULL) {
+        // this means we have to delete g.nodes[index][k]
+        int attr_index = PyLong_AsLong(PyDict_GetItem(gt->node_keypos, k));
+        for (int i = 0; i < self->num_node_attrs; i++) {
+            if (self->node_attrs[i * 3] == true_node_index && self->node_attrs[i * 3 + 1] == attr_index) {
+                // found the attribute, remove it
+                int *old_node_attrs = self->node_attrs;
+                self->node_attrs = malloc((self->num_node_attrs - 1) * 3 * sizeof(int));
+                memcpy(self->node_attrs, old_node_attrs, i * 3 * sizeof(int));
+                memcpy(self->node_attrs + i * 3, old_node_attrs + (i + 1) * 3,
+                       (self->num_node_attrs - i - 1) * 3 * sizeof(int));
+                self->num_node_attrs--;
+                free(old_node_attrs);
+                Py_RETURN_NONE;
+            }
+        }
+        PyErr_SetString(PyExc_KeyError, "trying to delete a key that's not set");
         return NULL;
     }
     Py_ssize_t value_idx = PySequence_Index(node_values, v);
@@ -608,6 +751,25 @@ PyObject *Graph_setedgeattr(Graph *self, int index, PyObject *k, PyObject *v) {
         PyErr_SetString(PyExc_KeyError, "key not found in GraphDef");
         return NULL;
     }
+    if (v == 0) {
+        // this means we have to delete g.edges[index][k]
+        int attr_index = PyLong_AsLong(PyDict_GetItem(gt->edge_keypos, k));
+        for (int i = 0; i < self->num_edge_attrs; i++) {
+            if (self->edge_attrs[i * 3] == index && self->edge_attrs[i * 3 + 1] == attr_index) {
+                // found the attribute, remove it
+                int *old_edge_attrs = self->edge_attrs;
+                self->edge_attrs = malloc((self->num_edge_attrs - 1) * 3 * sizeof(int));
+                memcpy(self->edge_attrs, old_edge_attrs, i * 3 * sizeof(int));
+                memcpy(self->edge_attrs + i * 3, old_edge_attrs + (i + 1) * 3,
+                       (self->num_edge_attrs - i - 1) * 3 * sizeof(int));
+                self->num_edge_attrs--;
+                free(old_edge_attrs);
+                Py_RETURN_NONE;
+            }
+        }
+        PyErr_SetString(PyExc_KeyError, "trying to delete a key that's not set");
+        return NULL;
+    }
     Py_ssize_t value_idx = PySequence_Index(edge_values, v);
     if (value_idx == -1) {
         PyErr_SetString(PyExc_KeyError, "value not found in GraphDef");
@@ -647,6 +809,7 @@ static PyObject *spam_system(PyObject *self, PyObject *args) {
 static PyMethodDef SpamMethods[] = {
     {"system", spam_system, METH_VARARGS, "Execute a shell command."},
     {"mol_graph_to_Data", mol_graph_to_Data, METH_VARARGS, "Convert a mol_graph to a Data object."},
+    {"Data_collate", Data_collate, METH_VARARGS, "collate Data instances"},
     {NULL, NULL, 0, NULL} /* Sentinel */
 };
 
@@ -671,8 +834,8 @@ PyMODINIT_FUNC PyInit__C(void) {
         Py_DECREF(m);
         return NULL;
     }
-    PyTypeObject *types[] = {&GraphType, &GraphDefType, &NodeViewType, &EdgeViewType, &DegreeViewType};
-    char *names[] = {"Graph", "GraphDef", "NodeView", "EdgeView", "DegreeView"};
+    PyTypeObject *types[] = {&GraphType, &GraphDefType, &NodeViewType, &EdgeViewType, &DegreeViewType, &DataType};
+    char *names[] = {"Graph", "GraphDef", "NodeView", "EdgeView", "DegreeView", "Data"};
     for (int i = 0; i < (int)(sizeof(types) / sizeof(PyTypeObject *)); i++) {
         if (PyType_Ready(types[i]) < 0) {
             Py_DECREF(m);

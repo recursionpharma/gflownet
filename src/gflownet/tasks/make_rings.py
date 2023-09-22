@@ -69,7 +69,6 @@ class MakeRingsTrainer(StandardOnlineTrainer):
             max_nodes=self.cfg.algo.max_nodes,
             num_cond_dim=1,
         )
-        self.env.graph_def = self.ctx.graph_def
         self.env.graph_cls = self.ctx.graph_cls
 
 
@@ -78,7 +77,7 @@ def main():
         "log_dir": "./logs/debug_run_mr_C",
         "device": "cuda",
         "num_training_steps": 10_000,
-        "num_workers": 8,
+        "num_workers": 4,
         "algo": {"tb": {"do_parameterize_p_b": True}},
     }
     os.makedirs(hps["log_dir"], exist_ok=True)

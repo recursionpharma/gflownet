@@ -94,8 +94,11 @@ class StandardOnlineTrainer(GFNTrainer):
 
     def step(self, loss: Tensor):
         loss.backward()
-        for i in self.model.parameters():
-            self.clip_grad_callback(i)
+        if 0:
+            for i in self.model.parameters():
+                self.clip_grad_callback(i)
+        else:
+            self.clip_grad_callback(self.model.parameters())
         self.opt.step()
         self.opt.zero_grad()
         self.opt_Z.step()

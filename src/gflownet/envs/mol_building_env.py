@@ -13,7 +13,7 @@ from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType
 from gflownet.utils.graphs import random_walk_probs
 
 try:
-    from gflownet._C import mol_graph_to_Data, Graph as C_Graph, GraphDef
+    from gflownet._C import mol_graph_to_Data, Graph as C_Graph, GraphDef, Data_collate
 
     C_Graph_available = True
 except ImportError:
@@ -172,17 +172,23 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.device = torch.device("cpu")
         if C_Graph_available:
             self.graph_def = GraphDef(self.atom_attr_values, self.bond_attr_values)
-            self.graph_cls = lambda: C_Graph(self.graph_def)
+            self.graph_cls = self._make_C_graph
         else:
             self.graph_cls = Graph
 
+    def _make_C_graph(self):
+        return C_Graph(self.graph_def)
+
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
+
         act_type, act_row, act_col = [int(i) for i in action_idx]
         if fwd:
             t = self.action_type_order[act_type]
         else:
             t = self.bck_action_type_order[act_type]
+        if self.graph_cls is not Graph:
+            return g.mol_aidx_to_GraphAction((act_type, act_row, act_col), t)
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -221,6 +227,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 break
         else:
             raise ValueError(f"Unknown action type {action.action}")
+        if self.graph_cls is not Graph:
+            return (type_idx,) + g.mol_GraphAction_to_aidx(action)
 
         if action.action is GraphActionType.Stop:
             row = col = 0
@@ -274,8 +282,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        if C_Graph_available:
+        if self.graph_cls is not Graph:
             data = mol_graph_to_Data(g, self, torch)
+            if 1:
+                return data
             return gd.Data(**{k: v for k, v in data.items()})
         zeros = lambda *args, **kwargs: np.zeros(*args, **{"dtype": np.float32, **kwargs})  # noqa
         ones = lambda *args, **kwargs: np.ones(*args, **{"dtype": np.float32, **kwargs})  # noqa
@@ -339,8 +349,15 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             # If the valence is maxed out, mask out logits that would add a new atom + single bond to this node
             if explicit_valence[n] >= max_valence[n]:
                 add_node_mask[i, :] = 0
+                if ad["v"] == "N" and ad.get("charge", 0) == 1:
+                    # Special case: if the node is a positively charged Nitrogen, and the valence is maxed out (i.e. 5)
+                    # the agent cannot remove the charge, it has to remove the bonds (or bond attrs) making this valence
+                    # maxed out first.
+                    remove_node_attr_mask[i, self.settable_atom_attrs.index("charge")] = 0
             # If charge is not yet defined make sure there is room in the valence
-            if "charge" not in ad and explicit_valence[n] + 1 > max_valence[n]:
+            # Special case for N: adding charge to N increases its valence by 2, so we don't want to prevent that
+            # action, even if the max_valence is "full" (for v=3)
+            if "charge" not in ad and explicit_valence[n] + 1 > (max_valence[n] + (2 if ad["v"] == "N" else 0)):
                 s, e = self.atom_attr_logit_slice["charge"]
                 set_node_attr_mask[i, s:e] = 0
             # idem for explicit hydrogens
@@ -414,6 +431,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
+        if self.graph_cls is not Graph:
+            return Data_collate(graphs, ["edge_index", "non_edge_index"])
         return gd.Batch.from_data_list(graphs, follow_batch=["edge_index", "non_edge_index"])
 
     def mol_to_graph(self, mol: Mol) -> Graph:
