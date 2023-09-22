@@ -69,6 +69,19 @@ def count_reward(g):
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
+def adjust_skew(rewards, lam=0.1):
+    r_bins = list(set(rewards)) 
+    mono_weights = np.exp(- lam * np.array(r_bins))
+    rewards_skew = []
+    
+    for r in rewards:
+        i = np.where(r_bins == r)[0][0]
+        rewards_skew.append(mono_weights[i] * r)
+        
+    rewards_skew = np.array(rewards_skew) / np.min(rewards_skew) * np.min(r_bins)
+    return rewards_skew
+
+
 def count_gaussian_noise_reward(g, std=0.1):
     ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
     reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
