@@ -3,6 +3,7 @@ import pathlib
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 import numpy as np
+import wandb
 import torch
 import torch.nn as nn
 import torch.utils.tensorboard
@@ -134,6 +135,15 @@ class GFNTrainer:
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
 
+        # init wandb logger
+        wandb.init(
+            entity="lazaratan", # Set the project where this run will be logged
+            project="gflownet-generalization",
+            config=hps, # Track hyperparameters and run metadata
+            dir=hps['log_dir'],
+            tags=hps['log_tags'],
+        )
+        
         self.setup()
 
     def set_default_hps(self, base: Config):
@@ -330,6 +340,7 @@ class GFNTrainer:
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
             self.log(info, it, "train")
+            wandb.log({"train": info}, step=it)
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
 
@@ -337,12 +348,14 @@ class GFNTrainer:
                 for batch in valid_dl:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
+                    wandb.log({"valid": info})
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
                         c.on_validation_end(end_metrics)
                 self.log(end_metrics, it, "valid_end")
+                wandb.log({"valid": end_metrics})
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
         self._save_state(num_training_steps)
