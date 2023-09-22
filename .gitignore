@@ -1,6 +1,12 @@
 # Model cache
 src/gflownet/models/cache/
 
+# Files
+notebooks/
+expts/slurm*
+data/
+requirements/setup_venv.txt
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
