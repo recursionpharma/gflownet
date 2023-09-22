@@ -56,7 +56,7 @@ class GFNAlgorithm:
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, batch_size: int, cond_info: Tensor, random_action_prob: float = 0
-    ) -> Dict[str, Tensor]:
+    ) -> List[Dict[str, Tensor]]:
         """Creates a batch of training data by sampling the model
 
         Parameters

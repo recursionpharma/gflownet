@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 from gflownet.config import Config
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.data.greedyfier_iterator import GreedyfierIterator, BatchTuple
+from gflownet.data.double_iterator import DoubleIterator, BatchTuple
 from gflownet.models import bengio2021flow
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -79,7 +79,7 @@ class SEHTask(GFNTask):
         return FlatRewards(preds), is_valid
 
 
-class SEHAtomTrainer(StandardOnlineTrainer):
+class SEHDoubleModelTrainer(StandardOnlineTrainer):
     task: SEHTask
 
     def set_default_hps(self, cfg: Config):
@@ -119,17 +119,17 @@ class SEHAtomTrainer(StandardOnlineTrainer):
 
     def setup_algo(self):
         super().setup_algo()
+
         cfgp = copy.deepcopy(self.cfg)
-        cfgp.algo.max_len = cfgp.greedy_max_steps
-        cfgp.algo.input_timestep = True
+        cfgp.algo.input_timestep = True  # Hmmm?
         cfgp.algo.illegal_action_logreward = -10
         ctxp = copy.deepcopy(self.ctx)
-        ctxp.num_cond_dim += 32  # Add an extra dimension for the timestep input
+        ctxp.num_cond_dim += 32  # Add an extra dimension for the timestep input [do we still need that?]
         ctxp.action_type_order = ctxp.action_type_order + ctxp.bck_action_type_order  # Merge fwd and bck action types
         ctxp.bck_action_type_order = ctxp.action_type_order  # Make sure the backward action types are the same
-        self.greedy_algo = QLearning(self.env, ctxp, self.rng, cfgp)
-        self.greedy_algo.graph_sampler.compute_uniform_bck = False
-        self.greedy_ctx = ctxp
+        self.second_algo = QLearning(self.env, ctxp, self.rng, cfgp)
+        self.second_algo.graph_sampler.compute_uniform_bck = False
+        self.second_ctx = ctxp
 
     def setup_task(self):
         self.task = SEHTask(
@@ -138,52 +138,38 @@ class SEHAtomTrainer(StandardOnlineTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
-        self.greedy_task = copy.copy(self.task)
-        # Ignore temperature for greedy task
-        self.greedy_task.cond_info_to_logreward = lambda cond_info, flat_reward: RewardScalar(
+        self.second_task = copy.copy(self.task)
+        # Ignore temperature for RL task
+        self.second_task.cond_info_to_logreward = lambda cond_info, flat_reward: RewardScalar(
             flat_reward.reshape((-1,))
         )
 
     def setup_env_context(self):
-        if 1:
-            self.ctx = FragMolBuildingEnvContext(num_cond_dim=self.task.num_cond_dim)
-            # Why do we need this? The greedy algorithm might remove edge attributes which make the fragment graph
-            # invalid, we want to know that we've landed in an invalid state in such a case.
-            self.ctx.fail_on_missing_attr = True
-        else:
-            self.ctx = MolBuildingEnvContext(
-                ["C", "N", "O", "S", "F", "Cl", "Br"],
-                charges=[0],
-                chiral_types=None,
-                num_rw_feat=0,
-                max_nodes=self.cfg.algo.max_nodes,
-                num_cond_dim=self.task.num_cond_dim,
-                allow_5_valence_nitrogen=True,  # We need to fix backward trajectories to use masks!
-                # And make sure the Nitrogen-related backward masks make sense
-            )
+        self.ctx = FragMolBuildingEnvContext(num_cond_dim=self.task.num_cond_dim)
 
     def setup_model(self):
         super().setup_model()
-        self.greedy_model = GraphTransformerGFN(
-            self.greedy_ctx,
+        self.second_model = GraphTransformerGFN(
+            self.second_ctx,
             self.cfg,
         )
-        self._get_additional_parameters = lambda: list(self.greedy_model.parameters())
-        self.greedy_model_lagged = copy.deepcopy(self.greedy_model)
-        self.greedy_model_lagged.to(self.device)
+        self._get_additional_parameters = lambda: list(self.second_model.parameters())
+        # Maybe only do this if we are using DDQN?
+        self.second_model_lagged = copy.deepcopy(self.second_model)
+        self.second_model_lagged.to(self.device)
         self.dqn_tau = self.cfg.dqn_tau
 
     def build_training_data_loader(self):
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
-        gmodel, dev = self._wrap_for_mp(self.greedy_model, send_to_device=True)
-        iterator = GreedyfierIterator(
+        gmodel, dev = self._wrap_for_mp(self.second_model, send_to_device=True)
+        iterator = DoubleIterator(
             model,
             gmodel,
             self.ctx,
             self.algo,
-            self.greedy_algo,
+            self.second_algo,
             self.task,
-            self.greedy_task,
+            self.second_task,
             dev,
             batch_size=self.cfg.algo.global_batch_size,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
@@ -191,7 +177,7 @@ class SEHAtomTrainer(StandardOnlineTrainer):
             hindsight_ratio=self.cfg.replay.hindsight_ratio,  # remove?
             illegal_action_logrewards=(
                 self.cfg.algo.illegal_action_logreward,
-                self.greedy_algo.illegal_action_logreward,
+                self.second_algo.illegal_action_logreward,
             ),
         )
         for hook in self.sampling_hooks:
@@ -207,11 +193,11 @@ class SEHAtomTrainer(StandardOnlineTrainer):
         )
 
     def train_batch(self, batch: BatchTuple, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
-        gfn_batch, greedy_batch = batch
+        gfn_batch, second_batch = batch
         loss, info = self.algo.compute_batch_losses(self.model, gfn_batch)
-        gloss, ginfo = self.greedy_algo.compute_batch_losses(self.greedy_model, greedy_batch, self.greedy_model_lagged)
-        self.step(loss + gloss)  # TODO: clip greedy model gradients?
-        info.update({f"greedy_{k}": v for k, v in ginfo.items()})
+        sloss, sinfo = self.second_algo.compute_batch_losses(self.second_model, second_batch, self.second_model_lagged)
+        self.step(loss + sloss)  # TODO: clip second model gradients?
+        info.update({f"sec_{k}": v for k, v in sinfo.items()})
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
@@ -219,13 +205,13 @@ class SEHAtomTrainer(StandardOnlineTrainer):
     def step(self, loss):
         super().step(loss)
         if self.dqn_tau > 0:
-            for a, b in zip(self.greedy_model.parameters(), self.greedy_model_lagged.parameters()):
+            for a, b in zip(self.second_model.parameters(), self.second_model_lagged.parameters()):
                 b.data.mul_(self.dqn_tau).add_(a.data * (1 - self.dqn_tau))
 
     def _save_state(self, it):
         torch.save(
             {
-                "models_state_dict": [self.model.state_dict(), self.greedy_model.state_dict()],
+                "models_state_dict": [self.model.state_dict(), self.second_model.state_dict()],
                 "cfg": self.cfg,
                 "step": it,
             },
@@ -236,7 +222,7 @@ class SEHAtomTrainer(StandardOnlineTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": f"./logs/greedy/run_debug/",
+        "log_dir": f"./logs/twomod/run_debug/",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
         "num_training_steps": 2000,
@@ -248,8 +234,8 @@ def main():
         "algo": {"sampling_tau": 0.95, "global_batch_size": 4, "tb": {"do_subtb": True}},
         "cond": {
             "temperature": {
-                "sample_dist": "uniform",
-                "dist_params": [8.0, 64.0],
+                "sample_dist": "constant",
+                "dist_params": [64.0],
             }
         },
     }
@@ -260,7 +246,7 @@ def main():
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(hps["log_dir"])
 
-    trial = SEHAtomTrainer(hps)
+    trial = SEHDoubleModelTrainer(hps)
     trial.print_every = 1
     trial.run()
 

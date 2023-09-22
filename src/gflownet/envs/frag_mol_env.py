@@ -76,7 +76,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
         self.edges_are_unordered = False
-        self.fail_on_missing_attr = False
+        self.fail_on_missing_attr = True
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
