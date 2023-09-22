@@ -48,7 +48,8 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # in a number of settings the regular loss is more stable.
         self.fm_balanced_loss = cfg.algo.fm.balanced_loss
         self.fm_leaf_coef = cfg.algo.fm.leaf_coef
-        self.correct_idempotent: bool = self.correct_idempotent or cfg.algo.fm.correct_idempotent
+        #self.correct_idempotent: bool = self.correct_idempotent or cfg.algo.fm.correct_idempotent
+        self.correct_idempotent: bool = cfg.algo.fm.correct_idempotent
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
