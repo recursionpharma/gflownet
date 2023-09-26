@@ -1,11 +1,11 @@
 import sys
 import itertools
 
-root = "./logs/gfn_TB_FM_flows"
+root = "./logs/gfn_TB_rewards_skew"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 50000,
+    "num_training_steps": 20000,
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
@@ -32,7 +32,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_flows"],
+        "log_tags": ["gfn_rewards_skew"],
         
         "task": {
         "basic_graph": {
@@ -42,7 +42,9 @@ hps = [
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
-            "reward_func": reward, 
+            "reward_func": 'cliques', 
+            "reward_reshape": True,
+            "reward_param": lam,
             },
         },  
         
@@ -52,7 +54,7 @@ hps = [
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for lam in [0.0, 0.1, 0.2, 0.5]
     for seed in [1, 2, 3]
     for algo in [
         {
@@ -62,7 +64,7 @@ hps = [
         #{
         #    "method": "FM", # either TB or FM
         #    "fm": {"correct_idempotent": False, "balanced_loss": False, "leaf_coef": 10, "epsilon": 1e-38},
-        #},
+        #,
     ]
 ]
 

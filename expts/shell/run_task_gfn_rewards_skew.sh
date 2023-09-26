@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_distilled_flows/log-%A-%a.out
+#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_gfn_rewards_skew/log-%A-%a.out
 #SBATCH --job-name=gfn
 #SBATCH --partition=long
 #SBATCH --gpus-per-node=1080ti:1
@@ -12,4 +12,4 @@
 source venv-gfn/bin/activate
 
 # Launch these jobs with sbatch --array=0-N%M job.sh   (N is inclusive, M limits number of tasks run at once)
-srun python expts/task_distilled_flows.py $SLURM_ARRAY_TASK_ID
+srun python expts/task_gfn_rewards_skew.py $SLURM_ARRAY_TASK_ID

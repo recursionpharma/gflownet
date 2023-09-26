@@ -1,14 +1,21 @@
 import sys
 
-root = "./logs/gfn_single_runs/"
+root = "./logs/gfn_single_runs"
 
 base_hps = {
-    "num_training_steps": 20000,
+    "num_training_steps": 50000,
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
-    "model": {"num_layers": 2, "num_emb": 256},
-    "opt": {"adam_eps": 1e-8, "learning_rate": 3e-4},
+    "model": {
+        "num_layers": 8, 
+        "num_emb": 128,
+        "graph_transformer": {
+            "num_heads": 4,
+            "num_mlp_layers": 2, 
+            },
+        },
+    "opt": {"learning_rate": 1e-4},
     "device": 'cuda',
 }
 
@@ -22,7 +29,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_gfn/",
-        "log_tags": ["test_tag_cgn"],
+        "log_tags": ["test_tag_cfg"],
         
         "task": {
         "basic_graph": {
@@ -32,7 +39,9 @@ hps = [
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
-            "reward_func": 'count', 
+            "reward_func": 'cliques', 
+            "reward_reshape": True,
+            "reward_param": 0.0,
             },
         },  
         

@@ -1,18 +1,26 @@
 import sys
 import itertools
 
-root = "./logs/distilled_Pf_Fs_flows/"
+root = "./logs/distilled_Pf_Fs_flows"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 20000,
+    "num_training_steps": 50000,
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
-    "model": {"num_layers": 2, "num_emb": 256},
-    "opt": {"adam_eps": 1e-8, "learning_rate": 3e-4},
+    "model": {
+        "num_layers": 8, 
+        "num_emb": 128,
+        "graph_transformer": {
+            "num_heads": 4,
+            "num_mlp_layers": 2, 
+            },
+        },
+    "opt": {"learning_rate": 1e-4},
     "device": 'cuda',
 }
+
 
 base_algo_hps = {
     "global_batch_size": 64,
@@ -45,7 +53,7 @@ hps = [
         
     }
     for reward in ['const', 'count', 'even_neighbors', 'cliques']
-    for seed in [1, 2, 3, 4, 5]
+    for seed in [1, 2, 3]
     for regress_P_F in [True, False]
     #for algo in [
     #    {
