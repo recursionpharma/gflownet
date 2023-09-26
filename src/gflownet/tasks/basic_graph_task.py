@@ -69,19 +69,6 @@ def count_reward(g):
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
-def adjust_skew(rewards, lam=0.1):
-    r_bins = list(set(rewards)) 
-    mono_weights = np.exp(- lam * np.array(r_bins))
-    rewards_skew = []
-    
-    for r in rewards:
-        i = np.where(r_bins == r)[0][0]
-        rewards_skew.append(mono_weights[i] * r)
-        
-    rewards_skew = np.array(rewards_skew) / np.min(rewards_skew) * np.min(r_bins)
-    return rewards_skew
-
-
 def count_gaussian_noise_reward(g, std=0.1):
     ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
     reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
@@ -175,13 +162,15 @@ class TwoColorGraphDataset(Dataset):
         split_seed=142857,
         ratio=0.9,
         max_nodes=7,
-        reward_func="cliques",
-        reward_param=None,
+        reward_func="const",
+        reward_reshape: bool = False,
+        reward_param: float = 0.0,
     ):
         self.data = data
         self.ctx = ctx
         self.output_graphs = output_graphs
         self.reward_func = reward_func
+        self.reward_reshape = reward_reshape
         self.reward_param = reward_param
         self.idcs = [0]
         self.max_nodes = max_nodes
@@ -203,6 +192,11 @@ class TwoColorGraphDataset(Dataset):
         self.compute_normalized_Fsa = False
         self.regress_to_F = False
 
+        if self.reward_reshape:
+            self.log_rewards, self.skewed_log_rewards = self.pre_compute_rewards()
+            #rs_reward = list(set(self.rewards_hash))
+            #rs_reward_skewed = list(set(self.skewed_reward_hash))
+
     def __len__(self):
         return len(self.idcs)
 
@@ -217,12 +211,45 @@ class TwoColorGraphDataset(Dataset):
             return count_reward(g)
         elif self.reward_func == "const":
             return np.float32(0)
+        # new rewards
         elif self.reward_func == "count_gaussian":
             return count_gaussian_noise_reward(g, self.reward_param)
         elif self.reward_func == "count_laplace":
             return count_laplace_noise_reward(g, self.reward_param)
+
+    def adjust_reward_skew(self, rewards, lam=0.1):
+        """
+        Skew the reward function towards favouring higher reward
+        values. 
+        """
+        r_bins = list(set(rewards)) 
+        mono_weights = np.exp(- lam * np.array(r_bins))
+        rewards_skew = []
+        
+        for r in rewards:
+            i = np.where(r_bins == r)[0][0]
+            rewards_skew.append(mono_weights[i] * r)
+            
+        rewards_skew = np.array(rewards_skew) / np.min(rewards_skew) * np.min(r_bins)
+        return rewards_skew
+
+    def corrupt_reward_labels(self, rewards):
+        """
+        Corrupt reward values with noised. Used to 
+        emulate "Rethinking Generalization" experiments, but for 
+        GFlowNets
+        """
+        pass
+
+    def shuffle_reward_labels(self, rewards):
+        """
+        Shuffles reward value pairing for given graphs. Used to 
+        emulate "Rethinking Generalization" experiments, but for 
+        GFlowNets
+        """
+        pass
     
-    def get_graph_idx(self, g, default=None):
+    def get_graph_idx(self, g, states, default=None):
         def iso(u, v):
             return is_isomorphic(u, v, lambda a, b: a == b, lambda a, b: a == b)
 
@@ -240,19 +267,28 @@ class TwoColorGraphDataset(Dataset):
         if len(bucket) == 1:
             return bucket[0]
         for i in bucket:
-            if iso(self.states[i], g):
+            if iso(states[i], g):
                 return i
         if default is not None:
             return default
         raise ValueError(g)
       
-    def hashg_for_reward(self):
+    def hashg_for_graphs(self):
         states = self.data
-        self._hash_to_graphs = {}
+        _hash_to_graphs = {}
         states_hash = [hashg(i) for i in tqdm(states, disable=True)]
         for i, h in enumerate(states_hash):
-            self._hash_to_graphs[h] = self._hash_to_graphs.get(h, list()) + [i]
-        pass
+            _hash_to_graphs[h] = _hash_to_graphs.get(h, list()) + [i]
+        return _hash_to_graphs
+
+    def pre_compute_rewards(self):
+        self._hash_to_graphs = self.hashg_for_graphs()
+        rewards = [
+            self.reward(self.data[self.get_graph_idx(g, self.data)])
+            for g in self.data
+            ]
+        skewed_rewards = self.adjust_reward_skew(rewards, lam=self.reward_param)
+        return rewards, skewed_rewards
 
     def collate_fn(self, batch):
         graphs, rewards, idcs = zip(*batch)
@@ -376,10 +412,23 @@ class BasicGraphTaskTrainer(GFNTrainer):
         self._do_supervised = self.cfg.task.basic_graph.do_supervised
 
         self.training_data = TwoColorGraphDataset(
-            self._data, self.ctx, train=True, ratio=mcfg.train_ratio, max_nodes=max_nodes, reward_func=mcfg.reward_func
+            self._data, 
+            self.ctx, 
+            train=True, 
+            ratio=mcfg.train_ratio, 
+            max_nodes=max_nodes, 
+            reward_func=mcfg.reward_func, 
+            reward_reshape=mcfg.reward_reshape, 
+            reward_param=mcfg.reward_param
         )
         self.test_data = TwoColorGraphDataset(
-            self._data, self.ctx, train=False, ratio=mcfg.train_ratio, max_nodes=max_nodes, reward_func=mcfg.reward_func
+            self._data, self.ctx, 
+            train=False, 
+            ratio=mcfg.train_ratio, 
+            max_nodes=max_nodes, 
+            reward_func=mcfg.reward_func, 
+            reward_reshape=mcfg.reward_reshape, 
+            reward_param=mcfg.reward_param
         )
 
         self.exact_prob_cb = ExactProbCompCallback(
@@ -388,6 +437,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self.device,
             cache_root=self.cfg.task.basic_graph.data_root,
             cache_path=self.cfg.task.basic_graph.data_root + f"/two_col_epc_cache_{max_nodes}.pkl",
+            log_rewards=self.training_data.skewed_log_rewards if mcfg.reward_reshape else None,
         )
         if mcfg.do_tabular_model:
             self.env.set_epc(self.exact_prob_cb)
@@ -962,12 +1012,13 @@ def main():
         "validate_every": 100,
         "num_workers": 0,
         "log_dir": "./logs/basic_graphs/run_6n_pb2",
+        "log_tags": None,
         "model": {"num_layers": 2, "num_emb": 256},
         "opt": {"adam_eps": 1e-8, "learning_rate": 3e-4},
         "algo": {
             "global_batch_size": 64,
             "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
-            "max_nodes": 6,
+            "max_nodes": 7,
             "offline_ratio": 0 / 4,
         },
         "task": {"basic_graph": {"do_supervised": False, "do_tabular_model": False, "train_ratio": 1}},  #

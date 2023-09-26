@@ -135,10 +135,13 @@ class GFNTrainer:
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
 
+        # make dir if doesn't exit
+        os.makedirs(self.cfg.log_dir, exist_ok=True)
+
         # init wandb logger
         wandb.init(
             entity="lazaratan", # Set the project where this run will be logged
-            project="gflownet-generalization",
+            project="gflownet-gen",
             config=hps, # Track hyperparameters and run metadata
             dir=hps['log_dir'],
             tags=hps['log_tags'],
@@ -339,6 +342,7 @@ class GFNTrainer:
                 )
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
+            info['num_examples_seen'] = it*self.cfg.algo.global_batch_size
             self.log(info, it, "train")
             wandb.log({"train": info}, step=it)
             if it % self.print_every == 0:
@@ -355,7 +359,7 @@ class GFNTrainer:
                     if hasattr(c, "on_validation_end"):
                         c.on_validation_end(end_metrics)
                 self.log(end_metrics, it, "valid_end")
-                wandb.log({"valid": end_metrics})
+                wandb.log({"valid": end_metrics}, step=it)
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
         self._save_state(num_training_steps)
