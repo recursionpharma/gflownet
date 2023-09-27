@@ -1,5 +1,5 @@
 #define PY_SSIZE_T_CLEAN
-#include "./main.h"
+#include "main.h"
 #include "structmember.h"
 #include <Python.h>
 
@@ -61,8 +61,11 @@ static PyObject *Data_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
 }
 
 static int Data_init(Data *self, PyObject *args, PyObject *kwds) {
-    PyErr_SetString(PyExc_KeyError, "Trying to initialize a Data object from Python. Use *_graph_to_Data instead.");
-    return -1;
+    if (args != NULL && 0) {
+        PyErr_SetString(PyExc_KeyError, "Trying to initialize a Data object from Python. Use *_graph_to_Data instead.");
+        return -1;
+    }
+    return 0;
 }
 
 void *Data_ptr_and_shape(Data *self, char *name, int *n, int *m) {
@@ -73,7 +76,7 @@ void *Data_ptr_and_shape(Data *self, char *name, int *n, int *m) {
             return PyByteArray_AsString(self->bytes) + self->offsets[i];
         }
     }
-    return 0xdeadbeef;
+    return (void *)0xdeadbeef;
 }
 
 void Data_init_C(Data *self, PyObject *bytes, PyObject *graph_def, int shapes[][2], int *is_float, int num_matrices,
@@ -83,10 +86,12 @@ void Data_init_C(Data *self, PyObject *bytes, PyObject *graph_def, int shapes[][
     Py_INCREF(bytes);
     self->bytes = bytes;
     Py_XDECREF(tmp);
+
     tmp = (PyObject *)self->graph_def;
     Py_INCREF(graph_def);
     self->graph_def = (GraphDef *)graph_def;
     Py_XDECREF(tmp);
+
     self->shapes = malloc(sizeof(int) * num_matrices * 2);
     self->offsets = malloc(sizeof(int) * num_matrices);
     int offset_bytes = 0;
@@ -214,9 +219,11 @@ PyObject *Data_mol_aidx_to_GraphAction(PyObject *_self, PyObject *args) {
         // edge_index should be (2, m), * 2 because edges are duplicated
         PyObject *u = PyLong_FromLong(edge_index[row * 2 + 0]);
         PyObject *v = PyLong_FromLong(edge_index[row * 2 + m]);
-        PyObject *res = PyObject_CallObject(GraphAction, PyTuple_Pack(3, RemoveEdge, u, v));
+        PyObject *vargs = PyTuple_Pack(3, RemoveEdge, u, v);
+        PyObject *res = PyObject_CallObject(GraphAction, vargs);
         Py_DECREF(u);
         Py_DECREF(v);
+        Py_DECREF(vargs);
         return res;
     }
     if (gt == RemoveEdgeAttr) {
@@ -442,7 +449,10 @@ PyObject *Data_collate(PyObject *self, PyObject *args) {
     PyObject *empty_cb_int64_arg = PyDict_New();
     PyDict_SetItemString(empty_cb_int64_arg, "dtype", PyObject_GetAttrString(torch_module, "int64"));
     int num_graphs = PyList_Size(graphs);
-    PyObject *batch = PyObject_CallMethod(torch_gd_module, "Batch", NULL);
+    // PyObject *batch = PyObject_CallMethod(torch_gd_module, "Batch", NULL);
+    // Actually we want batch = Batch(_base_cls=graphs[0].__class__)
+    PyObject *base_cls = PyObject_GetAttrString(PyList_GetItem(graphs, 0), "__class__");
+    PyObject *batch = PyObject_CallMethod(torch_gd_module, "Batch", "O", base_cls);
     PyObject *slice_dict = PyDict_New();
     Data *first = (Data *)PyList_GetItem(graphs, 0);
     int index_of_x = 0;

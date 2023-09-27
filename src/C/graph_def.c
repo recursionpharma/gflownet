@@ -21,8 +21,10 @@ static PyObject *GraphDef_new(PyTypeObject *type, PyObject *args, PyObject *kwds
     if (self != NULL) {
         self->node_values = NULL;
         self->node_keypos = NULL;
+        self->node_poskey = NULL;
         self->edge_values = NULL;
         self->edge_keypos = NULL;
+        self->edge_poskey = NULL;
         self->node_attr_offsets = NULL;
         self->edge_attr_offsets = NULL;
     }

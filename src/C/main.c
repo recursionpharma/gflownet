@@ -24,6 +24,8 @@ static PyObject *Graph_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
         self->num_nodes = 0;
         self->num_edges = 0;
         self->nodes = self->edges = self->node_attrs = self->edge_attrs = self->degrees = NULL;
+        self->num_node_attrs = 0;
+        self->num_edge_attrs = 0;
     }
     return (PyObject *)self;
 }
@@ -261,9 +263,17 @@ PyObject *Graph_bridges(PyObject *_self, PyObject *args) {
         PyObject *result = PyList_New(0);
         for (int i = 0; i < self->num_edges; i++) {
             if (is_bridge[i]) {
-                PyList_Append(result, PyTuple_Pack(2, PyLong_FromLong(self->nodes[self->edges[i * 2]]),
-                                                   PyLong_FromLong(self->nodes[self->edges[i * 2 + 1]])));
+                PyObject *u = PyLong_FromLong(self->nodes[self->edges[i * 2]]);
+                PyObject *v = PyLong_FromLong(self->nodes[self->edges[i * 2 + 1]]);
+                PyObject *t = PyTuple_Pack(2, u, v);
+                PyList_Append(result, t);
+                Py_DECREF(u);
+                Py_DECREF(v);
+                Py_DECREF(t);
             }
+        }
+        for (int i = 0; i < n; i++) {
+            free(adj[i]);
         }
         return result;
     }
@@ -792,22 +802,8 @@ PyObject *Graph_setedgeattr(Graph *self, int index, PyObject *k, PyObject *v) {
     Py_RETURN_NONE;
 }
 
-static PyObject *spam_system(PyObject *self, PyObject *args) {
-    const char *command;
-    int sts;
-
-    if (!PyArg_ParseTuple(args, "s", &command))
-        return NULL;
-    sts = system(command);
-    if (sts < 0) {
-        PyErr_SetString(SpamError, "System command failed");
-        return NULL;
-    }
-    return PyLong_FromLong(sts);
-}
-
 static PyMethodDef SpamMethods[] = {
-    {"system", spam_system, METH_VARARGS, "Execute a shell command."},
+    //{"print_count", print_count, METH_VARARGS, "Execute a shell command."},
     {"mol_graph_to_Data", mol_graph_to_Data, METH_VARARGS, "Convert a mol_graph to a Data object."},
     {"Data_collate", Data_collate, METH_VARARGS, "collate Data instances"},
     {NULL, NULL, 0, NULL} /* Sentinel */

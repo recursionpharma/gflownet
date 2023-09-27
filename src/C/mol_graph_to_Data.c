@@ -51,7 +51,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     int max_valence[g->num_nodes];
     PyObject *_max_atom_valence = PyObject_GetAttrString(ctx, "_max_atom_valence"); // new ref
     for (int i = 0; i < num_atom_types; i++) {
-        atom_valences[i] = PyLong_AsLong(PyDict_GetItem(_max_atom_valence, PyList_GetItem(atom_types, i)));
+        atom_valences[i] = PyLong_AsLong(PyDict_GetItem(_max_atom_valence, PyList_GetItem(atom_types, i))); // borrowed
     }
     Py_DECREF(_max_atom_valence);
     int v_val[g->num_nodes];
@@ -146,6 +146,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
 
     PyObject *cond_info_shape = cond_info == NULL ? NULL : PyObject_CallMethod(cond_info, "size", NULL);
     int num_cond_info_dims = cond_info == NULL ? 0 : PyLong_AsLong(PyTuple_GetItem(cond_info_shape, 1));
+    Py_DECREF(cond_info_shape);
     int node_feat_shape = maxi(1, g->num_nodes);
     int is_float[] = {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int shapes[14][2] = {
@@ -318,7 +319,8 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     }
     *stop_mask = g->num_nodes > 0 ? 1 : 0;
     if (RETURN_C_DATA) {
-        Data *data_obj = DataType.tp_new(&DataType, NULL, NULL);
+        // Data *data_obj = DataType.tp_new(&DataType, NULL, NULL);
+        Data *data_obj = (Data *)PyObject_CallObject((PyObject *)&DataType, NULL);
         Data_init_C(data_obj, data, g->graph_def, shapes, is_float, 13 + (cond_info != NULL), mol_Data_names);
         Py_DECREF(data);
         return (PyObject *)data_obj;

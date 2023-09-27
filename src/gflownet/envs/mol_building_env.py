@@ -280,10 +280,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             raise ValueError(f"Unknown action type {action.action}")
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, cond_info=None) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
         if self.graph_cls is not Graph:
-            data = mol_graph_to_Data(g, self, torch)
+            data = mol_graph_to_Data(g, self, torch, cond_info)
             if 1:
                 return data
             return gd.Data(**{k: v for k, v in data.items()})
