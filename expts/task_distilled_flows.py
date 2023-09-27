@@ -5,7 +5,7 @@ root = "./logs/distilled_Pf_Fs_flows"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 50000,
+    "num_training_steps": 100000, 
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
@@ -23,7 +23,7 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 64,
+    "global_batch_size": 256,
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }

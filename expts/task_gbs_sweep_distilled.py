@@ -5,7 +5,7 @@ root = "./logs/global_bs_distilled"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 50000,
+    "num_training_steps": 100000,
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
@@ -54,7 +54,7 @@ hps = [
     }
     for reward in ['const', 'count', 'even_neighbors', 'cliques']
     for seed in [1, 2, 3]
-    for global_bs in [16, 32, 64, 128, 256]
+    for global_bs in [32, 64, 128, 256, 512]
     #for algo in [
         #{
         #    "method": "TB", # either TB or FM

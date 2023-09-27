@@ -63,6 +63,8 @@ class BasicGraphConfig:
     data_root: str = "./data/basic_graph_task"
     reward_func: str = "count"  # One of cliques, even_neighbors, count, const
     reward_reshape: bool = False # Selects to use reward skew adjustment -- if True, also use hashed-reward
+    reward_corrupt: bool = False
+    reward_shuffle: bool = False
     reward_param: float = 0.0  # if 0.0, then same as base-reward (but hashed version). Parameter for the reward reshape
     do_supervised: bool = False
     do_tabular_model: bool = False

@@ -40,8 +40,10 @@ hps = [
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
             "reward_func": 'cliques', 
-            "reward_reshape": True,
-            "reward_param": 0.0,
+            "reward_reshape": False,
+            "reward_corrupt": False,
+            "reward_shuffle": False,
+            "reward_param": 0.1,
             },
         },  
         

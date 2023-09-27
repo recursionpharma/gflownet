@@ -69,24 +69,6 @@ def count_reward(g):
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
-def count_gaussian_noise_reward(g, std=0.1):
-    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
-    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
-    return reward + np.random.normal(0, std, len(reward)) # this wont work
-    # need to make sure that the noise added is the same for a given graph 
-    # every time that graph gets samples ...
-    # current implementation will add different noise each time the graph is 
-    # sampled since noise is getting resampled each time.
-    # Potential fix: can we use the state/graph as seed for noise? 
-
-
-def count_laplace_noise_reward(g, std=0.05):
-    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
-    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
-    return reward + np.random.laplace(0, std, len(reward)) # wont work
-    # same as above for Gaussian
-
-
 def count_sparse_reward(g, lam=0.1):
     ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
     sparsity = np.linalg.norm([g.nodes[i]["v"] for i in g], ord=1)
@@ -164,6 +146,8 @@ class TwoColorGraphDataset(Dataset):
         max_nodes=7,
         reward_func="const",
         reward_reshape: bool = False,
+        reward_corrupt: bool = False,
+        reward_shuffle: bool = False,
         reward_param: float = 0.0,
     ):
         self.data = data
@@ -171,6 +155,8 @@ class TwoColorGraphDataset(Dataset):
         self.output_graphs = output_graphs
         self.reward_func = reward_func
         self.reward_reshape = reward_reshape
+        self.reward_corrupt = reward_corrupt
+        self.reward_shuffle = reward_shuffle
         self.reward_param = reward_param
         self.idcs = [0]
         self.max_nodes = max_nodes
@@ -192,15 +178,31 @@ class TwoColorGraphDataset(Dataset):
         self.compute_normalized_Fsa = False
         self.regress_to_F = False
 
+        # pre-compute log_rewards and apply 
+        # selected reward trasnformation(s)
+        log_rewards = self.pre_compute_rewards()
+        self.adjusted_log_rewards, adjusted_log_rewards = None, log_rewards
         if self.reward_reshape:
-            self.log_rewards, self.skewed_log_rewards = self.pre_compute_rewards()
-            #rs_reward = list(set(self.rewards_hash))
-            #rs_reward_skewed = list(set(self.skewed_reward_hash))
+            adjusted_log_rewards = self.monotonic_skew_reward_values(adjusted_log_rewards, lam=self.reward_param)
+        if self.reward_corrupt:
+            adjusted_log_rewards = self.corrupt_reward_values(adjusted_log_rewards, std=self.reward_param)
+        if self.reward_shuffle:
+            adjusted_log_rewards = self.shuffle_reward_values(adjusted_log_rewards)
+
+        self.adjusted_log_rewards = adjusted_log_rewards
+        self.log_rewards = log_rewards
 
     def __len__(self):
         return len(self.idcs)
 
     def reward(self, g):
+        if self.adjusted_log_rewards is not None:
+            g_idx = self.get_graph_idx(g, self.data)
+            return self.adjusted_log_rewards[g_idx]
+        else:
+            return self.reward_type(g)
+            
+    def reward_type(self, g):
         if len(g.nodes) > self.max_nodes:
             return -100
         if self.reward_func == "cliques":
@@ -211,43 +213,54 @@ class TwoColorGraphDataset(Dataset):
             return count_reward(g)
         elif self.reward_func == "const":
             return np.float32(0)
-        # new rewards
-        elif self.reward_func == "count_gaussian":
-            return count_gaussian_noise_reward(g, self.reward_param)
-        elif self.reward_func == "count_laplace":
-            return count_laplace_noise_reward(g, self.reward_param)
-
-    def adjust_reward_skew(self, rewards, lam=0.1):
+    
+    def monotonic_skew_reward_values(self, log_rewards, lam=0.1):
         """
-        Skew the reward function towards favouring higher reward
-        values. 
+        Apply monotonic trasnformation on reward values
         """
-        r_bins = list(set(rewards)) 
-        mono_weights = np.exp(- lam * np.array(r_bins))
-        rewards_skew = []
-        
-        for r in rewards:
-            i = np.where(r_bins == r)[0][0]
-            rewards_skew.append(mono_weights[i] * r)
-            
-        rewards_skew = np.array(rewards_skew) / np.min(rewards_skew) * np.min(r_bins)
-        return rewards_skew
+        return self.adjust_reward_skew(log_rewards, lam)
 
-    def corrupt_reward_labels(self, rewards):
+    def corrupt_reward_values(self, log_rewards, std=1.0):
         """
         Corrupt reward values with noised. Used to 
         emulate "Rethinking Generalization" experiments, but for 
         GFlowNets
+            TODO: Currently only for Guassian noise.
+                  Could add implementation for Laplace and others.
         """
-        pass
+        if std <= 0.:
+            return log_rewards
+        rng = np.random.default_rng(12345)
+        noise = rng.normal(loc=0.0, scale=std, size=np.array(log_rewards).shape)
+        return list(log_rewards + noise)
 
-    def shuffle_reward_labels(self, rewards):
+    def shuffle_reward_values(self, log_rewards):
         """
         Shuffles reward value pairing for given graphs. Used to 
         emulate "Rethinking Generalization" experiments, but for 
         GFlowNets
         """
-        pass
+        rng = np.random.default_rng(12345)
+        aranged_ids = np.arange(start=0, stop=len(log_rewards))
+        rand_ids = rng.choice(aranged_ids, size=aranged_ids.shape, replace=False)
+        shuffled_log_rewards = np.array(log_rewards)[rand_ids]
+        return list(shuffled_log_rewards)
+
+    def adjust_reward_skew(self, log_rewards, lam=0.1):
+        """
+        Skew the reward function towards favouring higher reward
+        values. 
+        """
+        r_bins = list(set(log_rewards)) 
+        mono_weights = np.exp(- lam * np.array(r_bins))
+        log_rewards_skew = []
+        
+        for r in log_rewards:
+            i = np.where(r_bins == r)[0][0]
+            log_rewards_skew.append(mono_weights[i] * r)
+            
+        log_rewards_skew = np.array(log_rewards_skew) / np.min(log_rewards_skew) * np.min(r_bins)
+        return list(log_rewards_skew)
     
     def get_graph_idx(self, g, states, default=None):
         def iso(u, v):
@@ -283,12 +296,11 @@ class TwoColorGraphDataset(Dataset):
 
     def pre_compute_rewards(self):
         self._hash_to_graphs = self.hashg_for_graphs()
-        rewards = [
-            self.reward(self.data[self.get_graph_idx(g, self.data)])
+        log_rewards = [
+            self.reward_type(self.data[self.get_graph_idx(g, self.data)])
             for g in self.data
             ]
-        skewed_rewards = self.adjust_reward_skew(rewards, lam=self.reward_param)
-        return rewards, skewed_rewards
+        return log_rewards
 
     def collate_fn(self, batch):
         graphs, rewards, idcs = zip(*batch)
@@ -419,6 +431,8 @@ class BasicGraphTaskTrainer(GFNTrainer):
             max_nodes=max_nodes, 
             reward_func=mcfg.reward_func, 
             reward_reshape=mcfg.reward_reshape, 
+            reward_corrupt=mcfg.reward_corrupt,
+            reward_shuffle=mcfg.reward_shuffle,
             reward_param=mcfg.reward_param
         )
         self.test_data = TwoColorGraphDataset(
@@ -428,6 +442,8 @@ class BasicGraphTaskTrainer(GFNTrainer):
             max_nodes=max_nodes, 
             reward_func=mcfg.reward_func, 
             reward_reshape=mcfg.reward_reshape, 
+            reward_corrupt=mcfg.reward_corrupt,
+            reward_shuffle=mcfg.reward_shuffle,
             reward_param=mcfg.reward_param
         )
 
@@ -437,7 +453,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self.device,
             cache_root=self.cfg.task.basic_graph.data_root,
             cache_path=self.cfg.task.basic_graph.data_root + f"/two_col_epc_cache_{max_nodes}.pkl",
-            log_rewards=self.training_data.skewed_log_rewards if mcfg.reward_reshape else None,
+            log_rewards=self.training_data.adjusted_log_rewards if mcfg.reward_reshape or mcfg.reward_corrupt or mcfg.reward_shuffle else None,
         )
         if mcfg.do_tabular_model:
             self.env.set_epc(self.exact_prob_cb)

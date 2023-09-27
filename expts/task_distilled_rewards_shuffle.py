@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "./logs/gfn_TB_FM_flows"
+root = "./logs/distilled_rewards_shuffle"
 counter = itertools.count()
 
 base_hps = {
@@ -21,7 +21,6 @@ base_hps = {
     "device": 'cuda',
 }
 
-
 base_algo_hps = {
     "global_batch_size": 256,
     "max_nodes": 7,
@@ -32,42 +31,47 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_flows"],
+        "log_tags": ["distilled_rewards_shuffle"],
         
         "task": {
         "basic_graph": {
             "test_split_seed": seed, 
-            "do_supervised": False, 
+            "do_supervised": True, 
             "do_tabular_model": False, 
-            "regress_to_P_F": False,
-            "regress_to_Fsa": False,
+            "regress_to_P_F": True,
+            "regress_to_Fsa": True,
             "train_ratio": 0.9,
             "reward_func": reward, 
+            "reward_reshape": False,
+            "reward_corrupt": False,
+            "reward_shuffle": shuffle,
+            "reward_param": 0.0,
             },
         },  
         
         "algo": {
             **base_algo_hps,
-            **algo,
+            #**algo,
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for reward in ['count', 'even_neighbors', 'cliques']
+    for shuffle in [True, False]
     for seed in [1, 2, 3]
-    for algo in [
-        {
-            "method": "TB", # either TB or FM
-            "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
-        },
+    #for algo in [
+        #{
+        #    "method": "TB", # either TB or FM
+        #    "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
+        #},
         #{
         #    "method": "FM", # either TB or FM
         #    "fm": {"correct_idempotent": False, "balanced_loss": False, "leaf_coef": 10, "epsilon": 1e-38},
-        #},
-    ]
+        #,
+    #]
 ]
 
-from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
+from gflownet.tasks.basic_graph_task import BGSupervisedTrainer
 
-trial = BasicGraphTaskTrainer(hps[int(sys.argv[1])])
+trial = BGSupervisedTrainer(hps[int(sys.argv[1])])
 trial.print_every = 1
 trial.run()
