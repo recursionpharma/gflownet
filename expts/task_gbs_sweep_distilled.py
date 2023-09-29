@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "./logs/global_bs_distilled"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/global_bs_distilled"
 counter = itertools.count()
 
 base_hps = {
@@ -53,7 +53,7 @@ hps = [
         
     }
     for reward in ['const', 'count', 'even_neighbors', 'cliques']
-    for seed in [1, 2, 3]
+    for seed in [1]
     for global_bs in [32, 64, 128, 256, 512]
     #for algo in [
         #{

@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_gfn_flows/log-%A-%a.out
-#SBATCH --job-name=gfn
+#SBATCH --job-name=gfn-normal
 #SBATCH --partition=long
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
-#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:a100:1
+#SBATCH --time=160:00:00
+#SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=32G
 #SBATCH --qos=normal
 

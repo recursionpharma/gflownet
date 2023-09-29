@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "./logs/distilled_rewards_corrupt"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_corrupt"
 counter = itertools.count()
 
 base_hps = {
@@ -55,9 +55,9 @@ hps = [
         },
         
     }
-    for reward in ['count', 'even_neighbors', 'cliques']
-    for std in [0.0, 0.01, 0.1, 0.5, 1.0]
-    for seed in [1, 2, 3]
+    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for std in [0.0, 0.1, 0.5, 1.0, 2.0]
+    for seed in [1]
     #for algo in [
         #{
         #    "method": "TB", # either TB or FM

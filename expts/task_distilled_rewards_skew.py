@@ -1,13 +1,13 @@
 import sys
 import itertools
 
-root = "./logs/distilled_rewards_skew"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_skew"
 counter = itertools.count()
 
 base_hps = {
     "num_training_steps": 100000,
     "validate_every": 100,
-    "num_workers": 4,
+    "num_workers": 8,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
         "num_layers": 8, 
@@ -41,7 +41,7 @@ hps = [
             "regress_to_P_F": True,
             "regress_to_Fsa": True,
             "train_ratio": 0.9,
-            "reward_func": 'cliques', 
+            "reward_func": reward, 
             "reward_reshape": True,
             "reward_corrupt": False,
             "reward_shuffle": False,
@@ -55,8 +55,9 @@ hps = [
         },
         
     }
+    for reward in ['count', 'even_neighbors']
     for lam in [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-    for seed in [1, 2, 3]
+    for seed in [1]
     #for algo in [
         #{
         #    "method": "TB", # either TB or FM

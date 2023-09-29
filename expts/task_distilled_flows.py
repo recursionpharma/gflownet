@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "./logs/distilled_Pf_Fs_flows"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_Pf_Fs_flows"
 counter = itertools.count()
 
 base_hps = {

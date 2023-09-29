@@ -1,6 +1,6 @@
 import sys
 
-root = "./logs/gfn_single_runs"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_single_runs"
 
 base_hps = {
     "num_training_steps": 50000,
@@ -34,30 +34,31 @@ hps = [
         "task": {
         "basic_graph": {
             "test_split_seed": 0, 
-            "do_supervised": False, 
+            "do_supervised": True, 
             "do_tabular_model": False, 
-            "regress_to_P_F": False,
-            "regress_to_Fsa": False,
+            "regress_to_P_F": True,
+            "regress_to_Fsa": True,
             "train_ratio": 0.9,
-            "reward_func": 'cliques', 
+            "reward_func": 'count', 
             "reward_reshape": False,
             "reward_corrupt": False,
             "reward_shuffle": False,
+            "reward_temper": True,
             "reward_param": 0.1,
             },
         },  
         
-        "algo": {
-            **base_algo_hps,
-            "method": "TB", # either TB or FM
-            "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
-        },
+        #"algo": {
+        #    **base_algo_hps,
+        #    "method": "TB", # either TB or FM
+        #    "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
+        #},
         
     }
 ]
 
-from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
+from gflownet.tasks.basic_graph_task import BGSupervisedTrainer
 
-trial = BasicGraphTaskTrainer(hps[0])
+trial = BGSupervisedTrainer(hps[0])
 trial.print_every = 1
 trial.run()
