@@ -65,6 +65,7 @@ class BasicGraphConfig:
     reward_reshape: bool = False # Selects to use reward skew adjustment -- if True, also use hashed-reward
     reward_corrupt: bool = False
     reward_shuffle: bool = False
+    reward_temper: bool = False
     reward_param: float = 0.0  # if 0.0, then same as base-reward (but hashed version). Parameter for the reward reshape
     do_supervised: bool = False
     do_tabular_model: bool = False

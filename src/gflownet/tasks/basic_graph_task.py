@@ -148,6 +148,7 @@ class TwoColorGraphDataset(Dataset):
         reward_reshape: bool = False,
         reward_corrupt: bool = False,
         reward_shuffle: bool = False,
+        reward_temper: bool = False,
         reward_param: float = 0.0,
     ):
         self.data = data
@@ -157,6 +158,7 @@ class TwoColorGraphDataset(Dataset):
         self.reward_reshape = reward_reshape
         self.reward_corrupt = reward_corrupt
         self.reward_shuffle = reward_shuffle
+        self.reward_temper = reward_temper
         self.reward_param = reward_param
         self.idcs = [0]
         self.max_nodes = max_nodes
@@ -178,8 +180,7 @@ class TwoColorGraphDataset(Dataset):
         self.compute_normalized_Fsa = False
         self.regress_to_F = False
 
-        # pre-compute log_rewards and apply 
-        # selected reward trasnformation(s)
+        # pre-compute log_rewards and apply selected reward trasnformation(s)
         log_rewards = self.pre_compute_rewards()
         self.adjusted_log_rewards, adjusted_log_rewards = None, log_rewards
         if self.reward_reshape:
@@ -188,9 +189,11 @@ class TwoColorGraphDataset(Dataset):
             adjusted_log_rewards = self.corrupt_reward_values(adjusted_log_rewards, std=self.reward_param)
         if self.reward_shuffle:
             adjusted_log_rewards = self.shuffle_reward_values(adjusted_log_rewards)
+        if self.reward_temper:
+            adjusted_log_rewards = self.temper_reward_values(adjusted_log_rewards, beta=self.reward_param)
 
-        self.adjusted_log_rewards = adjusted_log_rewards
-        self.log_rewards = log_rewards
+        if self.reward_reshape or self.reward_corrupt or self.reward_shuffle:
+            self.adjusted_log_rewards = adjusted_log_rewards
 
     def __len__(self):
         return len(self.idcs)
@@ -245,6 +248,12 @@ class TwoColorGraphDataset(Dataset):
         rand_ids = rng.choice(aranged_ids, size=aranged_ids.shape, replace=False)
         shuffled_log_rewards = np.array(log_rewards)[rand_ids]
         return list(shuffled_log_rewards)
+
+    def temper_reward_values(self, log_rewards, beta=1.0):
+        """
+        Temper rewards for pre-computed log_rewards.
+        """
+        return list(np.array(log_rewards) * (1.0 / beta))
 
     def adjust_reward_skew(self, log_rewards, lam=0.1):
         """
@@ -433,6 +442,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
             reward_reshape=mcfg.reward_reshape, 
             reward_corrupt=mcfg.reward_corrupt,
             reward_shuffle=mcfg.reward_shuffle,
+            reward_temper=mcfg.reward_temper,
             reward_param=mcfg.reward_param
         )
         self.test_data = TwoColorGraphDataset(
@@ -444,6 +454,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
             reward_reshape=mcfg.reward_reshape, 
             reward_corrupt=mcfg.reward_corrupt,
             reward_shuffle=mcfg.reward_shuffle,
+            reward_temper=mcfg.reward_temper,
             reward_param=mcfg.reward_param
         )
 
