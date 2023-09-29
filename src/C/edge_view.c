@@ -122,6 +122,7 @@ static int EdgeView_contains(PyObject *_self, PyObject *v) {
         PyErr_Clear();
         return 0;
     }
+    Py_DECREF(attr);
     return 1;
 }
 PyObject *EdgeView_iter(PyObject *_self) {
@@ -142,7 +143,12 @@ PyObject *EdgeView_iternext(PyObject *_self) {
     }
     int u = self->graph->nodes[self->graph->edges[2 * self->index]];
     int v = self->graph->nodes[self->graph->edges[2 * self->index + 1]];
-    return PyTuple_Pack(2, PyLong_FromLong(u), PyLong_FromLong(v));
+    PyObject *pu = PyLong_FromLong(u);
+    PyObject *pv = PyLong_FromLong(v);
+    PyObject *res = PyTuple_Pack(2, pu, pv);
+    Py_DECREF(pu);
+    Py_DECREF(pv);
+    return res;
 }
 
 Py_ssize_t EdgeView_len(PyObject *_self) {

@@ -1,16 +1,88 @@
 #include "main.h"
 #include "structmember.h"
+#include <stdio.h>
+
+// #define GRAPH_DEBUG
+#ifdef GRAPH_DEBUG
+void *__real_malloc(size_t size);
+void __real_free(void *ptr);
+void *__real_realloc(void *ptr, size_t size);
+
+long total_mem_alloc = 0;
+long cnt = 0;
+long things_alloc = 0;
+/* build with LDFLAGS="-Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,realloc" python setup.py build_ext --inplace
+ * __wrap_malloc - malloc wrapper function
+ */
+void *__wrap_malloc(size_t size) {
+    void *ptr = __real_malloc(size + sizeof(long) * 2);
+    void *ptr2 = ptr + size;
+    *(long *)ptr2 = size;
+    *(long *)(ptr2 + 8) = 0x14285700deadbeef;
+    // printf("malloc(%d) = %p\n", size, ptr);
+    total_mem_alloc += size;
+    things_alloc++;
+    if (cnt++ % 10000 == 0) {
+        printf("total_mem_alloc: %ld [%ld]\n", total_mem_alloc, things_alloc);
+    }
+    return ptr;
+}
+
+/*
+ * __wrap_free - free wrapper function
+ */
+void __wrap_free(void *ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+    int size = -8;
+    void *ptr2 = ptr;
+    while (*(long *)ptr2 != 0x14285700deadbeef) {
+        ptr2++;
+        size++;
+    }
+    if (size != *(long *)(ptr2 - 8)) {
+        printf("size mismatch?: %d != %ld\n", size, *(long *)(ptr2 - 8));
+        abort();
+    }
+    __real_free(ptr);
+    // printf("free(%p)\n", ptr);
+    total_mem_alloc -= size;
+    things_alloc--;
+}
+
+void *__wrap_realloc(void *ptr, size_t new_size) {
+    if (ptr == NULL) {
+        return __wrap_malloc(new_size);
+    }
+    int size = -8;
+    void *ptr2 = ptr;
+    while (*(long *)ptr2 != 0x14285700deadbeef) {
+        ptr2++;
+        size++;
+    }
+    *(long *)ptr2 = 0; // erase marker
+    if (size != *(long *)(ptr2 - 8)) {
+        printf("size mismatch?: %d != %ld\n", size, *(long *)(ptr2 - 8));
+        abort();
+    }
+    void *newptr = __real_realloc(ptr, new_size + sizeof(long) * 2);
+    void *ptr3 = newptr + new_size;
+    *(long *)ptr3 = new_size;
+    *(long *)(ptr3 + 8) = 0x14285700deadbeef;
+    total_mem_alloc -= size;
+    total_mem_alloc += new_size;
+    return newptr;
+}
+
+#endif
 
 static void Graph_dealloc(Graph *self) {
     Py_XDECREF(self->graph_def);
-    if (self->num_edges > 0) {
-        free(self->edges);
-        free(self->edge_attrs);
-    }
-    if (self->num_nodes > 0) {
-        free(self->nodes);
-        free(self->node_attrs);
-    }
+    free(self->nodes);
+    free(self->node_attrs);
+    free(self->edges);
+    free(self->edge_attrs);
     free(self->degrees);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -320,8 +392,6 @@ PyObject *Graph_has_edge(PyObject *_self, PyObject *args) {
     Py_RETURN_FALSE;
 }
 
-// #define GRAPH_DEBUG
-// inline
 void _Graph_check(Graph *g) {
 #ifdef GRAPH_DEBUG
     for (int i = 0; i < g->num_node_attrs; i++) {
@@ -494,7 +564,8 @@ PyObject *Graph_relabel(PyObject *_self, PyObject *args) {
     Graph *new = (Graph *)Graph_copy(_self, NULL); // new ref
     for (int i = 0; i < new->num_nodes; i++) {
         PyObject *node = PyLong_FromLong(new->nodes[i]);
-        PyObject *new_node = PyDict_GetItem(mapping, node);
+        PyObject *new_node = PyDict_GetItem(mapping, node); // ref is borrowed
+        Py_DECREF(node);
         if (new_node == NULL) {
             PyErr_Format(PyExc_KeyError, "node %d not found in mapping", new->nodes[i]);
             return NULL;

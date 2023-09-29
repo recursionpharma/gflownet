@@ -344,12 +344,18 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                 PyDict_DelItemString(fb_kwargs, "count");
                 do_del_kw = 0;
             }
-            tensor = PyObject_Call(empty, PyTuple_Pack(1, PyLong_FromLong(0)), fb_kwargs);
+            PyObject *zero = PyLong_FromLong(0);
+            tensor = PyObject_Call(empty, PyTuple_Pack(1, zero), fb_kwargs);
+            Py_DECREF(zero);
         } else {
-            PyDict_SetItemString(fb_kwargs, "offset", PyLong_FromLong(offsets[i] * sizeof(float))); // TODO: leak
-            PyDict_SetItemString(fb_kwargs, "count", PyLong_FromLong(i_num_items));
+            PyObject *py_offset = PyLong_FromLong(offsets[i] * sizeof(float));
+            PyObject *py_count = PyLong_FromLong(i_num_items);
+            PyDict_SetItemString(fb_kwargs, "offset", py_offset);
+            PyDict_SetItemString(fb_kwargs, "count", py_count);
             do_del_kw = 1;
             tensor = PyObject_Call(frombuffer, fb_args, fb_kwargs);
+            Py_DECREF(py_offset);
+            Py_DECREF(py_count);
         }
         PyObject *reshaped_tensor = PyObject_CallMethod(tensor, "view", "ii", shapes[i][0], shapes[i][1]);
         PyDict_SetItemString(res, mol_Data_names[i], reshaped_tensor);

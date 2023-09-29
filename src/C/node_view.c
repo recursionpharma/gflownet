@@ -58,6 +58,7 @@ static int NodeView_setitem(PyObject *_self, PyObject *k, PyObject *v) {
         return -1;
     }
     PyObject *r = Graph_setnodeattr(self->graph, self->index, k, v);
+    Py_DECREF(r);
     return r == NULL ? -1 : 0;
 }
 
@@ -94,6 +95,7 @@ static int NodeView_contains(PyObject *_self, PyObject *v) {
         PyErr_Clear();
         return 0;
     }
+    Py_DECREF(attr);
     return 1;
 }
 

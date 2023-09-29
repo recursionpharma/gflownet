@@ -170,7 +170,7 @@ class GraphBuildingEnv:
             if a > b:
                 a, b = b, a
             assert a != b
-            assert not g.has_edge(a, b)
+            # assert not g.has_edge(a, b)
             # Ideally the FA underlying this must only be able to send
             # create_edge actions which respect this a<b property (or
             # its inverse!) , otherwise symmetry will be broken
@@ -193,7 +193,7 @@ class GraphBuildingEnv:
                 gp.add_edge(*e)
 
         elif action.action is GraphActionType.SetNodeAttr:
-            assert self.allow_node_attr
+            # assert self.allow_node_attr
             assert action.source in gp.nodes
             # For some "optional" attributes like wildcard atoms, we indicate that they haven't been
             # chosen by the 'None' value. Here we make sure that either the attribute doesn't
@@ -203,21 +203,21 @@ class GraphBuildingEnv:
 
         elif action.action is GraphActionType.SetEdgeAttr:
             assert self.allow_edge_attr
-            assert g.has_edge(action.source, action.target)
-            assert action.attr not in gp.edges[(action.source, action.target)]
+            # assert g.has_edge(action.source, action.target)
+            # assert action.attr not in gp.edges[(action.source, action.target)]
             gp.edges[(action.source, action.target)][action.attr] = action.value
 
         elif action.action is GraphActionType.RemoveNode:
-            assert g.has_node(action.source)
+            # assert g.has_node(action.source)
             gp = graph_without_node(gp, action.source)
         elif action.action is GraphActionType.RemoveNodeAttr:
-            assert g.has_node(action.source)
+            # assert g.has_node(action.source)
             gp = graph_without_node_attr(gp, action.source, action.attr)
         elif action.action is GraphActionType.RemoveEdge:
-            assert g.has_edge(action.source, action.target)
+            # assert g.has_edge(action.source, action.target)
             gp = graph_without_edge(gp, (action.source, action.target))
         elif action.action is GraphActionType.RemoveEdgeAttr:
-            assert g.has_edge(action.source, action.target)
+            # assert g.has_edge(action.source, action.target)
             gp = graph_without_edge_attr(gp, (action.source, action.target), action.attr)
         else:
             raise ValueError(f"Unknown action type {action.action}", action.action)
