@@ -228,8 +228,10 @@ class TwoColorGraphDataset(Dataset):
         Corrupt reward values with noised. Used to 
         emulate "Rethinking Generalization" experiments, but for 
         GFlowNets
-            TODO: Currently only for Guassian noise.
+            TODO: 
+                - Currently only for Guassian noise.
                   Could add implementation for Laplace and others.
+                - Currently noise is just over one seed
         """
         if std <= 0.:
             return log_rewards
@@ -465,6 +467,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
             cache_root=self.cfg.task.basic_graph.data_root,
             cache_path=self.cfg.task.basic_graph.data_root + f"/two_col_epc_cache_{max_nodes}.pkl",
             log_rewards=self.training_data.adjusted_log_rewards if mcfg.reward_reshape or mcfg.reward_corrupt or mcfg.reward_shuffle else None,
+            logits_shuffle=mcfg.logits_shuffle,
         )
         if mcfg.do_tabular_model:
             self.env.set_epc(self.exact_prob_cb)
@@ -671,6 +674,7 @@ class ExactProbCompCallback:
         cache_path=None,
         do_save_px=True,
         log_rewards=None,
+        logits_shuffle=False,
         tqdm_disable=None,
         ctx=None,
         env=None,
@@ -694,6 +698,7 @@ class ExactProbCompCallback:
             self.log_rewards = log_rewards
         self.logZ = np.log(np.sum(np.exp(self.log_rewards)))
         self.true_log_probs = self.log_rewards - self.logZ
+        self.logits_shuffle = logits_shuffle
         # This is reward-dependent
         if self.mdp_graph is not None:
             self.recompute_flow()
@@ -715,7 +720,7 @@ class ExactProbCompCallback:
             [[(j[0].to(self.dev), j[1].to(self.dev)) for j in i] for i in ids],
         )
 
-    def on_validation_end(self, metrics):
+    def on_validation_end(self, metrics, valid_batch_ids=None):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
         log_probs = self.compute_prob(self.trial.model).cpu().numpy()[:-1]
         lp, p = log_probs, np.exp(log_probs)
@@ -726,6 +731,11 @@ class ExactProbCompCallback:
         if self.do_save_px:
             torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_{self._save_increment}.pt", "wb"))
             self._save_increment += 1
+        if valid_batch_ids is not None:
+            lp_valid, p_valid = log_probs[valid_batch_ids], np.exp(log_probs[valid_batch_ids])
+            lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
+            metrics["test_graphs-L1_logpx_error"] = np.mean(abs(lp_valid - lq_valid))
+            #metrics["test_graphs-JS_divergence"] = (p_valid * (lp_valid - lq_valid) + q_valid * (lq_valid - lp_valid)).sum() / 2
 
     def get_graph_idx(self, g, default=None):
         def iso(u, v):
@@ -874,23 +884,43 @@ class ExactProbCompCallback:
 
     def recompute_flow(self, tqdm_disable=None):
         g = self.mdp_graph
-        for i in g:
-            g.nodes[i]["F"] = -100
-        for i in tqdm(list(range(len(g)))[::-1], disable=tqdm_disable):
-            p = sorted(list(g.predecessors(i)), reverse=True)
-            num_back = len([n for n in p if n != i])
-            for j in p:
-                if j == i:
-                    g.nodes[j]["F"] = np.logaddexp(g.nodes[j]["F"], self.log_rewards[j])
-                    g.edges[(i, i, 0)]["F"] = self.log_rewards[j].item()
-                else:
-                    backflow = np.log(np.exp(g.nodes[i]["F"]) / num_back)
-                    g.nodes[j]["F"] = np.logaddexp(g.nodes[j]["F"], backflow)
-                    # Here we're making a decision to split flow backwards equally for idempotent actions
-                    # from the same state. I think it's ok?
-                    ed = g.get_edge_data(j, i)
-                    for k, vs in ed.items():
-                        g.edges[(j, i, k)]["F"] = np.log(np.exp(backflow) / len(ed))
+        if self.logits_shuffle:
+            rng = np.random.default_rng(seed=142857)
+            for i in g:
+                g.nodes[i]["F"] = -100
+            for i in tqdm(list(range(len(g)))[::-1], disable=tqdm_disable):
+                p = sorted(list(g.predecessors(i)), reverse=True)
+                num_back = len([n for n in p if n != i])
+                for j in p:
+                    if j == i:
+                        g.nodes[j]["F"] = rng.uniform(-10, 0)
+                        g.edges[(i, i, 0)]["F"] = rng.uniform(-10, 0)
+                    else:
+                        #backflow = np.log(np.exp(g.nodes[i]["F"]) / num_back)
+                        g.nodes[j]["F"] = rng.uniform(-10, 0)
+                        # Here we're making a decision to split flow backwards equally for idempotent actions
+                        # from the same state. I think it's ok?
+                        ed = g.get_edge_data(j, i)
+                        for k, vs in ed.items():
+                            g.edges[(j, i, k)]["F"] = rng.uniform(-10, 0)
+        else:
+            for i in g:
+                g.nodes[i]["F"] = -100
+            for i in tqdm(list(range(len(g)))[::-1], disable=tqdm_disable):
+                p = sorted(list(g.predecessors(i)), reverse=True)
+                num_back = len([n for n in p if n != i])
+                for j in p:
+                    if j == i:
+                        g.nodes[j]["F"] = np.logaddexp(g.nodes[j]["F"], self.log_rewards[j])
+                        g.edges[(i, i, 0)]["F"] = self.log_rewards[j].item()
+                    else:
+                        backflow = np.log(np.exp(g.nodes[i]["F"]) / num_back)
+                        g.nodes[j]["F"] = np.logaddexp(g.nodes[j]["F"], backflow)
+                        # Here we're making a decision to split flow backwards equally for idempotent actions
+                        # from the same state. I think it's ok?
+                        ed = g.get_edge_data(j, i)
+                        for k, vs in ed.items():
+                            g.edges[(j, i, k)]["F"] = np.log(np.exp(backflow) / len(ed))
 
     def get_bck_trajectory_test_split(self, r, seed=142857):
         test_set = set()
