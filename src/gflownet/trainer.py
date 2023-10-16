@@ -355,16 +355,18 @@ class GFNTrainer:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
-
+                
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
-                        c.on_validation_end(end_metrics)
+                        #c.on_validation_end(end_metrics)
+                        c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
                 self.log(end_metrics, it, "valid_end")
 
                 # log valid-wandb
                 info['num_examples_seen'] = it*self.cfg.algo.global_batch_size
                 wandb.log({"valid-info": info, "valid-end-metrics": end_metrics}, step=it)
+
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
         self._save_state(num_training_steps)
