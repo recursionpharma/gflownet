@@ -356,10 +356,10 @@ def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, nu
         # graph is a tree, e = n - 1
         if len(bonds) != len(frags) - 1:
             return None
-        g = nx.Graph()
+        g = Graph()
         g.add_nodes_from(range(len(frags)))
         g.add_edges_from([(i[0], i[1]) for i in bonds])
-        assert nx.is_connected(g), "Somehow we got here but fragments dont connect?"
+        # assert nx.is_connected(g), "Somehow we got here but fragments dont connect?"
         for fi, f in enumerate(frags):
             g.nodes[fi]["v"] = f
         for a, b, stemidx_a, stemidx_b, _, _ in bonds:

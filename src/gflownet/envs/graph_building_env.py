@@ -16,12 +16,17 @@ from torch_scatter import scatter, scatter_max
 
 
 class Graph(nx.Graph):
-    # Subclassing nx.Graph for debugging purposes
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
         return f'<{list(self.nodes)}, {list(self.edges)}, {list(self.nodes[i]["v"] for i in self.nodes)}>'
+
+    def bridges(self):
+        return list(nx.bridges(self))
+
+    def relabel_nodes(self, rmap):
+        return nx.relabel_nodes(self, rmap)
 
 
 def graph_without_edge(g, e):
@@ -325,6 +330,32 @@ class GraphBuildingEnv:
             return GraphAction(GraphActionType.RemoveNodeAttr, source=ga.source, attr=ga.attr)
         if ga.action == GraphActionType.SetEdgeAttr:
             return GraphAction(GraphActionType.RemoveEdgeAttr, source=ga.source, target=ga.target, attr=ga.attr)
+        if ga.action == GraphActionType.RemoveNode:
+            # TODO: implement neighbors or something?
+            # neighbors = list(g.neighbors(ga.source))
+            # source = 0 if not len(neighbors) else neighbors[0]
+            neighbors = [i for i in g.edges if i[0] == ga.source or i[1] == ga.source]
+            assert len(neighbors) <= 1  # RemoveNode should only be a legal action if the node has one or zero neighbors
+            source = 0 if not len(neighbors) else neighbors[0][0] if neighbors[0][0] != ga.source else neighbors[0][1]
+            return GraphAction(GraphActionType.AddNode, source=source, value=g.nodes[ga.source]["v"])
+        if ga.action == GraphActionType.RemoveEdge:
+            return GraphAction(GraphActionType.AddEdge, source=ga.source, target=ga.target)
+        if ga.action == GraphActionType.RemoveNodeAttr:
+            return GraphAction(
+                GraphActionType.SetNodeAttr,
+                source=ga.source,
+                target=ga.target,
+                attr=ga.attr,
+                value=g.nodes[ga.source][ga.attr],
+            )
+        if ga.action == GraphActionType.RemoveEdgeAttr:
+            return GraphAction(
+                GraphActionType.SetEdgeAttr,
+                source=ga.source,
+                target=ga.target,
+                attr=ga.attr,
+                value=g.edges[ga.source, ga.target][ga.attr],
+            )
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:

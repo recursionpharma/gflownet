@@ -177,12 +177,13 @@ class SamplingIterator(IterableDataset):
                 )
 
                 # Sample some dataset data
-                mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
+                graphs, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
                 flat_rewards = (
                     list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
                 )
-                graphs = [self.ctx.mol_to_graph(m) for m in mols]
-                trajs = self.algo.create_training_data_from_graphs(graphs)
+                trajs = self.algo.create_training_data_from_graphs(
+                    graphs, self.model, cond_info["encoding"][:num_offline], 0
+                )
 
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
