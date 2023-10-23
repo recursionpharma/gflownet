@@ -194,7 +194,7 @@ def main():
         "opt": {
             "lr_decay": 20000,
         },
-        "algo": {"sampling_tau": 0.99, "offline_ratio": 0.0},
+        "algo": {"sampling_tau": 0.99, "offline_ratio": 0.25},
         "cond": {
             "temperature": {
                 "sample_dist": "uniform",

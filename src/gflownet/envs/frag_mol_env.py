@@ -198,10 +198,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         remove_node_mask = zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
         remove_edge_attr_mask = zeros((len(g.edges), self.num_edge_attrs))
         if len(g):
-            degrees = np.float32(list(g.degree))[:, 1]
-            max_degrees = np.int32([len(self.frags_stems[g.nodes[n]["v"]]) for n in g.nodes])
+            degrees = np.array(list(g.degree), dtype=np.int32)[:, 1]  # type: ignore
+            max_degrees = np.array([len(self.frags_stems[g.nodes[n]["v"]]) for n in g.nodes])  # type: ignore
         else:
-            degrees = max_degrees = np.zeros((0,), dtype=np.float32)
+            degrees = max_degrees = np.zeros((0,), dtype=np.int32)
         for i, n in enumerate(g.nodes):
             x[i, g.nodes[n]["v"]] = 1
             # The node must be connected to at most 1 other node and in the case where it is
@@ -245,11 +245,15 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                         if attach_point not in attached[n]:
                             set_edge_attr_mask[i, attach_point + self.num_stem_acts * j] = 1
         # Since this is a DiGraph, make sure to put (i, j) first and (j, i) second
-        edge_index = np.int64([e for i, j in g.edges for e in [(i, j), (j, i)]]).reshape((-1, 2)).T
+        edge_index = np.array([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=np.int64).reshape((-1, 2)).T
         if x.shape[0] == self.max_frags:
             add_node_mask = zeros((x.shape[0], self.num_new_node_values))
         else:
-            add_node_mask = np.float32(degrees < max_degrees)[:, None] if len(g.nodes) else np.ones((1, 1), np.float32)
+            add_node_mask = (
+                np.array(degrees < max_degrees, dtype=np.float32)[:, None]
+                if len(g.nodes)
+                else np.ones((1, 1), np.float32)
+            )
             add_node_mask = add_node_mask * np.ones((x.shape[0], self.num_new_node_values), np.float32)
         stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else np.ones((1, 1), np.float32)
 

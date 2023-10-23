@@ -1,5 +1,5 @@
 import copy
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -207,13 +207,13 @@ class GraphSampler:
     def sample_backward_from_graphs(
         self,
         graphs: List[Graph],
-        model: nn.Module,
+        model: Optional[nn.Module],
         cond_info: Tensor,
         dev: torch.device,
         random_action_prob: float = 0.0,
     ):
-        """Sample a model's P_B starting from a list of graphs, or if the model doesn't parameterize P_B, use a uniform
-        distribution over legal actions.
+        """Sample a model's P_B starting from a list of graphs, or if the model is None, use a uniform distribution
+        over legal actions.
 
         Parameters
         ----------
@@ -252,11 +252,9 @@ class GraphSampler:
         while sum(done) < n:
             torch_graphs = [self.ctx.graph_to_Data(graphs[i]) for i in not_done(range(n))]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
-            fwd_cat, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
-            if not isinstance(bck_cat, GraphActionCategorical):
-                # A model with no parameterized P_B just returns (fwd_cat: GraphActionCategorical, graph_out: Tensor)
-                # At this point we interpret this as a model with a uniform P_B, and use the masks to sample
-                # uniformly over legal actions
+            if model is not None:
+                _, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+            else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order
                 masks = [getattr(gbatch, i.mask_name) for i in action_types]

@@ -203,7 +203,9 @@ class TrajectoryBalance(GFNAlgorithm):
             assert model is not None and cond_info is not None and random_action_prob is not None
             dev = self.ctx.device
             cond_info = cond_info.to(dev)
-            return self.graph_sampler.sample_backward_from_graphs(graphs, model, cond_info, dev, random_action_prob)
+            return self.graph_sampler.sample_backward_from_graphs(
+                graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
+            )
         trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [
