@@ -13,7 +13,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from gflownet.config import Config
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
@@ -110,8 +110,8 @@ class LittleSEHDataset(Dataset):
 
     def __init__(self) -> None:
         super().__init__()
-        self.props = []
-        self.mols = []
+        self.props: List[Tensor] = []
+        self.mols: List[Graph] = []
 
     def setup(self, task, ctx):
         rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]

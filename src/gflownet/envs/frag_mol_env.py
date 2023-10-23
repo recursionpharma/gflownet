@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 import rdkit.Chem as Chem
@@ -187,7 +187,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         data:  gd.Data
             The corresponding torch_geometric object.
         """
-        zeros = lambda x: np.zeros(x, dtype=np.float32)
+        zeros = lambda x: np.zeros(x, dtype=np.float32)  # noqa: E731
         x = zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
         edge_attr = zeros((len(g.edges) * 2, self.num_edge_dim))
@@ -373,8 +373,8 @@ def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, nu
         for fi, f in enumerate(frags):
             g.nodes[fi]["v"] = f
         for a, b, stemidx_a, stemidx_b, _, _ in bonds:
-            g.edges[(a, b)][f"src_attach"] = stemidx_a  # TODO: verify src/dst is correct?
-            g.edges[(a, b)][f"dst_attach"] = stemidx_b
+            g.edges[(a, b)]["src_attach"] = stemidx_a  # TODO: verify src/dst is correct?
+            g.edges[(a, b)]["dst_attach"] = stemidx_b
         m2 = ctx.graph_to_mol(g)
         if m2.HasSubstructMatch(m) and m.HasSubstructMatch(m2):
             return g
@@ -428,7 +428,7 @@ def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, nu
                         try:
                             # Make sure that fragment has that atom as a stem atom
                             other_frag_stemidx = ctx.frags_stems[frags[other_frag_idx]].index(other_frag_atomidx)
-                        except ValueError as e:
+                        except ValueError:
                             continue
                         # Make sure that that fragment's stem atom isn't already used
                         for b in bonds + possible_bonds:

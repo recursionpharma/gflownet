@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphActionCategorical
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionCategorical, GraphActionType
 from gflownet.models.graph_transformer import GraphTransformerGFN
 
 
