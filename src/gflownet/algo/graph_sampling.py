@@ -237,6 +237,7 @@ class GraphSampler:
                 "is_valid": True,
                 "is_sink": [1],
                 "bck_a": [GraphAction(GraphActionType.Stop)],
+                "bck_logprobs": [0.0],
                 "result": graphs[i],
             }
             for i in range(n)
@@ -274,6 +275,7 @@ class GraphSampler:
             graph_bck_actions = [
                 self.ctx.aidx_to_GraphAction(g, a, fwd=False) for g, a in zip(torch_graphs, bck_actions)
             ]
+            bck_logprobs = bck_cat.log_prob(bck_actions)
 
             for i, j in zip(not_done(range(n)), range(n)):
                 if not done[i]:
@@ -282,9 +284,10 @@ class GraphSampler:
                     gp = self.env.step(g, b_a)
                     f_a = self.env.reverse(g, b_a)
                     graphs[i], f_a = relabel(gp, f_a)
-                    data[i]["traj"].append((g, f_a))
+                    data[i]["traj"].append((graphs[i], f_a))
                     data[i]["bck_a"].append(b_a)
                     data[i]["is_sink"].append(0)
+                    data[i]["bck_logprobs"].append(bck_logprobs[j].item())
                     if len(graphs[i]) == 0:
                         done[i] = True
 
@@ -293,6 +296,7 @@ class GraphSampler:
             data[i]["traj"] = data[i]["traj"][::-1]
             data[i]["bck_a"] = [GraphAction(GraphActionType.Stop)] + data[i]["bck_a"][::-1]
             data[i]["is_sink"] = data[i]["is_sink"][::-1]
+            data[i]["bck_logprobs"] = torch.tensor(data[i]["bck_logprobs"][::-1], device=dev).reshape(-1)
             if self.pad_with_terminal_state:
                 data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
                 data[i]["is_sink"].append(1)
