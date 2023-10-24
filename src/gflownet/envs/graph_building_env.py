@@ -322,15 +322,15 @@ class GraphBuildingEnv:
     def reverse(self, g: Graph, ga: GraphAction):
         if ga.action == GraphActionType.Stop:
             return ga
-        if ga.action == GraphActionType.AddNode:
+        elif ga.action == GraphActionType.AddNode:
             return GraphAction(GraphActionType.RemoveNode, source=len(g.nodes))
-        if ga.action == GraphActionType.AddEdge:
+        elif ga.action == GraphActionType.AddEdge:
             return GraphAction(GraphActionType.RemoveEdge, source=ga.source, target=ga.target)
-        if ga.action == GraphActionType.SetNodeAttr:
+        elif ga.action == GraphActionType.SetNodeAttr:
             return GraphAction(GraphActionType.RemoveNodeAttr, source=ga.source, attr=ga.attr)
-        if ga.action == GraphActionType.SetEdgeAttr:
+        elif ga.action == GraphActionType.SetEdgeAttr:
             return GraphAction(GraphActionType.RemoveEdgeAttr, source=ga.source, target=ga.target, attr=ga.attr)
-        if ga.action == GraphActionType.RemoveNode:
+        elif ga.action == GraphActionType.RemoveNode:
             # TODO: implement neighbors or something?
             # neighbors = list(g.neighbors(ga.source))
             # source = 0 if not len(neighbors) else neighbors[0]
@@ -338,9 +338,9 @@ class GraphBuildingEnv:
             assert len(neighbors) <= 1  # RemoveNode should only be a legal action if the node has one or zero neighbors
             source = 0 if not len(neighbors) else neighbors[0][0] if neighbors[0][0] != ga.source else neighbors[0][1]
             return GraphAction(GraphActionType.AddNode, source=source, value=g.nodes[ga.source]["v"])
-        if ga.action == GraphActionType.RemoveEdge:
+        elif ga.action == GraphActionType.RemoveEdge:
             return GraphAction(GraphActionType.AddEdge, source=ga.source, target=ga.target)
-        if ga.action == GraphActionType.RemoveNodeAttr:
+        elif ga.action == GraphActionType.RemoveNodeAttr:
             return GraphAction(
                 GraphActionType.SetNodeAttr,
                 source=ga.source,
@@ -348,7 +348,7 @@ class GraphBuildingEnv:
                 attr=ga.attr,
                 value=g.nodes[ga.source][ga.attr],
             )
-        if ga.action == GraphActionType.RemoveEdgeAttr:
+        elif ga.action == GraphActionType.RemoveEdgeAttr:
             return GraphAction(
                 GraphActionType.SetEdgeAttr,
                 source=ga.source,
@@ -356,6 +356,8 @@ class GraphBuildingEnv:
                 attr=ga.attr,
                 value=g.edges[ga.source, ga.target][ga.attr],
             )
+        else:
+            raise ValueError(f"Unknown action type {ga.action}", ga.action)
 
 
 def generate_forward_trajectory(g: Graph, max_nodes: int = None) -> List[Tuple[Graph, GraphAction]]:
