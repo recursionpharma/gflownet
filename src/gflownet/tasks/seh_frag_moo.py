@@ -265,14 +265,14 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if not (
             tcfg.focus_type is None
             or tcfg.focus_type == "centered"
-            or (type(tcfg.focus_type) is list and len(tcfg.focus_type) == 1)
+            or (isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) == 1)
         ):
             assert tcfg.preference_type is None, (
                 f"Cannot use preferences with multiple focus regions, here focus_type={tcfg.focus_type} "
                 f"and preference_type={tcfg.preference_type}"
             )
 
-        if type(tcfg.focus_type) is list and len(tcfg.focus_type) > 1:
+        if isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) > 1:
             n_valid = len(tcfg.focus_type)
         else:
             n_valid = tcfg.n_valid

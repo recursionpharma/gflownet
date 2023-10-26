@@ -253,7 +253,7 @@ class FlowNet_TBAgent:
         return log_ratio
 
     def learn_from(self, it, batch):
-        if type(batch) is list:
+        if isinstance(batch, list):
             log_ratio = torch.stack(batch, 0)
         else:
             log_ratio = batch
