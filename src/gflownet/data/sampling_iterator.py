@@ -177,12 +177,13 @@ class SamplingIterator(IterableDataset):
                 )
 
                 # Sample some dataset data
-                mols, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
+                graphs, flat_rewards = map(list, zip(*[self.data[i] for i in idcs])) if len(idcs) else ([], [])
                 flat_rewards = (
                     list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
                 )
-                graphs = [self.ctx.mol_to_graph(m) for m in mols]
-                trajs = self.algo.create_training_data_from_graphs(graphs)
+                trajs = self.algo.create_training_data_from_graphs(
+                    graphs, self.model, cond_info["encoding"][:num_offline], 0
+                )
 
             else:  # If we're not sampling the conditionals, then the idcs refer to listed preferences
                 num_online = num_offline
@@ -411,7 +412,9 @@ class SQLiteLog:
         cur.close()
 
     def insert_many(self, rows, column_names):
-        assert all([type(x) is str or not isinstance(x, Iterable) for x in rows[0]]), "rows must only contain scalars"
+        assert all(
+            [isinstance(x, str) or not isinstance(x, Iterable) for x in rows[0]]
+        ), "rows must only contain scalars"
         if not self._has_results_table:
             self._make_results_table([type(i) for i in rows[0]], column_names)
         cur = self.db.cursor()

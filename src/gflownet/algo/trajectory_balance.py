@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -149,8 +149,8 @@ class TrajectoryBalance(GFNAlgorithm):
         ----------
         model: TrajectoryBalanceModel
            The model being sampled
-        graphs: List[Graph]
-            List of N Graph endpoints
+        n: int
+            Number of trajectories to sample
         cond_info: torch.tensor
             Conditional information, shape (N, n_info)
         random_action_prob: float
@@ -175,19 +175,38 @@ class TrajectoryBalance(GFNAlgorithm):
             data[i]["logZ"] = logZ_pred[i].item()
         return data
 
-    def create_training_data_from_graphs(self, graphs):
+    def create_training_data_from_graphs(
+        self,
+        graphs,
+        model: Optional[TrajectoryBalanceModel] = None,
+        cond_info: Optional[Tensor] = None,
+        random_action_prob: Optional[float] = None,
+    ):
         """Generate trajectories from known endpoints
 
         Parameters
         ----------
         graphs: List[Graph]
             List of Graph endpoints
+        model: TrajectoryBalanceModel
+           The model being sampled
+        cond_info: torch.tensor
+            Conditional information, shape (N, n_info)
+        random_action_prob: float
+            Probability of taking a random action
 
         Returns
         -------
         trajs: List[Dict{'traj': List[tuple[Graph, GraphAction]]}]
            A list of trajectories.
         """
+        if self.cfg.do_sample_p_b:
+            assert model is not None and cond_info is not None and random_action_prob is not None
+            dev = self.ctx.device
+            cond_info = cond_info.to(dev)
+            return self.graph_sampler.sample_backward_from_graphs(
+                graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
+            )
         trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [

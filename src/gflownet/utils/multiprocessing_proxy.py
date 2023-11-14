@@ -22,8 +22,12 @@ class MPObjectPlaceholder:
         if self._is_init:
             return
         info = torch.utils.data.get_worker_info()
-        self.in_queue = self.qs[0][info.id]
-        self.out_queue = self.qs[1][info.id]
+        if info is None:
+            self.in_queue = self.qs[0][-1]
+            self.out_queue = self.qs[1][-1]
+        else:
+            self.in_queue = self.qs[0][info.id]
+            self.out_queue = self.qs[1][info.id]
         self._is_init = True
 
     def encode(self, m):
@@ -88,8 +92,8 @@ class MPObjectProxy:
             memory, but increases load on CPU. It is recommended to activate this flag if
             encountering "Too many open files"-type errors.
         """
-        self.in_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
-        self.out_queues = [mp.Queue() for i in range(num_workers)]  # type: ignore
+        self.in_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
+        self.out_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
         self.pickle_messages = pickle_messages
         self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages)
         self.obj = obj

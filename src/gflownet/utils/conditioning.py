@@ -53,7 +53,7 @@ class TemperatureConditional(Conditional):
         cfg = self.cfg.cond.temperature
         beta = None
         if cfg.sample_dist == "constant":
-            assert type(cfg.dist_params[0]) is float
+            assert isinstance(cfg.dist_params[0], float)
             beta = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
             beta_enc = torch.zeros((n, cfg.num_thermometer_dim))
         else:
@@ -174,7 +174,7 @@ class FocusRegionConditional(Conditional):
         elif self.cfg.focus_type in ["hyperspherical", "learned-tabular"]:
             valid_focus_dirs = metrics.partition_hypersphere(d=self.n_objectives, k=self.n_valid, normalisation="l2")
             self.fixed_focus_dirs = None
-        elif type(self.cfg.focus_type) is list:
+        elif isinstance(self.cfg.focus_type, list):
             if len(self.cfg.focus_type) == 1:
                 valid_focus_dirs = np.array([self.cfg.focus_type[0]] * self.n_valid)
                 self.fixed_focus_dirs = valid_focus_dirs

@@ -1,11 +1,29 @@
 import copy
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
-from gflownet.envs.graph_building_env import GraphAction, GraphActionType
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionCategorical, GraphActionType
+from gflownet.models.graph_transformer import GraphTransformerGFN
+
+
+def relabel(g: Graph, ga: GraphAction):
+    """Relabel the nodes for g to 0-N, and the graph action ga applied to g.
+    This is necessary because torch_geometric and EnvironmentContext classes expect nodes to be
+    labeled 0-N, whereas GraphBuildingEnv.parent can return parents with e.g. a removed node that
+    creates a gap in 0-N, leading to a faulty encoding of the graph.
+    """
+    rmap = dict(zip(g.nodes, range(len(g.nodes))))
+    if not len(g) and ga.action == GraphActionType.AddNode:
+        rmap[0] = 0  # AddNode can add to the empty graph, the source is still 0
+    g = g.relabel_nodes(rmap)
+    if ga.source is not None:
+        ga.source = rmap[ga.source]
+    if ga.target is not None:
+        ga.target = rmap[ga.target]
+    return g, ga
 
 
 class GraphSampler:
@@ -182,6 +200,102 @@ class GraphSampler:
             if self.pad_with_terminal_state:
                 # TODO: instead of padding with Stop, we could have a virtual action whose
                 # probability always evaluates to 1.
+                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
+                data[i]["is_sink"].append(1)
+        return data
+
+    def sample_backward_from_graphs(
+        self,
+        graphs: List[Graph],
+        model: Optional[nn.Module],
+        cond_info: Tensor,
+        dev: torch.device,
+        random_action_prob: float = 0.0,
+    ):
+        """Sample a model's P_B starting from a list of graphs, or if the model is None, use a uniform distribution
+        over legal actions.
+
+        Parameters
+        ----------
+        graphs: List[Graph]
+            List of Graph endpoints
+        model: nn.Module
+            Model whose forward() method returns GraphActionCategorical instances
+        cond_info: Tensor
+            Conditional information of each trajectory, shape (n, n_info)
+        dev: torch.device
+            Device on which data is manipulated
+        random_action_prob: float
+            Probability of taking a random action (only used if model parameterizes P_B)
+
+        """
+        n = len(graphs)
+        done = [False] * n
+        data = [
+            {
+                "traj": [(graphs[i], GraphAction(GraphActionType.Stop))],
+                "is_valid": True,
+                "is_sink": [1],
+                "bck_a": [GraphAction(GraphActionType.Stop)],
+                "bck_logprobs": [0.0],
+                "result": graphs[i],
+            }
+            for i in range(n)
+        ]
+
+        def not_done(lst):
+            return [e for i, e in enumerate(lst) if not done[i]]
+
+        if random_action_prob > 0:
+            raise NotImplementedError("Random action not implemented for backward sampling")
+
+        while sum(done) < n:
+            torch_graphs = [self.ctx.graph_to_Data(graphs[i]) for i in not_done(range(n))]
+            not_done_mask = torch.tensor(done, device=dev).logical_not()
+            if model is not None:
+                _, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+            else:
+                gbatch = self.ctx.collate(torch_graphs)
+                action_types = self.ctx.bck_action_type_order
+                masks = [getattr(gbatch, i.mask_name) for i in action_types]
+                bck_cat = GraphActionCategorical(
+                    gbatch,
+                    logits=[m * 1e6 for m in masks],
+                    keys=[
+                        # TODO: This is not very clean, could probably abstract this away somehow
+                        GraphTransformerGFN._graph_part_to_key[GraphTransformerGFN._action_type_to_graph_part[t]]
+                        for t in action_types
+                    ],
+                    masks=masks,
+                    types=action_types,
+                )
+            bck_actions = bck_cat.sample()
+            graph_bck_actions = [
+                self.ctx.aidx_to_GraphAction(g, a, fwd=False) for g, a in zip(torch_graphs, bck_actions)
+            ]
+            bck_logprobs = bck_cat.log_prob(bck_actions)
+
+            for i, j in zip(not_done(range(n)), range(n)):
+                if not done[i]:
+                    g = graphs[i]
+                    b_a = graph_bck_actions[j]
+                    gp = self.env.step(g, b_a)
+                    f_a = self.env.reverse(g, b_a)
+                    graphs[i], f_a = relabel(gp, f_a)
+                    data[i]["traj"].append((graphs[i], f_a))
+                    data[i]["bck_a"].append(b_a)
+                    data[i]["is_sink"].append(0)
+                    data[i]["bck_logprobs"].append(bck_logprobs[j].item())
+                    if len(graphs[i]) == 0:
+                        done[i] = True
+
+        for i in range(n):
+            # See comments in sample_from_model
+            data[i]["traj"] = data[i]["traj"][::-1]
+            data[i]["bck_a"] = [GraphAction(GraphActionType.Stop)] + data[i]["bck_a"][::-1]
+            data[i]["is_sink"] = data[i]["is_sink"][::-1]
+            data[i]["bck_logprobs"] = torch.tensor(data[i]["bck_logprobs"][::-1], device=dev).reshape(-1)
+            if self.pad_with_terminal_state:
                 data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
                 data[i]["is_sink"].append(1)
         return data
