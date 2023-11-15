@@ -123,12 +123,19 @@ class SamplingIterator(IterableDataset):
     def add_log_hook(self, hook: Callable):
         self.log_hooks.append(hook)
 
+    def compute_graph_sampling_prob(self, log_p):
+        logZ = np.log(np.sum(np.exp(log_p)))
+        log_probs = log_p - logZ
+        self.p = np.exp(log_probs)
+
     def _idx_iterator(self):
         RDLogger.DisableLog("rdApp.*")
         if self.stream:
             # If we're streaming data, just sample `offline_batch_size` indices
             while True:
-                yield self.rng.integers(0, len(self.data), self.offline_batch_size)
+                p = self.p[self.data.idcs] / np.sum(self.p[self.data.idcs])
+                yield self.rng.choice(np.arange(0, len(self.data), 1), size=self.offline_batch_size, p=p)
+                #yield self.rng.integers(0, len(self.data), self.offline_batch_size)
         else:
             # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()

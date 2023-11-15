@@ -127,6 +127,8 @@ class GFNTrainer:
         self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
 
         self.device = torch.device(self.cfg.device)
+        # set seed
+        torch.manual_seed(self.cfg.seed)    
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
@@ -333,6 +335,11 @@ class GFNTrainer:
         start = self.cfg.start_at_step + 1
         num_training_steps = self.cfg.num_training_steps
         logger.info("Starting training")
+
+        # Compute p(x) for sampling x ~ p(x). Default is x ~ uniform.
+        train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+        valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
@@ -355,17 +362,38 @@ class GFNTrainer:
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
-                
+                        
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
                         #c.on_validation_end(end_metrics)
-                        c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
+                        if self.cfg.task.basic_graph.train_ratio == 1.0: # this only works for basic_graph task ... change to be more general
+                            c.on_validation_end(end_metrics, valid_batch_ids=None)
+                        else:
+                            c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
                 self.log(end_metrics, it, "valid_end")
 
                 # log valid-wandb
                 info['num_examples_seen'] = it*self.cfg.algo.global_batch_size
                 wandb.log({"valid-info": info, "valid-end-metrics": end_metrics}, step=it)
+
+                # update p(x) for sampling x ~ p(x), if using paramaterized p(x; \theta) for sampling
+                if self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
+                    self.log_sampling_g_distribution = self.model_log_probs
+                    train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                    valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
+                    err = []
+                    for lq, lp in zip(self.model_log_probs, self.true_log_probs):
+                        if self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn":
+                            err.append((lq - lp)**2)
+                        else:
+                            err.append(np.abs(np.exp(lq) - np.exp(lp)))
+                    err = np.array(err)
+                    err = err / np.sum(err)
+                    self.log_sampling_g_distribution = np.log(err)
+                    train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                    valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
 
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)

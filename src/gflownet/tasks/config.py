@@ -67,6 +67,7 @@ class BasicGraphConfig:
     reward_shuffle: bool = False
     logits_shuffle: bool = False # use this when using standard reward computation but want to shuffle flow logits
     reward_temper: bool = False
+    reward_skewed_random: bool = False
     reward_param: float = 0.0  # if 0.0, then same as base-reward (but hashed version). Parameter for the reward reshape
     do_supervised: bool = False
     do_tabular_model: bool = False

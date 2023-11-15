@@ -69,13 +69,6 @@ def count_reward(g):
     return np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
 
 
-def count_sparse_reward(g, lam=0.1):
-    ncols = np.bincount([g.nodes[i]["v"] for i in g], minlength=2)
-    sparsity = np.linalg.norm([g.nodes[i]["v"] for i in g], ord=1)
-    reward = np.float32(-abs(ncols[0] + ncols[1] / 2 - 3) / 4 * 10)
-    return reward - lam * sparsity
-
-
 def generate_two_col_data(data_root, max_nodes=7):
     atl = nx.generators.atlas.graph_atlas_g()
     # Filter out disconnected graphs
@@ -149,6 +142,7 @@ class TwoColorGraphDataset(Dataset):
         reward_corrupt: bool = False,
         reward_shuffle: bool = False,
         reward_temper: bool = False,
+        reward_skewed_random: bool = False,
         reward_param: float = 0.0,
     ):
         self.data = data
@@ -159,6 +153,7 @@ class TwoColorGraphDataset(Dataset):
         self.reward_corrupt = reward_corrupt
         self.reward_shuffle = reward_shuffle
         self.reward_temper = reward_temper
+        self.reward_skewed_random = reward_skewed_random
         self.reward_param = reward_param
         self.idcs = [0]
         self.max_nodes = max_nodes
@@ -191,6 +186,8 @@ class TwoColorGraphDataset(Dataset):
             adjusted_log_rewards = self.shuffle_reward_values(adjusted_log_rewards)
         if self.reward_temper:
             adjusted_log_rewards = self.temper_reward_values(adjusted_log_rewards, beta=self.reward_param)
+        if self.reward_skewed_random:
+            adjusted_log_rewards = self.skewed_random_values(size=len(adjusted_log_rewards), sparse_reward=self.reward_param)
 
         if self.reward_reshape or self.reward_corrupt or self.reward_shuffle:
             self.adjusted_log_rewards = adjusted_log_rewards
@@ -256,6 +253,27 @@ class TwoColorGraphDataset(Dataset):
         Temper rewards for pre-computed log_rewards.
         """
         return list(np.array(log_rewards) * (1.0 / beta))
+
+    def skewed_random_values(self, size_log_rewards, sparse_reward=0.0):
+        """
+        Defines random log-rewards sampled from Rayleigh dsitribution.
+        Emulates log-reward skew to high and low rewards. 'Sparser' rewards
+        skew log-reward distribution to higher mass around lower rewards.
+        """
+        rng = np.random.default_rng(12345)
+        if sparse_reward > 0.0:
+            x = rng.rayleigh(2.6, size=size_log_rewards) - 10
+            idcs = (x > 0)
+            x[idcs] = 0
+            idcs = (x < -10)
+            x[idcs] = -10
+        else:
+            x = - rng.rayleigh(2.6, size=size_log_rewards) 
+            idcs = (x > 0)
+            x[idcs] = 0
+            idcs = (x < -10)
+            x[idcs] = -10
+        return x
 
     def adjust_reward_skew(self, log_rewards, lam=0.1):
         """
@@ -522,6 +540,31 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self.cfg,
             self.training_data,
         )
+        # set p(x) to be used for sampling x ~ p(x)
+
+        if isinstance(model, GraphTransformerGFN):
+            # select use of true log_Z
+            if self.cfg.algo.use_true_log_Z:
+                self.cfg.algo.true_log_Z = float(self.exact_prob_cb.logZ)
+            # select x ~ p(x) sampling
+            if self.cfg.algo.offline_sampling_g_distribution == "log_rewards": # x ~ R(x)/Z
+                self.log_sampling_g_distribution = self.exact_prob_cb.true_log_probs
+            elif self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
+                self.log_sampling_g_distribution = self.exact_prob_cb.compute_prob(model.to(self.cfg.device)).cpu().numpy()[:-1]
+            elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
+                model_log_probs = self.exact_prob_cb.compute_prob(model.to(self.cfg.device)).cpu().numpy()[:-1]
+                true_log_probs = self.exact_prob_cb.true_log_probs
+                err = []
+                for lq, lp in zip(model_log_probs, true_log_probs):
+                    if self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn":
+                        err.append((lq - lp)**2)
+                    else:
+                        err.append(np.abs(np.exp(lq) - np.exp(lp)))
+                err = np.array(err)
+                err = err / np.sum(err)
+                self.log_sampling_g_distribution = np.log(err)
+            else:
+                self.log_sampling_g_distribution = -1 * np.ones_like(self.exact_prob_cb.true_log_probs) # uniform distribution
         self.sampling_tau = self.cfg.algo.sampling_tau
         self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_param = self.cfg.opt.clip_grad_param
@@ -725,6 +768,7 @@ class ExactProbCompCallback:
         log_probs = self.compute_prob(self.trial.model).cpu().numpy()[:-1]
         lp, p = log_probs, np.exp(log_probs)
         lq, q = self.true_log_probs, np.exp(self.true_log_probs)
+        self.trial.model_log_probs, self.trial.true_log_probs = log_probs, self.true_log_probs
         metrics["L1_logpx_error"] = np.mean(abs(lp - lq))
         metrics["JS_divergence"] = (p * (lp - lq) + q * (lq - lp)).sum() / 2
         print("L1 logpx error", metrics["L1_logpx_error"], "JS divergence", metrics["JS_divergence"])

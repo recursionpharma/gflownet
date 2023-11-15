@@ -413,14 +413,21 @@ class TrajectoryBalance(GFNAlgorithm):
 
         if self.cfg.variant == TBVariant.SubTB1:
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
+            first_graph_idx = torch.zeros_like(batch.traj_lens) # The position of the first graph of each trajectory
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if self.global_cfg.algo.use_true_log_Z:
+                # Set per_graph_out[first_graph_idx, 0] = true_log_Z before computing subTB losses
+                true_log_Z = torch.tensor(self.global_cfg.algo.true_log_Z)
+                a = torch.zeros_like(per_graph_out)
+                b = torch.zeros_like(per_graph_out)
+                z = torch.ones_like(per_graph_out[first_graph_idx, 0]) * true_log_Z
+                a[first_graph_idx, 0] = torch.tensor(1.0)
+                b[first_graph_idx, 0] = z
+                per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
             if self.cfg.cum_subtb:
                 traj_losses = self.subtb_cum(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
             else:
                 traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
-
-            # The position of the first graph of each trajectory
-            first_graph_idx = torch.zeros_like(batch.traj_lens)
-            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             log_Z = per_graph_out[first_graph_idx, 0]
         elif self.cfg.variant == TBVariant.DB:
             F_sn = per_graph_out[:, 0]
@@ -430,9 +437,21 @@ class TrajectoryBalance(GFNAlgorithm):
             traj_losses = scatter(transition_losses, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
             first_graph_idx = torch.zeros_like(batch.traj_lens)
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if self.global_cfg.algo.use_true_log_Z:
+                # set log_Z before loss computations as: log_Z = true_log_Z
+                true_log_Z = torch.tensor(self.global_cfg.algo.true_log_Z)
+                a = torch.zeros_like(per_graph_out)
+                b = torch.zeros_like(per_graph_out)
+                z = torch.ones_like(per_graph_out[first_graph_idx, 0]) * true_log_Z
+                a[first_graph_idx, 0] = torch.tensor(1.0)
+                b[first_graph_idx, 0] = z
+                per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
             log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective
+            if self.global_cfg.algo.use_true_log_Z:
+                # set log_Z before loss computations as: log_Z = true_log_Z
+                log_Z = torch.tensor(self.global_cfg.algo.true_log_Z, requires_grad=True).to(traj_log_p_F)
             numerator = log_Z + traj_log_p_F
             denominator = clip_log_R + traj_log_p_B
 
@@ -477,18 +496,34 @@ class TrajectoryBalance(GFNAlgorithm):
             reward_loss = reward_losses.mean() * self.cfg.reward_loss_multiplier
         else:
             reward_loss = 0
-
-        loss = traj_losses.mean() + reward_loss
-        info = {
-            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
-            "reward_loss": reward_loss,
-            "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
-            "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
-            "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
-            "logZ": log_Z.mean(),
-            "loss": loss.item(),
-        }
+        
+        if not self.global_cfg.algo.use_true_log_Z and (self.global_cfg.algo.l2_reg_log_Z_lambda > 0.0 or self.global_cfg.algo.l1_reg_log_Z_lambda > 0.0):
+            l2_reg_log_Z = self.global_cfg.algo.l2_reg_log_Z_lambda * torch.norm(log_Z, p=2)
+            l1_reg_log_Z = self.global_cfg.algo.l1_reg_log_Z_lambda * torch.norm(log_Z, p=1)
+            loss = traj_losses.mean() + reward_loss + l2_reg_log_Z + l1_reg_log_Z
+            info = {
+                "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+                "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+                "reward_loss": reward_loss,
+                "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
+                "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
+                "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+                "logZ": log_Z.mean(),
+                "logZ_reg": l2_reg_log_Z + l1_reg_log_Z,
+                "loss": loss.item(),
+            }
+        else:
+            loss = traj_losses.mean() + reward_loss
+            info = {
+                "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
+                "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
+                "reward_loss": reward_loss,
+                "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
+                "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
+                "invalid_losses": (invalid_mask * traj_losses).sum() / (invalid_mask.sum() + 1e-4),
+                "logZ": log_Z.mean(),
+                "loss": loss.item(),
+            }
         return loss, info
 
     def _init_subtb(self, dev):
