@@ -5,7 +5,6 @@ root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/global_bs
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 100000,
     "validate_every": 100,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
@@ -30,6 +29,7 @@ base_algo_hps = {
 hps = [
     {
         **base_hps,
+        "num_training_steps": global_bs[1],
         "log_dir": f"{root}/run_{next(counter)}/",
         "log_tags": ["global_bs_sweep"],
         
@@ -48,13 +48,13 @@ hps = [
         "algo": {
             **base_algo_hps,
             #**algo,
-            "global_batch_size": global_bs,
+            "global_batch_size": global_bs[0],
         },
         
     }
     for reward in ['const', 'count', 'even_neighbors', 'cliques']
     for seed in [1]
-    for global_bs in [32, 64, 128, 256, 512]
+    for global_bs in [(32, 800000), (64, 400000), (128, 200000), (256, 100000), (512, 50000)]
     #for algo in [
         #{
         #    "method": "TB", # either TB or FM

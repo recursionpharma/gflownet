@@ -1,12 +1,11 @@
 import sys
 import itertools
 
-#root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_shuffle_Oct_18"
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_logits_shuffle_Oct_18"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/supervised_gnn_corrupt_Oct_16"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 100000,
+    "num_training_steps": 100000, 
     "validate_every": 1000,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
@@ -22,6 +21,7 @@ base_hps = {
     "device": 'cuda',
 }
 
+
 base_algo_hps = {
     "global_batch_size": 2048, #256
     "max_nodes": 7,
@@ -32,21 +32,19 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_logits_shuffle_v2"],
+        "log_tags": ["supervised_gnn_corrupt"],
         
         "task": {
         "basic_graph": {
             "test_split_seed": seed, 
             "do_supervised": True, 
             "do_tabular_model": False, 
-            "regress_to_P_F": True,
-            "regress_to_Fsa": True,
+            "regress_to_P_F": False,
+            "regress_to_Fsa": False,
             "train_ratio": 0.9,
+            "reward_corrupt": True,
             "reward_func": reward, 
-            "reward_reshape": False,
-            "reward_corrupt": False,
-            "logits_shuffle": shuffle, #"reward_shuffle": shuffle,
-            "reward_param": 0.0,
+            "reward_param": std,
             },
         },  
         
@@ -56,18 +54,18 @@ hps = [
         },
         
     }
-    for reward in ['count', 'even_neighbors', 'cliques']
-    for shuffle in [True, False]
+    for reward in ['const']
+    for std in [0.0, 0.1, 0.5, 1.0, 2.0]
     for seed in [1, 2, 3]
     #for algo in [
-        #{
-        #    "method": "TB", # either TB or FM
-        #    "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
-        #},
-        #{
-        #    "method": "FM", # either TB or FM
-        #    "fm": {"correct_idempotent": False, "balanced_loss": False, "leaf_coef": 10, "epsilon": 1e-38},
-        #,
+    #    {
+    #        "method": "TB", # either TB or FM
+    #        "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
+    #    },
+    #    {
+    #        "method": "FM", # either TB or FM
+    #        "fm": {"correct_idempotent": False, "balanced_loss": False, "leaf_coef": 10, "epsilon": 1e-38},
+    #    },
     #]
 ]
 

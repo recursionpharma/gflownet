@@ -32,7 +32,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_flows"],
+        "log_tags": ["distilled_flows_v2"],
         
         "task": {
         "basic_graph": {

@@ -1,12 +1,12 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_corrupt"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_corrupt_Oct_12"
 counter = itertools.count()
 
 base_hps = {
     "num_training_steps": 100000,
-    "validate_every": 100,
+    "validate_every": 1000,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
@@ -22,7 +22,7 @@ base_hps = {
 }
 
 base_algo_hps = {
-    "global_batch_size": 256,
+    "global_batch_size": 2048, #246
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }
@@ -31,7 +31,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_rewards_corrupt"],
+        "log_tags": ["distilled_rewards_corrupt_v3"],
         
         "task": {
         "basic_graph": {
@@ -55,9 +55,9 @@ hps = [
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for reward in ['const']
     for std in [0.0, 0.1, 0.5, 1.0, 2.0]
-    for seed in [1]
+    for seed in [1, 2, 3]
     #for algo in [
         #{
         #    "method": "TB", # either TB or FM

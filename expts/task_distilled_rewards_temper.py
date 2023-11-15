@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_temper"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_temper_Oct_6"
 counter = itertools.count()
 
 base_hps = {
@@ -31,7 +31,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_rewards_temper"],
+        "log_tags": ["distilled_rewards_temper_v2"],
         
         "task": {
         "basic_graph": {
@@ -57,7 +57,7 @@ hps = [
         
     }
     for reward in ['count', 'even_neighbors', 'cliques']
-    for beta in [1.0, 0.8, 0.6, 0.4, 0.2]
+    for beta in [1.0, 2.0, 4.0, 8.0]
     for seed in [1]
     #for algo in [
         #{

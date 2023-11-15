@@ -1,13 +1,13 @@
 import sys
 import itertools
 
-root = "./logs/gfn_TB_rewards_skew"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_rewards_skew"
 counter = itertools.count()
 
 base_hps = {
-    "num_training_steps": 20000,
-    "validate_every": 100,
-    "num_workers": 4,
+    "num_training_steps": 100000,
+    "validate_every": 1000,
+    "num_workers": 8,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
         "num_layers": 8, 
@@ -23,7 +23,7 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 64,
+    "global_batch_size": 256,
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }
@@ -42,8 +42,11 @@ hps = [
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
-            "reward_func": 'cliques', 
+            "reward_func": reward, 
             "reward_reshape": True,
+            "reward_corrupt": False,
+            "reward_shuffle": False,
+            "reward_temper": False,
             "reward_param": lam,
             },
         },  
@@ -54,8 +57,9 @@ hps = [
         },
         
     }
-    for lam in [0.0, 0.1, 0.2, 0.5]
-    for seed in [1, 2, 3]
+    for reward in ['cliques', 'even_neighbors', 'count']
+    for lam in [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5]
+    for seed in [1]
     for algo in [
         {
             "method": "TB", # either TB or FM
@@ -71,5 +75,5 @@ hps = [
 from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
 
 trial = BasicGraphTaskTrainer(hps[int(sys.argv[1])])
-trial.print_every = 1
+#trial.print_every = 1
 trial.run()

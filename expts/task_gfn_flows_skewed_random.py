@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_FM_flows_Oct_24"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_flows_skewed_random"
 counter = itertools.count()
 
 base_hps = {
@@ -23,7 +23,7 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 256,
+    "global_batch_size": 1024,
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }
@@ -32,7 +32,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_flows"],
+        "log_tags": ["gfn_flows_skewed_random"],
         
         "task": {
         "basic_graph": {
@@ -43,6 +43,8 @@ hps = [
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
             "reward_func": reward, 
+            "reward_skewed_random": reward_skew,
+            "reward_param": reward_param, # when reward_skewed_random = True, 0.0 = sparse rewards
             },
         },  
         
@@ -52,7 +54,9 @@ hps = [
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for reward in ['const'] # in this experiment the reward is overwritten
+    for reward_skew in [True]
+    for reward_param in [0.0, 1.0]
     for seed in [1, 2, 3]
     for algo in [
         {

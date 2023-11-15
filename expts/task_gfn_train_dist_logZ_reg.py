@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_FM_flows_Oct_24"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_train_dist_logZ_l1reg_Nov_2"
 counter = itertools.count()
 
 base_hps = {
@@ -17,7 +17,7 @@ base_hps = {
             "num_mlp_layers": 2, 
             },
         },
-    "opt": {"learning_rate": 1e-4},
+    "opt": {"learning_rate": 1e-4}, # o.g. 1e-4
     "device": 'cuda',
 }
 
@@ -25,14 +25,14 @@ base_hps = {
 base_algo_hps = {
     "global_batch_size": 256,
     "max_nodes": 7,
-    "offline_ratio": 0 / 4,
+    "offline_ratio": 1,
 }
 
 hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_flows"],
+        "log_tags": ["gfn_l1_reg_logZ_train_dist_v3"],
         
         "task": {
         "basic_graph": {
@@ -41,19 +41,21 @@ hps = [
             "do_tabular_model": False, 
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
-            "train_ratio": 0.9,
-            "reward_func": reward, 
+            "train_ratio": 0.9, # set this to 1 maybe??
+            "reward_func": 'count', 
             },
         },  
         
         "algo": {
             **base_algo_hps,
+            "offline_sampling_g_distribution": 'uniform',
+            "l1_reg_log_Z_lambda": lam,
             **algo,
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
-    for seed in [1, 2, 3]
+    for lam in [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6, 1e-6, 0.0]
+    for seed in [1]
     for algo in [
         {
             "method": "TB", # either TB or FM

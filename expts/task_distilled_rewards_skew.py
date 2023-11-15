@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_skew"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_rewards_skew_Oct_3"
 counter = itertools.count()
 
 base_hps = {
@@ -31,7 +31,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_rewards_skew"],
+        "log_tags": ["distilled_rewards_skew_v2"],
         
         "task": {
         "basic_graph": {
@@ -55,7 +55,7 @@ hps = [
         },
         
     }
-    for reward in ['count', 'even_neighbors']
+    for reward in ['cliques', 'even_neighbors', 'count']
     for lam in [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     for seed in [1]
     #for algo in [

@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_distilled_rewards_shuffle/log-%A-%a.out
-#SBATCH --job-name=gfn-shuffle
+#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_single_run_gfn/log-%A-%a.out
+#SBATCH --job-name=gfn-single
 #SBATCH --partition=long
 #SBATCH --gres=gpu:1
-#SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=4
+#SBATCH --time=160:00:00
+#SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=32G
 #SBATCH --qos=normal
 
@@ -12,4 +12,4 @@
 source venv-gfn/bin/activate
 
 # Launch these jobs with sbatch --array=0-N%M job.sh   (N is inclusive, M limits number of tasks run at once)
-python expts/task_distilled_rewards_shuffle.py $SLURM_ARRAY_TASK_ID
+python expts/task_single_run_gfn.py $SLURM_ARRAY_TASK_ID

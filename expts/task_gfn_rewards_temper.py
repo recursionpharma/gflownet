@@ -1,12 +1,12 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_FM_flows_Oct_24"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_rewards_temper_Oct_10"
 counter = itertools.count()
 
 base_hps = {
     "num_training_steps": 100000,
-    "validate_every": 1000, # use 1000 might be faster
+    "validate_every": 1000,
     "num_workers": 8,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
@@ -32,7 +32,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_flows"],
+        "log_tags": ["gfn_rewards_temper"],
         
         "task": {
         "basic_graph": {
@@ -43,6 +43,11 @@ hps = [
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
             "reward_func": reward, 
+            "reward_reshape": False,
+            "reward_corrupt": False,
+            "reward_shuffle": False,
+            "reward_temper": True,
+            "reward_param": beta,
             },
         },  
         
@@ -52,18 +57,23 @@ hps = [
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
-    for seed in [1, 2, 3]
+    for reward in ['cliques', 'even_neighbors', 'count']
+    for beta in [0.1, 0.05, 0.01, 0.005, 0.001]
+    for seed in [1]
     for algo in [
         {
             "method": "TB", # either TB or FM
             "tb": {"variant": "SubTB1", "do_parameterize_p_b": False},
         },
+        #{
+        #    "method": "FM", # either TB or FM
+        #    "fm": {"correct_idempotent": False, "balanced_loss": False, "leaf_coef": 10, "epsilon": 1e-38},
+        #,
     ]
 ]
 
 from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
 
 trial = BasicGraphTaskTrainer(hps[int(sys.argv[1])])
-trial.print_every = 1
+#trial.print_every = 1
 trial.run()
