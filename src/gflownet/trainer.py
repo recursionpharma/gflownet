@@ -337,8 +337,9 @@ class GFNTrainer:
         logger.info("Starting training")
 
         # Compute p(x) for sampling x ~ p(x). Default is x ~ uniform.
-        train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
-        valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+        if self.log_sampling_g_distribution is not None:
+            train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+            valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
 
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
             epoch_idx = it // epoch_length
@@ -378,22 +379,23 @@ class GFNTrainer:
                 wandb.log({"valid-info": info, "valid-end-metrics": end_metrics}, step=it)
 
                 # update p(x) for sampling x ~ p(x), if using paramaterized p(x; \theta) for sampling
-                if self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
-                    self.log_sampling_g_distribution = self.model_log_probs
-                    train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
-                    valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
-                elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
-                    err = []
-                    for lq, lp in zip(self.model_log_probs, self.true_log_probs):
-                        if self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn":
-                            err.append((lq - lp)**2)
-                        else:
-                            err.append(np.abs(np.exp(lq) - np.exp(lp)))
-                    err = np.array(err)
-                    err = err / np.sum(err)
-                    self.log_sampling_g_distribution = np.log(err)
-                    train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
-                    valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                if self.log_sampling_g_distribution is not None:
+                    if self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
+                        self.log_sampling_g_distribution = self.model_log_probs
+                        train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                        valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                    elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
+                        err = []
+                        for lq, lp in zip(self.model_log_probs, self.true_log_probs):
+                            if self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn":
+                                err.append((lq - lp)**2)
+                            else:
+                                err.append(np.abs(np.exp(lq) - np.exp(lp)))
+                        err = np.array(err)
+                        err = err / np.sum(err)
+                        self.log_sampling_g_distribution = np.log(err)
+                        train_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
+                        valid_dl.dataset.compute_graph_sampling_prob(self.log_sampling_g_distribution)
 
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)

@@ -550,9 +550,9 @@ class BasicGraphTaskTrainer(GFNTrainer):
             if self.cfg.algo.offline_sampling_g_distribution == "log_rewards": # x ~ R(x)/Z
                 self.log_sampling_g_distribution = self.exact_prob_cb.true_log_probs
             elif self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
-                self.log_sampling_g_distribution = self.exact_prob_cb.compute_prob(model.to(self.cfg.device)).cpu().numpy()[:-1]
+                self.log_sampling_g_distribution = self.exact_prob_cb.compute_prob(model.to(self.cfg.device))[0].cpu().numpy()[:-1]
             elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
-                model_log_probs = self.exact_prob_cb.compute_prob(model.to(self.cfg.device)).cpu().numpy()[:-1]
+                model_log_probs = self.exact_prob_cb.compute_prob(model.to(self.cfg.device))[0].cpu().numpy()[:-1]
                 true_log_probs = self.exact_prob_cb.true_log_probs
                 err = []
                 for lq, lp in zip(model_log_probs, true_log_probs):
@@ -563,8 +563,13 @@ class BasicGraphTaskTrainer(GFNTrainer):
                 err = np.array(err)
                 err = err / np.sum(err)
                 self.log_sampling_g_distribution = np.log(err)
-            else:
+            elif self.cfg.algo.offline_sampling_g_distribution == "uniform": # x ~ Unif(x)
                 self.log_sampling_g_distribution = -1 * np.ones_like(self.exact_prob_cb.true_log_probs) # uniform distribution
+            elif self.cfg.algo.offline_sampling_g_distribution == "random":
+                rng = np.random.default_rng(self.cfg.seed)
+                self.log_sampling_g_distribution = rng.uniform(0, 10, len(self.exact_prob_cb.true_log_probs))
+            else: 
+                self.log_sampling_g_distribution = None
         self.sampling_tau = self.cfg.algo.sampling_tau
         self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_param = self.cfg.opt.clip_grad_param
@@ -765,12 +770,18 @@ class ExactProbCompCallback:
 
     def on_validation_end(self, metrics, valid_batch_ids=None):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
-        log_probs = self.compute_prob(self.trial.model).cpu().numpy()[:-1]
+        log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model)
+        log_probs = log_probs.cpu().numpy()[:-1]
+        state_flows = state_flows.cpu().numpy().flatten()
+        log_rewards_estimate = log_rewards_estimate.cpu().numpy().flatten()
+        #print(log_probs.shape, state_flows.shape, log_rewards_estimate.shape)
+        log_rewards = self.log_rewards
         lp, p = log_probs, np.exp(log_probs)
         lq, q = self.true_log_probs, np.exp(self.true_log_probs)
         self.trial.model_log_probs, self.trial.true_log_probs = log_probs, self.true_log_probs
         metrics["L1_logpx_error"] = np.mean(abs(lp - lq))
         metrics["JS_divergence"] = (p * (lp - lq) + q * (lq - lp)).sum() / 2
+        metrics["L1_log_R_error"] = np.mean(abs(log_rewards_estimate - log_rewards)) 
         print("L1 logpx error", metrics["L1_logpx_error"], "JS divergence", metrics["JS_divergence"])
         if self.do_save_px:
             torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_{self._save_increment}.pt", "wb"))
@@ -779,6 +790,7 @@ class ExactProbCompCallback:
             lp_valid, p_valid = log_probs[valid_batch_ids], np.exp(log_probs[valid_batch_ids])
             lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
             metrics["test_graphs-L1_logpx_error"] = np.mean(abs(lp_valid - lq_valid))
+            metrics["test_graphs-L1_log_R_error"] = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
             #metrics["test_graphs-JS_divergence"] = (p_valid * (lp_valid - lq_valid) + q_valid * (lq_valid - lp_valid)).sum() / 2
 
     def get_graph_idx(self, g, default=None):
@@ -884,6 +896,8 @@ class ExactProbCompCallback:
         prob_of_being_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
+        state_log_flows = torch.zeros((len(self.states), 1)).to(self.dev) 
+        log_rewards_estimate = torch.zeros((len(self.states), 1)).to(self.dev)
         if cond_info is None:
             cond_info = torch.zeros((self.mbs, self.ctx.num_cond_dim)).to(self.dev)
         if cond_info.ndim == 1:
@@ -907,6 +921,10 @@ class ExactProbCompCallback:
             with torch.no_grad():
                 cat, *_, mo = model(batch, cond_info[: len(bs)])
             logprobs = torch.cat([i.flatten() for i in cat.logsoftmax()])
+
+            state_log_flows[bi : bi + len(bs)] = mo
+            log_rewards_estimate[bi : bi + len(bs)] = mo + cat.logsoftmax()[0]
+
             for end_indices, being_indices in pre_indices:
                 if being_indices.shape[0] > 0:
                     s_idces, sp_idces, a_idces = being_indices
@@ -924,7 +942,7 @@ class ExactProbCompCallback:
                     # prob_of_ending_t = scatter_add(
                     #    (prob_of_being_t[s_idces] + logprobs[a_idces]).exp(), sp_idces, out=prob_of_ending_t.exp()
                     # ).log()
-        return prob_of_ending_t
+        return prob_of_ending_t, state_log_flows, log_rewards_estimate
 
     def recompute_flow(self, tqdm_disable=None):
         g = self.mdp_graph
@@ -965,6 +983,9 @@ class ExactProbCompCallback:
                         ed = g.get_edge_data(j, i)
                         for k, vs in ed.items():
                             g.edges[(j, i, k)]["F"] = np.log(np.exp(backflow) / len(ed))
+
+    def compute_model_flow(self, model, cond_info=None, tqdm_disable=None):
+        pass
 
     def get_bck_trajectory_test_split(self, r, seed=142857):
         test_set = set()

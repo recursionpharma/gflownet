@@ -120,6 +120,8 @@ class SamplingIterator(IterableDataset):
         # TODO: make this a proper flag / make a separate class for logging sampled molecules to a SQLite db
         self.log_molecule_smis = not hasattr(self.ctx, "not_a_molecule_env") and self.log_dir is not None
 
+        self.p = None
+
     def add_log_hook(self, hook: Callable):
         self.log_hooks.append(hook)
 
@@ -133,9 +135,11 @@ class SamplingIterator(IterableDataset):
         if self.stream:
             # If we're streaming data, just sample `offline_batch_size` indices
             while True:
-                p = self.p[self.data.idcs] / np.sum(self.p[self.data.idcs])
-                yield self.rng.choice(np.arange(0, len(self.data), 1), size=self.offline_batch_size, p=p)
-                #yield self.rng.integers(0, len(self.data), self.offline_batch_size)
+                if self.p is not None:
+                    p = self.p[self.data.idcs] / np.sum(self.p[self.data.idcs])
+                    yield self.rng.choice(np.arange(0, len(self.data), 1), size=self.offline_batch_size, p=p)
+                else:
+                    yield self.rng.integers(0, len(self.data), self.offline_batch_size) # this is also uniform
         else:
             # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()

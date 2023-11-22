@@ -131,7 +131,7 @@ class AlgoConfig:
     illegal_action_logreward: float = -100
     offline_ratio: float = 0.5
     valid_offline_ratio: float = 1
-    offline_sampling_g_distribution: Optional[str] = "uniform"
+    offline_sampling_g_distribution: Optional[str] = None
     use_true_log_Z: bool = False 
     true_log_Z: Optional[float] = None
     l2_reg_log_Z_lambda: float = 0.0
