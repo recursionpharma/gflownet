@@ -1,17 +1,17 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/distilled_Pf_Fs_flows_Nov_22"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/supervised_gnn_Nov_20"
 counter = itertools.count()
 
 base_hps = {
     "num_training_steps": 100000, 
-    "validate_every": 100,
+    "validate_every": 1000,
     "num_workers": 4,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
-        "num_layers": 8, 
-        "num_emb": 128,
+        "num_layers": 8, #8 
+        "num_emb": 128, #128
         "graph_transformer": {
             "num_heads": 4,
             "num_mlp_layers": 2, 
@@ -23,7 +23,7 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 256,
+    "global_batch_size": 2048, #256
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }
@@ -32,17 +32,18 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["distilled_flows_v4"],
+        "log_tags": ["supervised_gnn_v3"],
         "seed": seed,
         
         "task": {
         "basic_graph": {
-            "test_split_seed": seed, #seed, 
+            "test_split_seed": 1, #seed, 
             "do_supervised": True, 
             "do_tabular_model": False, 
-            "regress_to_P_F": regress_P_F,
-            "regress_to_Fsa": True,
+            "regress_to_P_F": False,
+            "regress_to_Fsa": False,
             "train_ratio": 0.9,
+            "reward_shuffle": False,
             "reward_func": reward, 
             },
         },  
@@ -53,9 +54,9 @@ hps = [
         },
         
     }
-    for reward in ['const', 'count', 'even_neighbors', 'cliques']
+    for reward in ['count', 'even_neighbors', 'cliques']
     for seed in [1, 2, 3]
-    for regress_P_F in [True, False]
+    #for shuffle in [True, False]
     #for algo in [
     #    {
     #        "method": "TB", # either TB or FM

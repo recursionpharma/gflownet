@@ -4,7 +4,7 @@ root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_singl
 
 base_hps = {
     "num_training_steps": 10000,
-    "validate_every": 100, # use 1000 might be faster
+    "validate_every": 1, # use 1000 might be faster
     "num_workers": 2,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
@@ -15,7 +15,7 @@ base_hps = {
             "num_mlp_layers": 2, 
             },
         },
-    "opt": {"learning_rate": 5e-5}, # o.g. 1e-4
+    "opt": {"learning_rate": 1e-4}, # o.g. 1e-4
     "device": 'cuda',
 }
 
@@ -46,7 +46,7 @@ hps = [
         
         "algo": {
             **base_algo_hps,
-            "offline_sampling_g_distribution": "log_rewards",
+            "offline_sampling_g_distribution": "uniform",
             "use_true_log_Z": False,
             #"l2_reg_log_Z_lambda": 0.0005,
             **algo,
