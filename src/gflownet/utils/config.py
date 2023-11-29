@@ -3,6 +3,31 @@ from typing import Any, List, Optional
 
 
 @dataclass
+class LogZCondConfig:
+    """Config for the logZ conditional.
+
+    Attributes
+    ----------
+
+    sample_dist : str
+        The distribution to sample the normalizing constant logZ from. Can be one of:
+        - "uniform": uniform distribution
+        - "loguniform": log-uniform distribution
+        - "gamma": gamma distribution
+        - "constant": constant temperature
+        - "beta": beta distribution
+        - None: No logZ conditioning
+    dist_params : List[Any]
+        The parameters of the logZ distribution. E.g. for the "uniform" distribution, this is the range.
+    num_encode_dim : int
+        The number of logZ encoding dimensions to use.
+    """
+
+    sample_dist: Optional[str] = None
+    dist_params: List[Any] = field(default_factory=lambda: [1.0, 20.0])
+    num_thermometer_dim: int = 32
+
+@dataclass
 class TempCondConfig:
     """Config for the temperature conditional.
 
@@ -71,6 +96,7 @@ class FocusRegionConfig:
 
 @dataclass
 class ConditionalsConfig:
+    logZ: LogZCondConfig = LogZCondConfig()
     temperature: TempCondConfig = TempCondConfig()
     moo: MultiObjectiveConfig = MultiObjectiveConfig()
     weighted_prefs: WeightedPreferencesConfig = WeightedPreferencesConfig()

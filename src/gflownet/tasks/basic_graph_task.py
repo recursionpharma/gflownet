@@ -30,7 +30,7 @@ from gflownet.envs.graph_building_env import (
 )
 from gflownet.models.graph_transformer import GraphTransformer, GraphTransformerGFN
 from gflownet.trainer import FlatRewards, GFNAlgorithm, GFNTask, GFNTrainer, RewardScalar
-
+from gflownet.utils.conditioning import LogZConditional
 
 def n_clique_reward(g, n=4):
     cliques = list(nx.algorithms.clique.find_cliques(g))
@@ -371,15 +371,21 @@ class BasicGraphTask(GFNTask):
         self,
         cfg: Config,
         dataset: TwoColorGraphDataset,
+        rng: np.random.Generator = None,
     ):
         self.dataset = dataset
         self.cfg = cfg
+        self.rng = rng
+        self.logZ_conditional = LogZConditional(cfg, rng)
 
     def flat_reward_transform(self, y: Tensor) -> FlatRewards:
         return FlatRewards(y.float())
 
     def sample_conditional_information(self, n: int, train_it: int = 0):
-        return {"encoding": torch.zeros((n, 1))}
+        if self.cfg.cond.logZ.sample_dist is not None:
+            return self.logZ_conditional.sample(n)
+        else:
+            return {"encoding": torch.zeros((n, 1))}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         return RewardScalar(flat_reward[:, 0].float())
@@ -536,12 +542,45 @@ class BasicGraphTaskTrainer(GFNTrainer):
             self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.cfg)
         elif algo == "FM":
             self.algo = FlowMatching(self.env, self.ctx, self.rng, self.cfg)
+
+        if self.cfg.cond.logZ.sample_dist is None:
+            assert "offline_ration == 0 but using conditional logZ for online model", self.cfg.algo.offline_ration == 0
         self.task = BasicGraphTask(
             self.cfg,
             self.training_data,
+            np.random.default_rng(self.cfg.seed),
         )
-        # set p(x) to be used for sampling x ~ p(x)
 
+        # initialize and load model for interpolated sampling
+        if self.cfg.algo.dir_model_pretrain_for_sampling is not None:
+            if self._do_supervised and not self.cfg.task.basic_graph.regress_to_Fsa:
+                self.model_pretrain_for_sampling = GraphTransformerRegressor(
+                    x_dim=self.ctx.num_node_dim,
+                    e_dim=self.ctx.num_edge_dim,
+                    g_dim=1,
+                    num_emb=self.cfg.model.num_emb,
+                    num_layers=self.cfg.model.num_layers,
+                    num_heads=self.cfg.model.graph_transformer.num_heads,
+                    ln_type=self.cfg.model.graph_transformer.ln_type,
+                )
+                print("Loading pre-trained model for sampling...")
+                model_pre_state = torch.load(self.cfg.algo.dir_model_pretrain_for_sampling, map_location=self.cfg.device)
+                self.model_pretrain_for_sampling.load_state_dict(model_pre_state['models_state_dict'][0])
+                print("Done")
+            else:
+                self.model_pretrain_for_sampling = GraphTransformerGFN(
+                    self.ctx,
+                    self.cfg,
+                    do_bck=self.cfg.algo.tb.do_parameterize_p_b,
+                )
+                print("Loading pre-trained model for sampling...")
+                model_pre_state = torch.load(self.cfg.algo.dir_model_pretrain_for_sampling, map_location=self.cfg.device)
+                self.model_pretrain_for_sampling.load_state_dict(model_pre_state['models_state_dict'][0])
+                print("Done")
+        else:  
+            self.model_pretrain_for_sampling = None
+
+        # For offline training -- set p(x) to be used for sampling x ~ p(x)
         if isinstance(model, GraphTransformerGFN):
             # select use of true log_Z
             if self.cfg.algo.use_true_log_Z:
@@ -790,7 +829,8 @@ class ExactProbCompCallback:
             lp_valid, p_valid = log_probs[valid_batch_ids], np.exp(log_probs[valid_batch_ids])
             lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
             metrics["test_graphs-L1_logpx_error"] = np.mean(abs(lp_valid - lq_valid))
-            metrics["test_graphs-L1_log_R_error"] = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
+            if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
+                metrics["test_graphs-L1_log_R_error"] = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
             #metrics["test_graphs-JS_divergence"] = (p_valid * (lp_valid - lq_valid) + q_valid * (lq_valid - lp_valid)).sum() / 2
 
     def get_graph_idx(self, g, default=None):
@@ -983,9 +1023,6 @@ class ExactProbCompCallback:
                         ed = g.get_edge_data(j, i)
                         for k, vs in ed.items():
                             g.edges[(j, i, k)]["F"] = np.log(np.exp(backflow) / len(ed))
-
-    def compute_model_flow(self, model, cond_info=None, tqdm_disable=None):
-        pass
 
     def get_bck_trajectory_test_split(self, r, seed=142857):
         test_set = set()

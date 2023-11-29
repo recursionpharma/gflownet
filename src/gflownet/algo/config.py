@@ -41,8 +41,8 @@ class TBConfig:
 
     bootstrap_own_reward: bool = False
     epsilon: Optional[float] = None
-    min_entropy_alpha: Optional[float] = None
-    softmax_temper: Optional[float] = None
+    min_entropy_alpha: Optional[float] = None # not used
+    softmax_temper: Optional[float] = None # not used
     reward_loss_multiplier: float = 1.0
     variant: TBVariant = TBVariant.TB
     do_correct_idempotent: bool = True
@@ -111,8 +111,20 @@ class AlgoConfig:
     offline_sampling_g_distribution: str
         In offline training, this select P(x) for sampling x ~ P(x). 
         Options = ["uniform", "log_rewards", "log_p", "loss_gfn", "error_gfn"]
+    true_log_Z: float
+        TODO
     use_true_log_Z: bool
         only use in offline setting to control for effects of learing log_Z
+    l2_reg_log_Z_lambda: float
+        TODO
+    l1_reg_log_Z_lambda: float
+        TODO
+    flow_reg: bool
+        TODO
+    dir_model_pretrain_for_sampling: str
+        TODO
+    alpha: float
+        TODO
     train_random_action_prob : float
         The probability of taking a random action during training
     valid_random_action_prob : float
@@ -136,6 +148,9 @@ class AlgoConfig:
     true_log_Z: Optional[float] = None
     l2_reg_log_Z_lambda: float = 0.0
     l1_reg_log_Z_lambda: float = 0.0
+    flow_reg: bool = False
+    dir_model_pretrain_for_sampling: Optional[str] = None
+    alpha: float = 0.0
     train_random_action_prob: float = 0.0
     valid_random_action_prob: float = 0.0
     valid_sample_cond_info: bool = True

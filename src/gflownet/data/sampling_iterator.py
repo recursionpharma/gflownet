@@ -43,6 +43,8 @@ class SamplingIterator(IterableDataset):
         random_action_prob: float = 0.0,
         hindsight_ratio: float = 0.0,
         init_train_iter: int = 0,
+        model_pretrain_for_sampling: nn.Module = None,
+        alpha: float = 0.0,
     ):
         """Parameters
         ----------
@@ -80,6 +82,8 @@ class SamplingIterator(IterableDataset):
             The probability of taking a random action, passed to the graph sampler
         init_train_iter: int
             The initial training iteration, incremented and passed to task.sample_conditional_information
+        model_pretrain_for_sampling: nn.Module
+            TODO
         """
         self.data = dataset
         self.model = model
@@ -99,6 +103,8 @@ class SamplingIterator(IterableDataset):
         self.random_action_prob = random_action_prob
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
+        self.model_pretrain_for_sampling = model_pretrain_for_sampling
+        self.alpha = alpha
         self.do_validate_batch = False  # Turn this on for debugging
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
@@ -224,6 +230,8 @@ class SamplingIterator(IterableDataset):
                         num_online,
                         cond_info["encoding"][num_offline:],
                         random_action_prob=self.random_action_prob,
+                        model_pretrain_for_sampling=self.model_pretrain_for_sampling,
+                        alpha=self.alpha,
                     )
                 if self.algo.bootstrap_own_reward:
                     # The model can be trained to predict its own reward,

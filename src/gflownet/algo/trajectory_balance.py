@@ -140,7 +140,7 @@ class TrajectoryBalance(GFNAlgorithm):
             self._init_subtb(torch.device(cfg.device))  # TODO: where are we getting device info?
 
     def create_training_data_from_own_samples(
-        self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
+        self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float, model_pretrain_for_sampling: TrajectoryBalanceModel = None, alpha: float = 0.0
     ):
         """Generate trajectories by sampling a model
 
@@ -154,6 +154,11 @@ class TrajectoryBalance(GFNAlgorithm):
             Conditional information, shape (N, n_info)
         random_action_prob: float
             Probability of taking a random action
+        model_pretrain_for_sampling: TrajectoryBalanceModel
+            TODO
+        alpha: float
+            TODO
+
         Returns
         -------
         data: List[Dict]
@@ -168,7 +173,10 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         dev = self.ctx.device
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
+        if model_pretrain_for_sampling is not None:
+            data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob, model_pretrain_for_sampling, alpha)
+        else:
+            data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
         for i in range(n):
             data[i]["logZ"] = logZ_pred[i].item()
@@ -412,6 +420,14 @@ class TrajectoryBalance(GFNAlgorithm):
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
         if self.cfg.variant == TBVariant.SubTB1:
+            if self.global_cfg.algo.flow_reg:
+                state_log_flows = per_graph_out[:, 0]
+                log_stop_probs = (fwd_cat.logsoftmax()[0])[:, 0]
+                log_reward_estimate = state_log_flows + log_stop_probs
+                clip_log_R[batch.num_offline:] = log_reward_estimate[final_graph_idx[batch.num_offline:]].detach()
+                clip_log_R = torch.maximum(
+                    clip_log_R, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
+                ).float()
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             first_graph_idx = torch.zeros_like(batch.traj_lens) # The position of the first graph of each trajectory
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
@@ -421,6 +437,13 @@ class TrajectoryBalance(GFNAlgorithm):
                 a = torch.zeros_like(per_graph_out)
                 b = torch.zeros_like(per_graph_out)
                 z = torch.ones_like(per_graph_out[first_graph_idx, 0]) * true_log_Z
+                a[first_graph_idx, 0] = torch.tensor(1.0)
+                b[first_graph_idx, 0] = z
+                per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
+            elif self.global_cfg.cond.logZ.sample_dist is not None:
+                a = torch.zeros_like(per_graph_out)
+                b = torch.zeros_like(per_graph_out)
+                z = cond_info.squeeze()
                 a[first_graph_idx, 0] = torch.tensor(1.0)
                 b[first_graph_idx, 0] = z
                 per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)

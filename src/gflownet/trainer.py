@@ -116,6 +116,8 @@ class GFNTrainer:
         self.task: GFNTask
         self.algo: GFNAlgorithm
 
+        self.model_pretrain_for_sampling: nn.Module = None
+    
         # There are three sources of config values
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
@@ -203,6 +205,8 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
+        if self.model_pretrain_for_sampling is not None:
+            model_pretrain_for_sampling, _ = self._wrap_for_mp(self.model_pretrain_for_sampling, send_to_device=True)
         replay_buffer, _ = (
             self._wrap_for_mp(self.replay_buffer, send_to_device=False)
             if self.replay_buffer is not None
@@ -222,6 +226,8 @@ class GFNTrainer:
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
             random_action_prob=self.cfg.algo.train_random_action_prob,
             hindsight_ratio=self.cfg.replay.hindsight_ratio,
+            model_pretrain_for_sampling=model_pretrain_for_sampling if self.model_pretrain_for_sampling is not None else None,
+            alpha=self.cfg.algo.alpha,
         )
         for hook in self.sampling_hooks:
             iterator.add_log_hook(hook)

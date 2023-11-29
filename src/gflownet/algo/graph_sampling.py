@@ -46,7 +46,14 @@ class GraphSampler:
         self.pad_with_terminal_state = pad_with_terminal_state
 
     def sample_from_model(
-        self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.0
+        self, 
+        model: nn.Module, 
+        n: int, 
+        cond_info: Tensor, 
+        dev: torch.device, 
+        random_action_prob: float = 0.0, 
+        model_pretrain_for_sampling: nn.Module = None,
+        alpha: float = 0.0,
     ):
         """Samples a model in a minibatch
 
@@ -60,6 +67,10 @@ class GraphSampler:
             Conditional information of each trajectory, shape (n, n_info)
         dev: torch.device
             Device on which data is manipulated
+        model_pretrain_for_sampling: nn.Module
+            TODO
+        alpha: float
+            TODO
 
         Returns
         -------
@@ -95,7 +106,21 @@ class GraphSampler:
             # Forward pass to get GraphActionCategorical
             # Note about `*_`, the model may be outputting its own bck_cat, but we ignore it if it does.
             # TODO: compute bck_cat.log_prob(bck_a) when relevant
-            fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+            if model_pretrain_for_sampling is not None:
+                fwd_cat_pre, *_, log_reward_preds_pre = model_pretrain_for_sampling(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+                fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+                #print(fwd_cat.logsoftmax())
+                #print(torch.exp(fwd_cat.logsoftmax()).shape)
+                #print((1 - alpha)*torch.exp(torch.tensor(fwd_cat.logsoftmax())))
+                #print([v.shape for v in fwd_cat.logsoftmax()], [v.shape for v in fwd_cat_pre.logsoftmax()])
+                alpha = torch.tensor(alpha)
+                #probs_mixed = [(1 - alpha)*torch.exp(v) + alpha*torch.exp(u) for v, u in zip(fwd_cat.logsoftmax(), fwd_cat_pre.logsoftmax())]
+                #logprobs_mixed = [torch.log(p) for p in probs_mixed]
+                logprobs_mixed = [torch.logaddexp(v + (1 - alpha).log(), u + alpha.log()) for v, u in zip(fwd_cat.logsoftmax(), fwd_cat_pre.logsoftmax())]
+                fwd_cat.logprobs = logprobs_mixed
+                fwd_cat.logits = logprobs_mixed
+            else:
+                fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
             if random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized

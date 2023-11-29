@@ -30,6 +30,61 @@ class Conditional(abc.ABC):
         raise NotImplementedError()
 
 
+class LogZConditional(Conditional):
+    def __init__(self, cfg: Config, rng: np.random.Generator):
+        self.cfg = cfg
+        self.rng = rng
+        tmp_cfg = self.cfg.cond.logZ
+        self.upper_bound = 1024
+        if tmp_cfg.sample_dist == "gamma":
+            loc, scale = tmp_cfg.dist_params
+            self.upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
+        elif tmp_cfg.sample_dist == "uniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "loguniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "beta":
+            self.upper_bound = 1
+
+    def encoding_size(self):
+        return self.cfg.cond.logZ.num_thermometer_dim
+
+    def sample(self, n):
+        cfg = self.cfg.cond.logZ
+        logZ = None
+        if cfg.sample_dist == "constant":
+            assert type(cfg.dist_params[0]) is float
+            logZ = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
+            logZ_enc = torch.zeros((n, cfg.num_thermometer_dim))
+        else:
+            if cfg.sample_dist == "gamma":
+                loc, scale = cfg.dist_params
+            elif cfg.sample_dist == "uniform":
+                a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
+                logZ = self.rng.uniform(a, b, n).astype(np.float32)
+            elif cfg.sample_dist == "loguniform":
+                low, high = np.log(cfg.dist_params)
+                logZ = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
+            elif cfg.sample_dist == "beta":
+                a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
+                logZ = self.rng.beta(a, b, n).astype(np.float32)
+
+        return {"encoding": torch.tensor(logZ).unsqueeze(-1)}
+
+    def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
+        scalar_logreward = linear_reward.squeeze().clamp(min=1e-30).log()
+        assert len(scalar_logreward.shape) == len(
+            cond_info["logZ"].shape
+        ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['logZ'].shape}"
+        return scalar_logreward * cond_info["logZ"]
+
+    def encode(self, conditional: Tensor) -> Tensor:
+        cfg = self.cfg.cond.temperature
+        if cfg.sample_dist == "constant":
+            return torch.zeros((conditional.shape[0], cfg.num_thermometer_dim))
+        return thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
+
+
 class TemperatureConditional(Conditional):
     def __init__(self, cfg: Config, rng: np.random.Generator):
         self.cfg = cfg
