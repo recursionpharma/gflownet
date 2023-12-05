@@ -398,8 +398,12 @@ class BasicGraphTask(GFNTask):
         return FlatRewards(flat_rewards), is_valid
 
     def encode_conditional_information(self, info):
-        encoding = torch.zeros((len(info), 1))
-        return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
+        if self.cfg.cond.logZ.sample_dist is not None:
+            encoding = self.logZ_conditional.encode(info)
+            return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
+        else:
+            encoding = torch.zeros((len(info), 1))
+            return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
 
 
 class UnpermutedGraphEnv(GraphBuildingEnv):
@@ -441,7 +445,7 @@ class BasicGraphTaskTrainer(GFNTrainer):
         cfg.algo.train_random_action_prob = 0.01
         cfg.log_sampled_data = False
         # Because we're using a RepeatedPreferencesDataset
-        cfg.algo.valid_sample_cond_info = False
+        cfg.algo.valid_sample_cond_info = True # this should be true (was false o.g.)?
         cfg.algo.offline_ratio = 0
 
     def setup(self):
@@ -454,7 +458,10 @@ class BasicGraphTaskTrainer(GFNTrainer):
         else:
             self.env = GraphBuildingEnv()
         self._data = load_two_col_data(self.cfg.task.basic_graph.data_root, max_nodes=max_nodes)
-        self.ctx = BasicGraphContext(max_nodes, num_cond_dim=1, graph_data=self._data, output_gid=True)
+        if self.cfg.cond.logZ.sample_dist is not None:
+            self.ctx = BasicGraphContext(max_nodes, num_cond_dim=self.cfg.cond.logZ.num_thermometer_dim + 1, graph_data=self._data, output_gid=True)
+        else:
+            self.ctx = BasicGraphContext(max_nodes, num_cond_dim=1, graph_data=self._data, output_gid=True)
         self.ctx.use_graph_cache = mcfg.do_tabular_model
         self._do_supervised = self.cfg.task.basic_graph.do_supervised
 
@@ -807,31 +814,80 @@ class ExactProbCompCallback:
             [[(j[0].to(self.dev), j[1].to(self.dev)) for j in i] for i in ids],
         )
 
-    def on_validation_end(self, metrics, valid_batch_ids=None):
-        # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
-        log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model)
+    def compute_metrics(self, log_probs, state_flows, log_rewards_estimate, valid_batch_ids=None):
         log_probs = log_probs.cpu().numpy()[:-1]
         state_flows = state_flows.cpu().numpy().flatten()
         log_rewards_estimate = log_rewards_estimate.cpu().numpy().flatten()
-        #print(log_probs.shape, state_flows.shape, log_rewards_estimate.shape)
         log_rewards = self.log_rewards
         lp, p = log_probs, np.exp(log_probs)
         lq, q = self.true_log_probs, np.exp(self.true_log_probs)
         self.trial.model_log_probs, self.trial.true_log_probs = log_probs, self.true_log_probs
-        metrics["L1_logpx_error"] = np.mean(abs(lp - lq))
-        metrics["JS_divergence"] = (p * (lp - lq) + q * (lq - lp)).sum() / 2
-        metrics["L1_log_R_error"] = np.mean(abs(log_rewards_estimate - log_rewards)) 
-        print("L1 logpx error", metrics["L1_logpx_error"], "JS divergence", metrics["JS_divergence"])
-        if self.do_save_px:
+        mae_log_probs = np.mean(abs(lp - lq))
+        js_log_probs = (p * (lp - lq) + q * (lq - lp)).sum() / 2
+        mae_log_rewards = np.mean(abs(log_rewards_estimate - log_rewards)) 
+        print("L1 logpx error", mae_log_probs, "JS divergence", js_log_probs)
+
+        if self.do_save_px and self.trial.cfg.cond.logZ.sample_dist is None:
             torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_{self._save_increment}.pt", "wb"))
             self._save_increment += 1
+
         if valid_batch_ids is not None:
             lp_valid, p_valid = log_probs[valid_batch_ids], np.exp(log_probs[valid_batch_ids])
             lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
-            metrics["test_graphs-L1_logpx_error"] = np.mean(abs(lp_valid - lq_valid))
+            test_mae_log_probs = np.mean(abs(lp_valid - lq_valid))
+            metrics_dict = {"test_graphs-L1_logpx_error": test_mae_log_probs}
             if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
-                metrics["test_graphs-L1_log_R_error"] = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
-            #metrics["test_graphs-JS_divergence"] = (p_valid * (lp_valid - lq_valid) + q_valid * (lq_valid - lp_valid)).sum() / 2
+                test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
+                metrics_dict = {"test_graphs-L1_log_R_error": test_mae_log_rewards}
+        
+        metrics_dict = {
+            "L1_logpx_error": mae_log_probs,
+            "JS_divergence": js_log_probs,
+            "L1_log_R_error": mae_log_rewards,
+        }  
+
+        return metrics_dict 
+
+    def on_validation_end(self, metrics, valid_batch_ids=None):
+        # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
+        if self.trial.cfg.cond.logZ.sample_dist is not None:
+            logZ_true = self.logZ * torch.ones(1) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+            logZ_true_enc = self.trial.task.encode_conditional_information(logZ_true)
+            cond_info = logZ_true_enc['encoding'].squeeze(0).to(self.dev)
+            log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info) # compute once using correct logZ
+            metrics_true_logZ = self.compute_metrics(log_probs, state_flows, log_rewards_estimate, valid_batch_ids)
+            
+            if self.do_save_px:
+                torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logZ_true.mean()}.pt", "wb"))
+            
+            dist_params = self.trial.cfg.cond.logZ.dist_params
+            num_logZ = self.trial.cfg.cond.logZ.num_valid_logZ_samples
+            metrics_range_logZ = {k: [v] for k, v in metrics_true_logZ.items()}
+
+            for logz in np.linspace(dist_params[0], dist_params[1], num_logZ).tolist(): # select size of range for logZ's
+                logZ_sampled = logz * torch.ones(1) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+                logZ_sampled_enc = self.trial.task.encode_conditional_information(logZ_sampled)
+                cond_info = logZ_sampled_enc['encoding'].squeeze(0).to(self.dev)
+                log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info)
+                metrics_tmp = self.compute_metrics(log_probs, state_flows, log_rewards_estimate, valid_batch_ids)
+
+                if self.do_save_px:
+                    torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logz}.pt", "wb"))
+
+                for k in metrics_range_logZ.keys():
+                    metrics_range_logZ[k].append(metrics_tmp[k])
+
+            for k, v in metrics_range_logZ.items():
+                metrics[k] = np.array(v)
+
+            if self.do_save_px:
+                self._save_increment += 1
+
+        else:
+            log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model)
+            metrics_pre = self.compute_metrics(log_probs, state_flows, log_rewards_estimate, valid_batch_ids)
+            for k, v in metrics_pre.items():
+                metrics[k] = np.array(v)
 
     def get_graph_idx(self, g, default=None):
         def iso(u, v):

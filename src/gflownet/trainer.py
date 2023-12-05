@@ -365,10 +365,12 @@ class GFNTrainer:
             wandb.log({"train": info}, step=it)
 
             if valid_freq > 0 and it % valid_freq == 0:
-                for batch in valid_dl:
-                    info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                    self.log(info, it, "valid")
-                    logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+                # make a flag to diaable this
+                if self.cfg.run_valid_dl:
+                    for batch in valid_dl:
+                        info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
+                        self.log(info, it, "valid")
+                        logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
                         
                 end_metrics = {}
                 for c in callbacks.values():
@@ -430,8 +432,25 @@ class GFNTrainer:
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
-        for k, v in info.items():
-            self._summary_writer.add_scalar(f"{key}_{k}", v, index)
+        if self.cfg.cond.logZ.dist_params is not None:
+            for k, v in info.items():
+                if len(np.array(v).shape) > 0:
+                    dist_params = self.cfg.cond.logZ.dist_params
+                    num_logZ = self.cfg.cond.logZ.num_valid_logZ_samples
+                    logZ_true = [self.exact_prob_cb.logZ]
+                    logZ_range = np.linspace(dist_params[0], dist_params[1], num_logZ).tolist()
+                    logZs = logZ_true + logZ_range
+                    scalars_dict = {str(logz): val for logz, val in zip(logZs, v)}
+                    i = 0
+                    for logz, val in scalars_dict.items():
+                        self._summary_writer.add_scalar(f"{key}_{k}_{i}", val, index)
+                        i += 1
+                    #self._summary_writer.add_histogram(f"{key}_{k}", v, index, ins="auto")
+                else:
+                    self._summary_writer.add_scalar(f"{key}_{k}", v, index)
+        else:
+            for k, v in info.items():
+                self._summary_writer.add_scalar(f"{key}_{k}", v, index)
 
 
 def cycle(it):

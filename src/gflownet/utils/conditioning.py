@@ -68,8 +68,10 @@ class LogZConditional(Conditional):
             elif cfg.sample_dist == "beta":
                 a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
                 logZ = self.rng.beta(a, b, n).astype(np.float32)
+            #logZ_enc = thermometer(torch.tensor(logZ), cfg.num_thermometer_dim, 0, self.upper_bound)
+            logZ_enc = self.encode(logZ)
 
-        return {"encoding": torch.tensor(logZ).unsqueeze(-1)}
+        return {"encoding": logZ_enc}
 
     def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
         scalar_logreward = linear_reward.squeeze().clamp(min=1e-30).log()
@@ -79,10 +81,11 @@ class LogZConditional(Conditional):
         return scalar_logreward * cond_info["logZ"]
 
     def encode(self, conditional: Tensor) -> Tensor:
-        cfg = self.cfg.cond.temperature
+        cfg = self.cfg.cond.logZ
         if cfg.sample_dist == "constant":
             return torch.zeros((conditional.shape[0], cfg.num_thermometer_dim))
-        return thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
+        enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
+        return torch.cat([torch.tensor(conditional).unsqueeze(-1), enc], dim=1)
 
 
 class TemperatureConditional(Conditional):

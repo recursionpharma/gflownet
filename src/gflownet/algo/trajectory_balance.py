@@ -441,9 +441,10 @@ class TrajectoryBalance(GFNAlgorithm):
                 b[first_graph_idx, 0] = z
                 per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
             elif self.global_cfg.cond.logZ.sample_dist is not None:
+                true_log_Z = cond_info # [bs, enc_dim+1]
                 a = torch.zeros_like(per_graph_out)
                 b = torch.zeros_like(per_graph_out)
-                z = cond_info.squeeze()
+                z = cond_info[:, 0] 
                 a[first_graph_idx, 0] = torch.tensor(1.0)
                 b[first_graph_idx, 0] = z
                 per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)

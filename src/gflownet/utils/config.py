@@ -26,6 +26,7 @@ class LogZCondConfig:
     sample_dist: Optional[str] = None
     dist_params: List[Any] = field(default_factory=lambda: [1.0, 20.0])
     num_thermometer_dim: int = 32
+    num_valid_logZ_samples: int = 10
 
 @dataclass
 class TempCondConfig:
