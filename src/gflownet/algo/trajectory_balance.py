@@ -121,6 +121,7 @@ class TrajectoryBalance(GFNAlgorithm):
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
         self.clip_Z = self.cfg.clip_Z_to_0
+        self.use_logZ_conditional = self.cfg.cond.logZ.sample_dist is not None
         # When the model is autoregressive, we can avoid giving it ["A", "AB", "ABC", ...] as a sequence of inputs, and
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
         # like a transformer with causal self-attention.
@@ -435,6 +436,17 @@ class TrajectoryBalance(GFNAlgorithm):
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
         if self.cfg.variant == TBVariant.SubTB1:
+            if self.use_logZ_conditional:
+                # We need some shenanigans to modify per_graph_out without modifying it in-place and
+                # corrupting the gradient graph
+                a = torch.zeros_like(per_graph_out)
+                b = torch.zeros_like(per_graph_out)
+                # Dangerous, but we assume here that the first dimension of cond_info is the logZ conditional
+                z = cond_info[:, 0] 
+                a[first_graph_idx, 0] = torch.tensor(1.0)
+                # This will set the first graph's F(s) to z, and the rest to 0
+                b[first_graph_idx, 0] = z
+                per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
             # SubTB interprets the per_graph_out predictions to predict the state flow F(s)
             if self.cfg.cum_subtb:
                 traj_losses = self.subtb_cum(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
@@ -446,6 +458,7 @@ class TrajectoryBalance(GFNAlgorithm):
             torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             log_Z = per_graph_out[first_graph_idx, 0]
         elif self.cfg.variant == TBVariant.DB:
+            assert not self.use_logZ_conditional, 'not implemented'
             F_sn = per_graph_out[:, 0]
             F_sm = per_graph_out[:, 0].roll(-1)
             F_sm[final_graph_idx] = clip_log_R
@@ -456,7 +469,10 @@ class TrajectoryBalance(GFNAlgorithm):
             log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective
-            numerator = (log_Z.clip(0) if self.clip_Z else log_Z) + traj_log_p_F
+            #numerator = (log_Z.clip(0) if self.clip_Z else log_Z) + traj_log_p_F
+            if self.use_logZ_conditional:
+                logZ = cond_info[:, 0]
+            numerator = log_Z + traj_log_p_F
             denominator = clip_log_R + traj_log_p_B
 
             if self.mask_invalid_rewards:
@@ -501,10 +517,10 @@ class TrajectoryBalance(GFNAlgorithm):
         else:
             reward_loss = 0
 
-        if 1:
+        if 0:
             Z_reg = (log_Z * (log_Z < 0)).pow(2).mean()
 
-        loss = traj_losses.mean() + reward_loss + Z_reg
+        loss = traj_losses.mean() + reward_loss # + Z_reg
         info = {
             # "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
             "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,

@@ -68,6 +68,43 @@ class FocusRegionConfig:
     focus_model_state_space_res: int = 30
     max_train_it: int = 20_000
 
+@dataclass
+class LogZCondConfig:
+    """Config for the logZ conditional.
+
+    Attributes
+    ----------
+
+    sample_dist : str
+        The distribution to sample the normalizing constant logZ from. Can be one of:
+        - "uniform": uniform distribution
+        - "loguniform": log-uniform distribution
+        - "gamma": gamma distribution
+        - "constant": constant temperature
+        - "beta": beta distribution
+        - None: No logZ conditioning
+    dist_params : List[Any]
+        The parameters of the logZ distribution. E.g. for the "uniform" distribution, this is the range.
+    num_encode_dim : int
+        The number of logZ encoding dimensions to use.
+    """
+
+    sample_dist: Optional[str] = None
+    dist_params: List[Any] = field(default_factory=lambda: [1.0, 20.0])
+    num_thermometer_dim: int = 32
+    num_valid_logZ_samples: int = 10
+
+@dataclass
+class AtomPropCondConfig:
+    """Config for the atom property conditional. 
+    Defaults determined from Chembl, outliers outside the 99.9% most common values are excluded."""
+    wt_bounds: tuple[float, float] = (160.0, 1000.0)
+    logp_bounds: tuple[float, float] = (-4.0, 10.0)
+    tpsa_bounds: tuple[float, float] = (0.0, 368.0)
+    fsp3_bounds: tuple[float, float] = (0.0, 1.0)
+    nrb_bounds: tuple[float, float] = (0.0, 30.0)
+    rings_bounds: tuple[float, float] = (0.0, 9.0)
+    sa_bounds: tuple[float, float] = (1.0, 7.0)
 
 @dataclass
 class ConditionalsConfig:
@@ -75,3 +112,5 @@ class ConditionalsConfig:
     moo: MultiObjectiveConfig = MultiObjectiveConfig()
     weighted_prefs: WeightedPreferencesConfig = WeightedPreferencesConfig()
     focus_region: FocusRegionConfig = FocusRegionConfig()
+    atom_prop: AtomPropCondConfig = AtomPropCondConfig()
+    logZ: LogZCondConfig = LogZCondConfig()

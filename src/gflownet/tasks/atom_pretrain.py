@@ -20,8 +20,64 @@ from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
+from gflownet.tasks.seh_frag import SEHTask
 from gflownet.utils.conditioning import Conditional
 from gflownet.utils import sascore
+
+
+class LogZConditional(Conditional):
+    def __init__(self, cfg: Config, rng: np.random.Generator):
+        self.cfg = cfg
+        self.rng = rng
+        tmp_cfg = self.cfg.cond.logZ
+        self.upper_bound = 1024
+        if tmp_cfg.sample_dist == "gamma":
+            loc, scale = tmp_cfg.dist_params
+            self.upper_bound = stats.gamma.ppf(0.95, loc, scale=scale)
+        elif tmp_cfg.sample_dist == "uniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "loguniform":
+            self.upper_bound = tmp_cfg.dist_params[1]
+        elif tmp_cfg.sample_dist == "beta":
+            self.upper_bound = 1
+
+    def encoding_size(self):
+        return self.cfg.cond.logZ.num_thermometer_dim
+
+    def sample(self, n):
+        cfg = self.cfg.cond.logZ
+        logZ = None
+        if cfg.sample_dist == "constant":
+            assert type(cfg.dist_params[0]) is float
+            logZ = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
+            logZ_enc = torch.zeros((n, cfg.num_thermometer_dim))
+        else:
+            if cfg.sample_dist == "gamma":
+                loc, scale = cfg.dist_params
+            elif cfg.sample_dist == "uniform":
+                a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
+                logZ = self.rng.uniform(a, b, n).astype(np.float32)
+            elif cfg.sample_dist == "loguniform":
+                low, high = np.log(cfg.dist_params)
+                logZ = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
+            elif cfg.sample_dist == "beta":
+                a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
+                logZ = self.rng.beta(a, b, n).astype(np.float32)
+            # logZ_enc = thermometer(torch.tensor(logZ), cfg.num_thermometer_dim, 0, self.upper_bound)
+            logZ_enc = self.encode(logZ)
+
+        return {"encoding": logZ_enc}
+
+    def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
+        return linear_reward
+
+    def encode(self, conditional: Tensor) -> Tensor:
+        cfg = self.cfg.cond.logZ
+        if cfg.sample_dist == "constant":
+            return torch.zeros((conditional.shape[0], cfg.num_thermometer_dim))
+        enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim - 1, 0, self.upper_bound)
+        return torch.cat([torch.tensor(conditional).unsqueeze(-1), enc], dim=1)
+
 
 class AtomPropConditional(Conditional):
     def __init__(self, cfg: Config, rng: np.random.Generator, props: List[str]):
@@ -29,14 +85,15 @@ class AtomPropConditional(Conditional):
         self.rng = rng
         self.props = props
         self.cbs = {
-            'wt': lambda mol: Descriptors.MolWt(mol),
-            'logp': lambda mol: Crippen.MolLogP(mol),
-            'tpsa': lambda mol: CalcTPSA(mol),
-            'fsp3': lambda mol: CalcFractionCSP3(mol),
-            'nrb': lambda mol: CalcNumRotatableBonds(mol),
-            'rings': lambda mol: mol.GetRingInfo().NumRings(),
-            'sa': lambda mol: sascore.calculateScore(mol),
+            "wt": lambda mol: Descriptors.MolWt(mol),
+            "logp": lambda mol: Crippen.MolLogP(mol),
+            "tpsa": lambda mol: CalcTPSA(mol),
+            "fsp3": lambda mol: CalcFractionCSP3(mol),
+            "nrb": lambda mol: CalcNumRotatableBonds(mol),
+            "rings": lambda mol: mol.GetRingInfo().NumRings(),
+            "sa": lambda mol: sascore.calculateScore(mol),
         }
+        self.bounds = {p: getattr(cfg.cond.atom_prop, p + "_bounds") for p in self.props}
 
     def transform(self, cond_info: Dict[str, Tensor], properties: Tensor) -> Tensor:
         return torch.ones((properties.shape[0], 1), device=properties.device)
@@ -44,29 +101,73 @@ class AtomPropConditional(Conditional):
     def sample(self, n: int):
         return {}
 
+
 class AtomPretrainTask(GFNTask):
-    """
-    """
+    """ """
 
     def __init__(
         self,
         cfg: Config,
         rng: np.random.Generator,
+        wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self.rng = rng
-        self.props = ['wt', 'logp', 'tpsa', 'fsp3', 'nrb', 'rings', 'sa']
-        self.conditional = AtomPropConditional(cfg, rng, self.props)
+        self.props = ["wt", "logp", "tpsa", "fsp3", "nrb", "rings", "sa"]
+        self.task = cfg.task.atom_pt.task
+        if self.task == "props":
+            self.conditional = AtomPropConditional(cfg, rng, self.props)
+        else:
+            self.conditional = LogZConditional(cfg, rng)
+        if self.task == "seh":
+            self.seh = SEHTask([], cfg, rng, wrap_model)
+            assert cfg.cond.temperature.sample_dist == "constant", "Chained conditionals not implemented yet"
         self.num_cond_dim = self.conditional.encoding_size()
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return self.conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.conditional.transform(cond_info, flat_reward))
+        if self.task == "props":
+            return RewardScalar(self.conditional.transform(cond_info, flat_reward))
+        elif self.task == "const":
+            return flat_reward.flatten()
+        elif self.task == "seh":
+            return self.seh.cond_info_to_logreward(cond_info, flat_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        frs = torch.tensor([[self.conditional.cbs[p](mol) for p in self.props] for mol in mols], dtype=torch.float32)
-        return FlatRewards(frs), torch.ones((frs.shape[0]), dtype=torch.bool)
+        if self.task == "props":
+            frs = torch.tensor(
+                [[self.conditional.cbs[p](mol) for p in self.props] for mol in mols], dtype=torch.float32
+            )
+            return FlatRewards(frs), torch.ones((frs.shape[0]), dtype=torch.bool)
+        elif self.task == "seh":
+            return self.seh.compute_flat_rewards(mols)
+        else:
+            return torch.zeros((len(mols), 1)), torch.ones((len(mols),), dtype=torch.bool)
+
+
+class ChemblDataset:
+    def __init__(self, ctx, train: bool = True, n=10_000, split_seed=142857):
+        self.smis, self.seh_score = pickle.load(
+            open("/mnt/ps/home/CORP/emmanuel.bengio/project/data/chembl_sorted_seh.pkl", "rb")
+        )
+        rng = np.random.RandomState(split_seed)
+        self.idcs = np.arange(len(smis))
+        rng.shuffle(self.idcs)
+        if train:
+            self.idcs = self.idcs[:n]
+        else:
+            self.idcs = self.idcs[-n:]
+        self.ctx = ctx
+
+    def __len__(self):
+        return len(self.idcs)
+
+    def __getitem__(self, idx):
+        return (
+            self.ctx.mol_to_graph(Chem.MolFromSmiles(self.smis[self.idcs[idx]])),
+            self.seh_score[self.idcs[idx]] * 8,
+        )
 
 
 class AtomPretrainTrainer(StandardOnlineTrainer):
@@ -90,8 +191,9 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         cfg.model.num_layers = 4
 
         cfg.algo.method = "TB"
-        cfg.algo.max_nodes = 50
-        cfg.algo.max_edges = 70
+        cfg.algo.max_nodes = 75
+        cfg.algo.max_edges = 90
+        cfg.algo.max_len = 100
         cfg.algo.sampling_tau = 0.9
         cfg.algo.illegal_action_logreward = -256
         cfg.algo.train_random_action_prob = 0.01
@@ -107,18 +209,12 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         cfg.replay.capacity = 10_000
         cfg.replay.warmup = 1_000
 
-
     def setup_task(self):
         self.task = AtomPretrainTask(
             dataset=self.training_data,
             cfg=self.cfg,
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
-        )
-        self.greedy_task = copy.copy(self.task)
-        # Ignore temperature for greedy task
-        self.greedy_task.cond_info_to_logreward = lambda cond_info, flat_reward: RewardScalar(
-            flat_reward.reshape((-1,))
         )
 
     def setup_env_context(self):
@@ -134,7 +230,6 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         )
         if hasattr(self.ctx, "graph_def"):
             self.env.graph_cls = self.ctx.graph_cls
-
 
 
 def main():
