@@ -150,6 +150,7 @@ class AlgoConfig:
     l1_reg_log_Z_lambda: float = 0.0
     flow_reg: bool = False
     dir_model_pretrain_for_sampling: Optional[str] = None
+    supervised_reward_predictor: Optional[str] = None
     alpha: float = 0.0
     train_random_action_prob: float = 0.0
     valid_random_action_prob: float = 0.0

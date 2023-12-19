@@ -268,6 +268,33 @@ class GFNTrainer:
             prefetch_factor=1 if self.cfg.num_workers else 2,
         )
 
+    def build_bgfn_validation_data_loader(self) -> DataLoader:
+        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        iterator = SamplingIterator(
+            self.test_cond_logZs_data,
+            model,
+            self.ctx,
+            self.algo,
+            self.task,
+            dev,
+            batch_size=self.cfg.algo.global_batch_size,
+            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
+            ratio=self.cfg.algo.valid_offline_ratio,
+            log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
+            sample_cond_info=self.cfg.algo.valid_sample_cond_info,
+            stream=False,
+            random_action_prob=self.cfg.algo.valid_random_action_prob,
+        )
+        for hook in self.valid_sampling_hooks:
+            iterator.add_log_hook(hook)
+        return torch.utils.data.DataLoader(
+            iterator,
+            batch_size=None,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            prefetch_factor=1 if self.cfg.num_workers else 2,
+        )
+
     def build_final_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         iterator = SamplingIterator(
@@ -334,7 +361,10 @@ class GFNTrainer:
         # If checkpoint_every is not specified, checkpoint at every validation epoch
         ckpt_freq = self.cfg.checkpoint_every if self.cfg.checkpoint_every is not None else valid_freq
         train_dl = self.build_training_data_loader()
-        valid_dl = self.build_validation_data_loader()
+        if self.cfg.algo.flow_reg and self.cfg.cond.logZ.sample_dist is not None:
+            valid_dl = self.build_bgfn_validation_data_loader()
+        else:
+            valid_dl = self.build_validation_data_loader()
         if self.cfg.num_final_gen_steps:
             final_dl = self.build_final_data_loader()
         callbacks = self.build_callbacks()
@@ -365,13 +395,15 @@ class GFNTrainer:
             wandb.log({"train": info}, step=it)
 
             if valid_freq > 0 and it % valid_freq == 0:
-                # make a flag to diaable this
                 if self.cfg.run_valid_dl:
                     for batch in valid_dl:
                         info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                        self.log(info, it, "valid")
+                        if self.cfg.algo.flow_reg and self.cfg.cond.logZ.sample_dist is not None:
+                            self.log(info, it, f"valid-cond-logZ_{str(batch.cond_info.cpu().numpy()[0, 0])}")
+                        else:
+                            self.log(info, it, "valid")
                         logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
-                        
+
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
@@ -432,7 +464,7 @@ class GFNTrainer:
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
-        if self.cfg.cond.logZ.dist_params is not None:
+        if self.cfg.cond.logZ.sample_dist is not None:
             for k, v in info.items():
                 if len(np.array(v).shape) > 0:
                     dist_params = self.cfg.cond.logZ.dist_params

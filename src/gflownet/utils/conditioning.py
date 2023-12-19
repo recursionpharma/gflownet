@@ -84,8 +84,12 @@ class LogZConditional(Conditional):
         cfg = self.cfg.cond.logZ
         if cfg.sample_dist == "constant":
             return torch.zeros((conditional.shape[0], cfg.num_thermometer_dim))
-        enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
-        return torch.cat([torch.tensor(conditional).unsqueeze(-1), enc], dim=1)
+        if torch.is_tensor(conditional):
+            enc = thermometer(conditional.squeeze(-1), cfg.num_thermometer_dim, 0, self.upper_bound)
+            return torch.cat([conditional, enc], dim=1)
+        else:
+            enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
+            return torch.cat([torch.tensor(conditional).unsqueeze(-1), enc], dim=1)
 
 
 class TemperatureConditional(Conditional):

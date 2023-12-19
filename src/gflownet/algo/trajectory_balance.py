@@ -125,6 +125,9 @@ class TrajectoryBalance(GFNAlgorithm):
         # like a transformer with causal self-attention.
         self.model_is_autoregressive = False
 
+        # model for reward prediction
+        self.model_supervised_reward_predictor = None
+
         self.graph_sampler = GraphSampler(
             ctx,
             env,
@@ -320,7 +323,7 @@ class TrajectoryBalance(GFNAlgorithm):
         return batch
 
     def compute_batch_losses(
-        self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0  # type: ignore[override]
+        self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0, # type: ignore[override]
     ):
         """Compute the losses over trajectories contained in the batch
 
@@ -332,7 +335,10 @@ class TrajectoryBalance(GFNAlgorithm):
         batch: gd.Batch
           batch of graphs inputs as per constructed by `self.construct_batch`
         num_bootstrap: int
-          the number of trajectories for which the reward loss is computed. Ignored if 0."""
+          the number of trajectories for which the reward loss is computed. Ignored if 0.
+        model_supervised_reward_predictor: nn.Module
+            TODO
+        """
         dev = batch.x.device
         # A single trajectory is comprised of many graphs
         num_trajs = int(batch.traj_lens.shape[0])
@@ -421,10 +427,16 @@ class TrajectoryBalance(GFNAlgorithm):
 
         if self.cfg.variant == TBVariant.SubTB1:
             if self.global_cfg.algo.flow_reg:
-                state_log_flows = per_graph_out[:, 0]
-                log_stop_probs = (fwd_cat.logsoftmax()[0])[:, 0]
-                log_reward_estimate = state_log_flows + log_stop_probs
-                clip_log_R[batch.num_offline:] = log_reward_estimate[final_graph_idx[batch.num_offline:]].detach()
+                if self.global_cfg.algo.supervised_reward_predictor is not None:
+                    log_reward_estimate = self.model_supervised_reward_predictor(batch, torch.zeros((batch.num_graphs, 1), device=batch.x.device))
+                    clip_log_R[batch.num_offline:] = log_reward_estimate[final_graph_idx[batch.num_offline:]].detach()
+                else:
+                    state_log_flows = per_graph_out[:, 0]
+                    log_stop_probs = (fwd_cat.logsoftmax()[0])[:, 0]
+                    log_reward_estimate = state_log_flows + log_stop_probs
+                    # try without detach and partial detach
+                    #clip_log_R[batch.num_offline:] = log_reward_estimate[final_graph_idx[batch.num_offline:]].detach()
+                    clip_log_R[batch.num_offline:] = log_reward_estimate[final_graph_idx[batch.num_offline:]]
                 clip_log_R = torch.maximum(
                     clip_log_R, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
                 ).float()
@@ -441,7 +453,6 @@ class TrajectoryBalance(GFNAlgorithm):
                 b[first_graph_idx, 0] = z
                 per_graph_out = b + per_graph_out * (torch.tensor(1.0) - a)
             elif self.global_cfg.cond.logZ.sample_dist is not None:
-                true_log_Z = cond_info # [bs, enc_dim+1]
                 a = torch.zeros_like(per_graph_out)
                 b = torch.zeros_like(per_graph_out)
                 z = cond_info[:, 0] 

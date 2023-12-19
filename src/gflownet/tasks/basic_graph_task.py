@@ -127,6 +127,30 @@ class GraphTransformerRegressor(GraphTransformer):
         return self.g2o(per_graph_pred)[:, 0]
 
 
+class LogZDataset(Dataset):
+    def __init__(
+        self,
+        logZs,
+        batch_size_per_logZ=64,
+    ):
+
+        data = []
+        for logz in logZs:
+            data.append(logz * torch.ones(batch_size_per_logZ))
+        data = torch.cat(data).unsqueeze(-1)
+
+        self.data = data
+        self.idcs = np.arange(len(self.data))
+
+    def __len__(self):
+        return len(self.idcs)
+
+    def __getitem__(self, idx):
+        idx = self.idcs[idx]
+        logZ = self.data[idx]
+        return logZ
+    
+
 class TwoColorGraphDataset(Dataset):
     def __init__(
         self,
@@ -400,7 +424,7 @@ class BasicGraphTask(GFNTask):
     def encode_conditional_information(self, info):
         if self.cfg.cond.logZ.sample_dist is not None:
             encoding = self.logZ_conditional.encode(info)
-            return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
+            return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": torch.tensor(info).float()}
         else:
             encoding = torch.zeros((len(info), 1))
             return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
@@ -550,13 +574,36 @@ class BasicGraphTaskTrainer(GFNTrainer):
         elif algo == "FM":
             self.algo = FlowMatching(self.env, self.ctx, self.rng, self.cfg)
 
-        if self.cfg.cond.logZ.sample_dist is None:
-            assert "offline_ration == 0 but using conditional logZ for online model", self.cfg.algo.offline_ration == 0
+        #if self.cfg.cond.logZ.sample_dist is None:
+        #    assert "offline_ration == 0 but using conditional logZ for online model", self.cfg.algo.offline_ratio == 0
         self.task = BasicGraphTask(
             self.cfg,
             self.training_data,
             np.random.default_rng(self.cfg.seed),
         )
+
+        if self.cfg.algo.flow_reg:
+            dist_params = self.cfg.cond.logZ.dist_params
+            num_logZ = self.cfg.cond.logZ.num_valid_logZ_samples
+            if self.cfg.cond.logZ.sample_dist is not None:
+                logZs = np.linspace(dist_params[0], dist_params[1], num_logZ).tolist()
+                self.test_cond_logZs_data = LogZDataset(logZs, batch_size_per_logZ=self.cfg.algo.global_batch_size)
+            if self.cfg.algo.supervised_reward_predictor is not None:
+                self.algo.model_supervised_reward_predictor = GraphTransformerRegressor(
+                    x_dim=self.ctx.num_node_dim,
+                    e_dim=self.ctx.num_edge_dim,
+                    g_dim=1,
+                    num_emb=self.cfg.model.num_emb,
+                    num_layers=self.cfg.model.num_layers,
+                    num_heads=self.cfg.model.graph_transformer.num_heads,
+                    ln_type=self.cfg.model.graph_transformer.ln_type,
+                )
+                print("Loading supervised trained model for unseen reward prediction ...")
+                load_path = self.cfg.algo.supervised_reward_predictor + mcfg.reward_func + '/model_state.pt'
+                model_pre_state = torch.load(load_path, map_location=self.cfg.device)
+                self.algo.model_supervised_reward_predictor.load_state_dict(model_pre_state['models_state_dict'][0])
+                self.algo.model_supervised_reward_predictor.to(self.cfg.device)
+                print("Done")
 
         # initialize and load model for interpolated sampling
         if self.cfg.algo.dir_model_pretrain_for_sampling is not None:
@@ -831,27 +878,26 @@ class ExactProbCompCallback:
             torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_{self._save_increment}.pt", "wb"))
             self._save_increment += 1
 
+        metrics_dict = {}
         if valid_batch_ids is not None:
             lp_valid, p_valid = log_probs[valid_batch_ids], np.exp(log_probs[valid_batch_ids])
             lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
             test_mae_log_probs = np.mean(abs(lp_valid - lq_valid))
-            metrics_dict = {"test_graphs-L1_logpx_error": test_mae_log_probs}
+            metrics_dict["test_graphs-L1_logpx_error"] = test_mae_log_probs
             if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
                 test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
-                metrics_dict = {"test_graphs-L1_log_R_error": test_mae_log_rewards}
-        
-        metrics_dict = {
-            "L1_logpx_error": mae_log_probs,
-            "JS_divergence": js_log_probs,
-            "L1_log_R_error": mae_log_rewards,
-        }  
+                metrics_dict["test_graphs-L1_log_R_error"] = test_mae_log_rewards
+         
+        metrics_dict["L1_logpx_error"] = mae_log_probs
+        metrics_dict["JS_divergence"] = js_log_probs
+        metrics_dict["L1_log_R_error"] = mae_log_rewards
 
         return metrics_dict 
 
     def on_validation_end(self, metrics, valid_batch_ids=None):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
         if self.trial.cfg.cond.logZ.sample_dist is not None:
-            logZ_true = self.logZ * torch.ones(1) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+            logZ_true = self.logZ * torch.ones((1, 1)) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
             logZ_true_enc = self.trial.task.encode_conditional_information(logZ_true)
             cond_info = logZ_true_enc['encoding'].squeeze(0).to(self.dev)
             log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info) # compute once using correct logZ
@@ -865,7 +911,7 @@ class ExactProbCompCallback:
             metrics_range_logZ = {k: [v] for k, v in metrics_true_logZ.items()}
 
             for logz in np.linspace(dist_params[0], dist_params[1], num_logZ).tolist(): # select size of range for logZ's
-                logZ_sampled = logz * torch.ones(1) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+                logZ_sampled = logz * torch.ones((1, 1)) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
                 logZ_sampled_enc = self.trial.task.encode_conditional_information(logZ_sampled)
                 cond_info = logZ_sampled_enc['encoding'].squeeze(0).to(self.dev)
                 log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info)
@@ -1187,6 +1233,7 @@ class BGSupervisedTrainer(BasicGraphTaskTrainer):
         self.algo = Regression()
         self.algo.loss_type = self.cfg.task.basic_graph.supervised_loss
         self.algo.regress_to_Fsa = self.cfg.task.basic_graph.regress_to_Fsa
+        self.log_sampling_g_distribution = self.cfg.algo.offline_sampling_g_distribution
         self.training_data.output_graphs = True
         self.test_data.output_graphs = True
         if self.cfg.task.basic_graph.regress_to_P_F:
