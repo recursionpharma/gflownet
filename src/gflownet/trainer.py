@@ -272,8 +272,8 @@ class GFNTrainer:
         )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
+        loss, info = self.algo.compute_batch_losses(self.model, batch)
         try:
-            loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
             step_info = self.step(loss)

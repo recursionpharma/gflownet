@@ -31,7 +31,8 @@ class GraphTransformer(nn.Module):
     node embeddings, and of the final virtual node embeddings.
     """
 
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre"):
+    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre",
+    num_edge_emb=None, num_mlp_layers=1, num_mlp_emb=None):
         """
         Parameters
         ----------
@@ -56,19 +57,21 @@ class GraphTransformer(nn.Module):
         self.num_noise = num_noise
         assert ln_type in ["pre", "post"]
         self.ln_type = ln_type
+        num_edge_emb = num_emb if num_edge_emb is None else num_edge_emb
+        num_mlp_emb = num_emb * 4 if num_mlp_emb is None else num_mlp_emb
 
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
-        self.e2h = mlp(e_dim, num_emb, num_emb, 2)
+        self.e2h = mlp(e_dim, num_emb, num_edge_emb, 2)
         self.c2h = mlp(g_dim, num_emb, num_emb, 2)
         self.graph2emb = nn.ModuleList(
             sum(
                 [
                     [
                         gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None),
-                        gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
+                        gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_edge_emb, heads=num_heads),
                         nn.Linear(num_heads * num_emb, num_emb),
                         gnn.LayerNorm(num_emb, affine=False),
-                        mlp(num_emb, num_emb * 4, num_emb, 1),
+                        mlp(num_emb, num_mlp_emb, num_emb, num_mlp_layers),
                         gnn.LayerNorm(num_emb, affine=False),
                         nn.Linear(num_emb, num_emb * 2),
                     ]
@@ -182,14 +185,23 @@ class GraphTransformerGFN(nn.Module):
             num_layers=cfg.model.num_layers,
             num_heads=cfg.model.graph_transformer.num_heads,
             ln_type=cfg.model.graph_transformer.ln_type,
+            num_mlp_layers=cfg.model.graph_transformer.num_mlp_layers,
+            num_mlp_emb=cfg.model.graph_transformer.num_mlp_emb,
+            # num_edge_emb=cfg.model.graph_transformer.num_edge_emb,
         )
         num_emb = cfg.model.num_emb
+        num_edge_emb = cfg.model.graph_transformer.num_edge_emb or num_emb
         num_final = num_emb
         num_glob_final = num_emb * 2
-        num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
+        num_edge_feat = num_edge_emb if env_ctx.edges_are_unordered else num_edge_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
         self.action_type_order = env_ctx.action_type_order
+
+        if cfg.model.graph_transformer.num_edge_emb is None:
+            self.n2edge_maker = lambda x: x
+        else:
+            self.n2edge_maker = nn.Linear(num_emb, num_edge_emb)
 
         # Every action type gets its own MLP that is fed the output of the GraphTransformer.
         # Here we define the number of inputs and outputs of each of those (potential) MLPs.
@@ -246,13 +258,14 @@ class GraphTransformerGFN(nn.Module):
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
         node_embeddings, graph_embeddings = self.transf(g, cond)
+        e_node_embeddings = self.n2edge_maker(node_embeddings)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):
             ne_row, ne_col = g.non_edge_index
             if self.edges_are_unordered:
-                non_edge_embeddings = node_embeddings[ne_row] + node_embeddings[ne_col]
+                non_edge_embeddings = e_node_embeddings[ne_row] + e_node_embeddings[ne_col]
             else:
-                non_edge_embeddings = torch.cat([node_embeddings[ne_row], node_embeddings[ne_col]], 1)
+                non_edge_embeddings = torch.cat([e_node_embeddings[ne_row], e_node_embeddings[ne_col]], 1)
         else:
             # If the environment context isn't setting non_edge_index, we can safely assume that
             # action is not in ctx.action_type_order.
@@ -263,9 +276,9 @@ class GraphTransformerGFN(nn.Module):
         else:
             e_row, e_col = g.edge_index
         if self.edges_are_unordered:
-            edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+            edge_embeddings = e_node_embeddings[e_row] + e_node_embeddings[e_col]
         else:
-            edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
+            edge_embeddings = torch.cat([e_node_embeddings[e_row], e_node_embeddings[e_col]], 1)
 
         emb = {
             "graph": graph_embeddings,

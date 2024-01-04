@@ -42,6 +42,9 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_TypeError, "mol_graph must be a Graph");
         return NULL;
     }
+    if (cond_info == Py_None) {
+        cond_info = NULL;
+    }
     Graph *g = (Graph *)mol_graph;
     GraphDef *gd = (GraphDef *)g->graph_def;
     PyObject *atom_types = PyDict_GetItemString(gd->node_values, "v"); // borrowed ref
@@ -146,7 +149,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
 
     PyObject *cond_info_shape = cond_info == NULL ? NULL : PyObject_CallMethod(cond_info, "size", NULL);
     int num_cond_info_dims = cond_info == NULL ? 0 : PyLong_AsLong(PyTuple_GetItem(cond_info_shape, 1));
-    Py_DECREF(cond_info_shape);
+    Py_XDECREF(cond_info_shape);
     int node_feat_shape = maxi(1, g->num_nodes);
     int is_float[] = {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int shapes[14][2] = {
@@ -240,6 +243,13 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                     continue;
                 if (j == explH_idx && used_valences[i] >= max_valence[i]) // expl_H
                     continue;
+                // Following on the special case, we made it here, now if the node is not yet charged but already
+                // has a valence of 3, the only charge we can add is a +1, which is the 0th logit
+                // (again this assumes charge ranges are [0,1,-1])
+                if (j == charge_idx && is_nitro && used_valences[i] >= max_valence[i] && charge_val[i] == 0){
+                    set_node_attr_mask[i * gd->num_node_attr_logits + logit_slice_start] = 1;
+                    continue;
+                }
                 memsetf(set_node_attr_mask + i * gd->num_node_attr_logits + logit_slice_start, 1,
                         (logit_slice_end - logit_slice_start));
             }

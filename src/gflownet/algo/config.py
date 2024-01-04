@@ -9,6 +9,7 @@ class TBVariant(Enum):
     TB = 0
     SubTB1 = 1
     DB = 2
+    SubTBMC = 3
 
 
 @dataclass
@@ -40,6 +41,7 @@ class TBConfig:
     """
 
     bootstrap_own_reward: bool = False
+    bootstrap_fpf_reward: bool = False
     epsilon: Optional[float] = None
     reward_loss_multiplier: float = 1.0
     variant: TBVariant = TBVariant.TB
@@ -50,7 +52,7 @@ class TBConfig:
     subtb_max_len: int = 128
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
-    cum_subtb: bool = True
+    cum_subtb: bool = False
     clip_Z_to_0: bool = True
 
 

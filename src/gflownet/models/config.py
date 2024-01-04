@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
 
 @dataclass
@@ -7,6 +8,8 @@ class GraphTransformerConfig:
     num_heads: int = 2
     ln_type: str = "pre"
     num_mlp_layers: int = 0
+    num_mlp_emb: Optional[int] = None
+    num_edge_emb: Optional[int] = None
 
 
 class SeqPosEnc(Enum):

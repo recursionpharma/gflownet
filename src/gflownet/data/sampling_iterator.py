@@ -203,7 +203,7 @@ class SamplingIterator(IterableDataset):
                         cond_info["encoding"][num_offline:],
                         random_action_prob=self.random_action_prob,
                     )
-                if self.algo.bootstrap_own_reward:
+                if self.algo.bootstrap_own_reward and False:  # TODO: fix this, I broke this feature to test something
                     # The model can be trained to predict its own reward,
                     # i.e. predict the output of cond_info_to_logreward
                     pred_reward = [i["reward_pred"].cpu().item() for i in trajs[num_offline:]]

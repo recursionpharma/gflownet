@@ -92,7 +92,7 @@ class GraphSampler:
         data = [{"traj": [], "reward_pred": None, "is_valid": True, "is_sink": []} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
         fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
-        bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
+        bck_prob: List[List[Tensor]] = [[] for i in range(n)]
 
         graphs = [self.env.new() for i in range(n)]
         done = [False] * n
@@ -145,7 +145,7 @@ class GraphSampler:
                 # Check if we're done
                 if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
-                    bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
+                    bck_prob[i].append(1)
                     data[i]["is_sink"].append(1)
                 else:  # If not done, try to step the self.environment
                     gp = graphs[i]
@@ -156,7 +156,7 @@ class GraphSampler:
                     except AssertionError:
                         done[i] = True
                         data[i]["is_valid"] = False
-                        bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
+                        bck_prob[i].append(1)
                         data[i]["is_sink"].append(1)
                         continue
                     if t == self.max_len - 1:
@@ -164,7 +164,7 @@ class GraphSampler:
                     # If no error, add to the trajectory
                     # P_B = uniform backward
                     n_back = self.env.count_backward_transitions(gp, check_idempotent=self.correct_idempotent)
-                    bck_logprob[i].append(1 / n_back)
+                    bck_prob[i].append(1 / n_back)
                     data[i]["is_sink"].append(0)
                     graphs[i] = gp
                 if done[i] and self.sanitize_samples and not self.ctx.is_sane(graphs[i]):
@@ -193,8 +193,8 @@ class GraphSampler:
             # model here, but this is expensive/impractical.  Instead
             # just report forward and backward logprobs
             data[i]["fwd_logprob"] = sum(fwd_logprob[i])
-            data[i]["bck_logprob"] = sum(bck_logprob[i])
-            data[i]["bck_logprobs"] = torch.tensor(bck_logprob[i], device=dev).float().log().reshape(-1)
+            data[i]["bck_logprob"] = sum(bck_prob[i])
+            data[i]["bck_logprobs"] = torch.tensor(bck_prob[i], device=dev).float().log().reshape(-1)
             data[i]["result"] = graphs[i]
             data[i]["bck_a"] = bck_a[i]
             if self.pad_with_terminal_state:

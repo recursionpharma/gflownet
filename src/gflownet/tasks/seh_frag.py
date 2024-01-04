@@ -107,21 +107,35 @@ class LittleSEHDataset(Dataset):
     """Note: this dataset isn't used by default, but turning it on showcases some features of this codebase.
 
     To turn on, self `cfg.algo.offline_ratio > 0`"""
+    load_path: str = ''
 
     def __init__(self) -> None:
         super().__init__()
-        self.props: List[Tensor] = []
+        self.props: Tensor = torch.zeros((0, 1))
         self.mols: List[Graph] = []
+        self.rng = None
 
     def setup(self, task, ctx):
-        rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
-        self.mols = [ctx.mol_to_graph(i) for i in rdmols]
-        self.props = task.compute_flat_rewards(rdmols)[0]
+        if not self.load_path:
+            rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
+            self.mols = [ctx.mol_to_graph(i) for i in rdmols]
+            self.props = task.compute_flat_rewards(rdmols)[0] * 8
+        else:
+            self.mols, _, _, self.props = torch.load(self.load_path)
+            self.props = torch.tensor(self.props).reshape((-1, 1)) * 8
+            self.p = (self.props.reshape((-1,))/8).numpy().clip(1e-4) ** 64
+            self.p = self.p / self.p.sum()
+
 
     def __len__(self):
         return len(self.mols)
 
     def __getitem__(self, index):
+        if self.rng is None:
+            import time
+            self.rng = np.random.default_rng(int(time.time()*10000))
+        if 0:
+            index = self.rng.choice(len(self.mols), p=self.p)
         return self.mols[index], self.props[index]
 
 

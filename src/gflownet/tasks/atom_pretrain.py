@@ -1,14 +1,16 @@
 import os
+import sys
 import pathlib
 import shutil
 import socket
-import copy
+import pickle
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol, ChiralType
 from rdkit.Chem import Descriptors, Crippen, AllChem
 from rdkit.Chem.rdMolDescriptors import CalcTPSA, CalcNumRotatableBonds, CalcFractionCSP3
@@ -23,6 +25,7 @@ from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.tasks.seh_frag import SEHTask
 from gflownet.utils.conditioning import Conditional
 from gflownet.utils import sascore
+from gflownet.utils.transforms import thermometer
 
 
 class LogZConditional(Conditional):
@@ -65,7 +68,6 @@ class LogZConditional(Conditional):
                 logZ = self.rng.beta(a, b, n).astype(np.float32)
             # logZ_enc = thermometer(torch.tensor(logZ), cfg.num_thermometer_dim, 0, self.upper_bound)
             logZ_enc = self.encode(logZ)
-
         return {"encoding": logZ_enc}
 
     def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
@@ -74,8 +76,9 @@ class LogZConditional(Conditional):
     def encode(self, conditional: Tensor) -> Tensor:
         cfg = self.cfg.cond.logZ
         if cfg.sample_dist == "constant":
-            return torch.zeros((conditional.shape[0], cfg.num_thermometer_dim))
-        enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim - 1, 0, self.upper_bound)
+            enc = torch.zeros((conditional.shape[0], cfg.num_thermometer_dim - 1))
+        else:
+            enc = thermometer(torch.tensor(conditional), cfg.num_thermometer_dim - 1, 0, self.upper_bound)
         return torch.cat([torch.tensor(conditional).unsqueeze(-1), enc], dim=1)
 
 
@@ -102,6 +105,20 @@ class AtomPropConditional(Conditional):
         return {}
 
 
+class ConstantConditional(Conditional):
+    def __init__(self):
+        pass
+
+    def encoding_size(self):
+        return 1
+
+    def sample(self, n: int):
+        return {"encoding": torch.zeros((n, 1))}
+
+    def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
+        return linear_reward
+
+
 class AtomPretrainTask(GFNTask):
     """ """
 
@@ -116,15 +133,23 @@ class AtomPretrainTask(GFNTask):
         self.task = cfg.task.atom_pt.task
         if self.task == "props":
             self.conditional = AtomPropConditional(cfg, rng, self.props)
-        else:
+        elif cfg.cond.logZ.sample_dist is not None:
             self.conditional = LogZConditional(cfg, rng)
+        else:
+            self.conditional = ConstantConditional()
         if self.task == "seh":
             self.seh = SEHTask([], cfg, rng, wrap_model)
+            self.beta = cfg.cond.temperature.dist_params[0]
             assert cfg.cond.temperature.sample_dist == "constant", "Chained conditionals not implemented yet"
         self.num_cond_dim = self.conditional.encoding_size()
 
+    def flat_reward_transform(self, flat_reward: FlatRewards) -> FlatRewards:
+        return FlatRewards(flat_reward).reshape((-1, 1))
+
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        return self.conditional.sample(n)
+        ci = self.conditional.sample(n)
+        ci["beta"] = self.beta * torch.ones(n)
+        return ci
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         if self.task == "props":
@@ -132,7 +157,8 @@ class AtomPretrainTask(GFNTask):
         elif self.task == "const":
             return flat_reward.flatten()
         elif self.task == "seh":
-            return self.seh.cond_info_to_logreward(cond_info, flat_reward)
+            linear_reward = flat_reward
+            return linear_reward.squeeze().clamp(min=1e-30).log() * self.beta
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         if self.task == "props":
@@ -149,24 +175,34 @@ class AtomPretrainTask(GFNTask):
 class ChemblDataset:
     def __init__(self, ctx, train: bool = True, n=10_000, split_seed=142857):
         self.smis, self.seh_score = pickle.load(
-            open("/mnt/ps/home/CORP/emmanuel.bengio/project/data/chembl_sorted_seh.pkl", "rb")
+            open("/mnt/ps/home/CORP/emmanuel.bengio/project/data/chembl_sorted_seh_valid.pkl", "rb")
         )
+        self.seh_score = torch.as_tensor(self.seh_score, dtype=torch.float32)
         rng = np.random.RandomState(split_seed)
-        self.idcs = np.arange(len(smis))
+        self.idcs = np.arange(len(self.smis))
         rng.shuffle(self.idcs)
         if train:
             self.idcs = self.idcs[:n]
         else:
             self.idcs = self.idcs[-n:]
         self.ctx = ctx
+        self.ignore_idx_and_sample = train
+        self.rng = rng
+        self.p = (lambda x: x / x.sum())(self.seh_score[self.idcs] ** 8).numpy()
+        self._try_seeding = True
 
     def __len__(self):
         return len(self.idcs)
 
     def __getitem__(self, idx):
+        if self._try_seeding:
+            self.rng.seed(idx)
+            self._try_seeding = False
+        if self.ignore_idx_and_sample:
+            idx = self.rng.choice(len(self.p), p=self.p)
         return (
             self.ctx.mol_to_graph(Chem.MolFromSmiles(self.smis[self.idcs[idx]])),
-            self.seh_score[self.idcs[idx]] * 8,
+            self.seh_score[self.idcs[idx]],
         )
 
 
@@ -178,12 +214,12 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         cfg.pickle_mp_messages = True
         cfg.num_workers = 8
         cfg.checkpoint_every = 1000
-        cfg.opt.learning_rate = 1e-4
+        cfg.opt.learning_rate = 3e-4
         cfg.opt.weight_decay = 1e-8
         cfg.opt.momentum = 0.9
         cfg.opt.adam_eps = 1e-8
         cfg.opt.lr_decay = 20_000
-        cfg.opt.clip_grad_type = "norm"
+        cfg.opt.clip_grad_type = "none"  ### "norm"
         cfg.opt.clip_grad_param = 10
         cfg.algo.global_batch_size = 64
         cfg.algo.offline_ratio = 0
@@ -195,7 +231,7 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         cfg.algo.max_edges = 90
         cfg.algo.max_len = 100
         cfg.algo.sampling_tau = 0.9
-        cfg.algo.illegal_action_logreward = -256
+        cfg.algo.illegal_action_logreward = -512
         cfg.algo.train_random_action_prob = 0.01
         cfg.algo.valid_random_action_prob = 0.0
         cfg.algo.valid_offline_ratio = 0
@@ -204,14 +240,17 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
         cfg.algo.tb.Z_learning_rate = 1e-3
         cfg.algo.tb.Z_lr_decay = 50_000
         cfg.algo.tb.do_parameterize_p_b = False
+        cfg.algo.tb.do_sample_p_b = True
 
         cfg.replay.use = False
         cfg.replay.capacity = 10_000
         cfg.replay.warmup = 1_000
 
+    def setup_data(self):
+        pass
+
     def setup_task(self):
         self.task = AtomPretrainTask(
-            dataset=self.training_data,
             cfg=self.cfg,
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
@@ -220,14 +259,17 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
     def setup_env_context(self):
         self.ctx = MolBuildingEnvContext(
             ["C", "N", "O", "S", "F", "Cl", "Br"],
-            charges=[0],
-            chiral_types=[ChiralType.CHI_UNSPECIFIED],
-            num_rw_feat=0,
+            # charges=[0, 1, -1],
+            # chiral_types=[ChiralType.CHI_UNSPECIFIED],
+            num_rw_feat=self.cfg.task.atom_pt.num_rw,
             max_nodes=self.cfg.algo.max_nodes,
             num_cond_dim=self.task.num_cond_dim,
-            # allow_5_valence_nitrogen=True,  # We need to fix backward trajectories to use masks!
+            allow_5_valence_nitrogen=False,
+            # We need to fix backward trajectories to use masks! should be fine now
             # And make sure the Nitrogen-related backward masks make sense
         )
+        self.training_data = ChemblDataset(self.ctx, train=True, n=10_000)
+        self.test_data = ChemblDataset(self.ctx, train=False, n=10_000)
         if hasattr(self.ctx, "graph_def"):
             self.env.graph_cls = self.ctx.graph_cls
 
@@ -235,28 +277,90 @@ class AtomPretrainTrainer(StandardOnlineTrainer):
 def main():
     """Example of how this model can be run outside of Determined"""
     hps = {
-        "log_dir": f"./logs/atom_pt/run_debug/",
+        "log_dir": f"./logs/atom_pt/run_bgfn_5/",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
-        "num_training_steps": 2000,
+        "num_training_steps": 100_000,
         "validate_every": 0,
-        "num_workers": 4,
+        "num_workers": 8,
+        "model": {
+            "num_emb": 128,
+            "num_layers": 3,
+            "graph_transformer": {
+                "num_heads": 4,
+                "num_mlp_layers": 4,
+                "num_mlp_emb": 1024,
+                "num_edge_emb": 8,
+            },
+        },
+        "task": {
+            "atom_pt": {
+                "task": "seh",
+            }
+        },
         "opt": {
             "lr_decay": 20000,
         },
         "algo": {
             "illegal_action_logreward": -512,
             "sampling_tau": 0.99,
-            "global_batch_size": 128,
-            "tb": {"variant": "TB"},
+            "global_batch_size": 32,
+            "offline_ratio": 0.5,
+            "tb": {"variant": "SubTB1", "bootstrap_fpf_reward": True},
         },
         "cond": {
             "temperature": {
                 "sample_dist": "constant",
-                "dist_params": [64.0],
-            }
+                "dist_params": [96.0],
+            },
+            "logZ": {
+                # "sample_dist": None, #"uniform",
+                "sample_dist": "uniform",
+                # 4.1471 is the logZ of the full dataset with beta=96
+                # first 10k has logZ = -2.26
+                # "dist_params": [4.1471, 10.0],
+                # "dist_params": [-2.26, 10.0],
+                "dist_params": [-2.26, -2.25],
+            },
         },
     }
+    hps = [
+        {
+            **hps,
+            "log_dir": f"./logs/atom_pt/run_overfit_0/",
+            "cond": {
+                "temperature": {
+                    "sample_dist": "constant",
+                    "dist_params": [96.0],
+                },
+                "logZ": {
+                    "sample_dist": "constant",
+                    "dist_params": [-2.26, -2.25],
+                },
+            },
+        },
+        {
+            **hps,
+            "log_dir": f"./logs/atom_pt/run_overfit_1/",
+            "task": {
+                "atom_pt": {
+                    "task": "seh",
+                    "num_rw": 8,
+                }
+            },
+            "cond": {
+                "temperature": {
+                    "sample_dist": "constant",
+                    "dist_params": [96.0],
+                },
+                "logZ": {
+                    "sample_dist": "constant",
+                    "dist_params": [-2.26, -2.25],
+                },
+            },
+        },
+    ][int(sys.argv[1])]
+
     if os.path.exists(hps["log_dir"]):
         if hps["overwrite_existing_exp"]:
             shutil.rmtree(hps["log_dir"])

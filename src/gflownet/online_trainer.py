@@ -23,6 +23,7 @@ class StandardOnlineTrainer(GFNTrainer):
             self.ctx,
             self.cfg,
             do_bck=self.cfg.algo.tb.do_parameterize_p_b,
+            num_graph_out=1 + int(self.cfg.algo.tb.bootstrap_own_reward),
         )
 
     def setup_algo(self):

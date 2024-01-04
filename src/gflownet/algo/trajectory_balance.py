@@ -113,15 +113,17 @@ class TrajectoryBalance(GFNAlgorithm):
         self.max_nodes = cfg.algo.max_nodes
         self.length_normalize_losses = cfg.algo.tb.do_length_normalize
         # Experimental flags
-        self.reward_loss_is_mae = True
+        self.reward_loss_is_mae = False
         self.tb_loss_is_mae = False
         self.tb_loss_is_huber = False
         self.mask_invalid_rewards = False
         self.reward_normalize_losses = False
         self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
+        self.bootstrap_fpf_reward = self.cfg.bootstrap_fpf_reward
         self.clip_Z = self.cfg.clip_Z_to_0
-        self.use_logZ_conditional = self.cfg.cond.logZ.sample_dist is not None
+        self.use_logZ_conditional = cfg.cond.logZ.sample_dist is not None
+        self.reward_model = None
         # When the model is autoregressive, we can avoid giving it ["A", "AB", "ABC", ...] as a sequence of inputs, and
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
         # like a transformer with causal self-attention.
@@ -137,9 +139,15 @@ class TrajectoryBalance(GFNAlgorithm):
             correct_idempotent=self.cfg.do_correct_idempotent,
             pad_with_terminal_state=self.cfg.do_parameterize_p_b,
         )
+        if self.bootstrap_fpf_reward:
+            assert self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.SubTBMC
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
+        elif self.cfg.variant == TBVariant.SubTBMC:
+            self._subtb_max_len = self.global_cfg.algo.max_len + 2
+            self._init_subtb_mc(torch.device("cuda"))  # TODO: where are we getting device info?
+            assert not self.cfg.cum_subtb
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
@@ -360,6 +368,9 @@ class TrajectoryBalance(GFNAlgorithm):
         batch_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens)
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
+        # The position of the first graph of each trajectory
+        first_graph_idx = torch.zeros_like(batch.traj_lens)
+        torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
 
         # Forward pass of the model, returns a GraphActionCategorical representing the forward
         # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
@@ -370,11 +381,49 @@ class TrajectoryBalance(GFNAlgorithm):
                 fwd_cat, per_graph_out = model(batch, cond_info, batched=True)
             else:
                 fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
-        # Retreive the reward predictions for the full graphs,
-        # i.e. the final graph of each trajectory
-        log_reward_preds = per_graph_out[final_graph_idx, 0]
+        if self.bootstrap_own_reward:
+            # Retreive the reward predictions for the full graphs,
+            # i.e. the final graph of each trajectory
+            # -1 because col 0 might be F(s)
+            log_reward_preds = per_graph_out[final_graph_idx, -1]
         # Compute trajectory balance objective
         log_Z = model.logZ(cond_info)[:, 0]
+
+        if self.reward_model is not None:
+            # Experimental: use a separate reward model to compare with bootstrapped fpf rewards
+            # Assumes a fixed beta
+            with torch.no_grad():
+                reward_estimate = self.reward_model(batch, torch.zeros(batch_idx.shape[0], 1, device=dev))[1][:, 0]
+                log_reward_estimate = reward_estimate.clip(1e-4).log() * self.global_cfg.cond.temperature.dist_params[0]
+            clip_log_R[batch.num_offline :] = log_reward_estimate[final_graph_idx[batch.num_offline :]]
+            clip_log_R = torch.maximum(
+                clip_log_R,
+                torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev),
+            ).float()
+        elif self.bootstrap_own_reward:
+            # Bootstrap the reward using the model's own reward prediction
+            # This is the log reward of the last graph in each trajectory
+            # -1 because col 0 might be F(s)
+            clip_log_R[batch.num_offline :] = log_reward_preds[batch.num_offline :].detach()
+            clip_log_R = torch.maximum(
+                clip_log_R,
+                torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev),
+            ).float()
+        elif self.bootstrap_fpf_reward:
+            state_log_flows = per_graph_out[:, 0]
+            log_stop_probs = (fwd_cat.logsoftmax()[0])[:, 0]
+            log_reward_estimate = state_log_flows + log_stop_probs
+            detach = True
+            if detach:
+                clip_log_R[batch.num_offline :] = log_reward_estimate[final_graph_idx[batch.num_offline :]].detach()
+            else:
+                if 0:
+                    log_reward_estimate = 0.1 * log_reward_estimate + 0.9 * log_reward_estimate.detach()
+                clip_log_R[batch.num_offline :] = log_reward_estimate[final_graph_idx[batch.num_offline :]]
+            clip_log_R = torch.maximum(
+                clip_log_R, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
+            ).float()
+
         # Compute the log prob of each action in the trajectory
         if self.cfg.do_correct_idempotent:
             # If we want to correct for idempotent actions, we need to sum probabilities
@@ -435,14 +484,15 @@ class TrajectoryBalance(GFNAlgorithm):
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
-        if self.cfg.variant == TBVariant.SubTB1:
-            if self.use_logZ_conditional:
+        if self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.SubTBMC:
+            if self.use_logZ_conditional or 0:
                 # We need some shenanigans to modify per_graph_out without modifying it in-place and
                 # corrupting the gradient graph
                 a = torch.zeros_like(per_graph_out)
                 b = torch.zeros_like(per_graph_out)
                 # Dangerous, but we assume here that the first dimension of cond_info is the logZ conditional
-                z = cond_info[:, 0] 
+                # z = cond_info[:, 0]
+                z = 30.0
                 a[first_graph_idx, 0] = torch.tensor(1.0)
                 # This will set the first graph's F(s) to z, and the rest to 0
                 b[first_graph_idx, 0] = z
@@ -453,12 +503,9 @@ class TrajectoryBalance(GFNAlgorithm):
             else:
                 traj_losses = self.subtb_loss_fast(log_p_F, log_p_B, per_graph_out[:, 0], clip_log_R, batch.traj_lens)
 
-            # The position of the first graph of each trajectory
-            first_graph_idx = torch.zeros_like(batch.traj_lens)
-            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
             log_Z = per_graph_out[first_graph_idx, 0]
         elif self.cfg.variant == TBVariant.DB:
-            assert not self.use_logZ_conditional, 'not implemented'
+            assert not self.use_logZ_conditional, "not implemented"
             F_sn = per_graph_out[:, 0]
             F_sm = per_graph_out[:, 0].roll(-1)
             F_sm[final_graph_idx] = clip_log_R
@@ -469,9 +516,9 @@ class TrajectoryBalance(GFNAlgorithm):
             log_Z = per_graph_out[first_graph_idx, 0]
         else:
             # Compute log numerator and denominator of the TB objective
-            #numerator = (log_Z.clip(0) if self.clip_Z else log_Z) + traj_log_p_F
+            # numerator = (log_Z.clip(0) if self.clip_Z else log_Z) + traj_log_p_F
             if self.use_logZ_conditional:
-                logZ = cond_info[:, 0]
+                log_Z = cond_info[:, 0]
             numerator = log_Z + traj_log_p_F
             denominator = clip_log_R + traj_log_p_B
 
@@ -508,11 +555,11 @@ class TrajectoryBalance(GFNAlgorithm):
             traj_losses = factor * traj_losses * num_trajs
 
         if self.cfg.bootstrap_own_reward:
-            num_bootstrap = num_bootstrap or len(log_rewards)
+            num_bootstrap = batch.num_offline #num_bootstrap or len(log_rewards)
             if self.reward_loss_is_mae:
-                reward_losses = abs(log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap])
+                reward_losses = abs(clip_log_R[:num_bootstrap] - log_reward_preds[:num_bootstrap])
             else:
-                reward_losses = (log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap]).pow(2)
+                reward_losses = (clip_log_R[:num_bootstrap] - log_reward_preds[:num_bootstrap]).pow(2)
             reward_loss = reward_losses.mean() * self.cfg.reward_loss_multiplier
         else:
             reward_loss = 0
@@ -520,10 +567,10 @@ class TrajectoryBalance(GFNAlgorithm):
         if 0:
             Z_reg = (log_Z * (log_Z < 0)).pow(2).mean()
 
-        loss = traj_losses.mean() + reward_loss # + Z_reg
+        loss = traj_losses.mean() + reward_loss  # + Z_reg
+        if not torch.isfinite(loss):
+            raise ValueError("loss is not finite")
         info = {
-            # "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
             # "reward_loss": reward_loss,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
@@ -532,7 +579,15 @@ class TrajectoryBalance(GFNAlgorithm):
             "loss": loss.item(),
             "mean_R": log_rewards.exp().mean().item(),
             "mean_logR": log_rewards.mean().item(),
+            "mean_offline_logR": log_rewards[: batch.num_offline].mean().item(),
+            "mean_online_logR": log_rewards[batch.num_offline :].mean().item(),
         }
+        if batch.num_offline > 0:
+            info["offline_loss"] = traj_losses[: batch.num_offline].mean()
+        if batch.num_online > 0:
+            info["online_loss"] = traj_losses[batch.num_offline :].mean()
+        if self.bootstrap_own_reward:
+            info["reward_loss"] = reward_loss.item() / self.cfg.reward_loss_multiplier
         return loss, info
 
     def _init_subtb(self, dev):
@@ -566,6 +621,14 @@ class TrajectoryBalance(GFNAlgorithm):
                     [ar[: T - i].repeat_interleave(ar[: T - i] + 1) + ar[T - i + 1 : T + 1].sum() for i in range(T)]
                 ),
             )
+            for T in range(1, self._subtb_max_len)
+        ]
+
+    def _init_subtb_mc(self, dev):
+        ar = torch.arange(self._subtb_max_len, device=dev)
+        rar = torch.arange(self._subtb_max_len, 0, -1, device=dev)
+        self._precomp = [
+            (torch.cat([ar[i:T] for i in range(T)]), ar[:T].repeat_interleave(rar[-T:]))
             for T in range(1, self._subtb_max_len)
         ]
 
@@ -615,14 +678,19 @@ class TrajectoryBalance(GFNAlgorithm):
                 # The length of the trajectory is the padded length, reduce by 1
                 T -= 1
             idces, dests = self._precomp[T - 1]
-            fidces = torch.cat(
-                [torch.cat([ar[i + 1 : T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)]
-            )
+            if self.cfg.variant == TBVariant.SubTBMC:
+                F_start = F[offset : offset + T]
+                F_end = R[ep]
+            else:
+                fidces = torch.cat(
+                    [torch.cat([ar[i + 1 : T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)]
+                )
+                F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
+                F_end = F_and_R[fidces]
             P_F_sums = scatter_sum(P_F[idces + offset], dests)
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
-            F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
-            F_end = F_and_R[fidces]
-            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+            # original is sum, but we're trying mean so that we can compare with TB (which has just 1 value to "sum")
+            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).mean()  # / car[T]
         return total_loss
 
     def subtb_cum(self, P_F, P_B, F, R, traj_lengths):

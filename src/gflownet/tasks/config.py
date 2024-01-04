@@ -59,6 +59,7 @@ class QM9TaskConfig:
 @dataclass
 class AtomPretrainTaskConfig:
     task: str = "props"
+    num_rw: int = 0
 
 @dataclass
 class TasksConfig:
