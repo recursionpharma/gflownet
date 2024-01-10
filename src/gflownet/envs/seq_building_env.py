@@ -16,8 +16,8 @@ from gflownet.envs.graph_building_env import (
 
 # For typing's sake, we'll pretend that a sequence is a graph.
 class Seq(Graph):
-    def __init__(self):
-        self.seq: list[Any] = []
+    def __init__(self, seq=None):
+        self.seq: list[Any] = [] if seq is None else seq
 
     def __repr__(self):
         return "".join(map(str, self.seq))
@@ -58,7 +58,8 @@ class SeqBuildingEnv(GraphBuildingEnv):
 
 
 class SeqBatch:
-    def __init__(self, seqs: List[torch.Tensor], pad: int):
+    def __init__(self, seqs: List[torch.Tensor], pad: int, max_len: int = 2048):
+        self.max_len = max_len + 1  # +1 for BOS
         self.seqs = seqs
         self.x = pad_sequence(seqs, batch_first=False, padding_value=pad)
         self.mask = self.x.eq(pad).T
@@ -69,6 +70,14 @@ class SeqBatch:
         # Since we're feeding this batch object to graph-based algorithms, we have to use this naming, but this
         # is the total number of timesteps.
         self.num_graphs = self.lens.sum().item()
+        self.batch_stop_mask = torch.ones_like(self.logit_idx)[:, None]
+        self.batch_append_mask = (
+            torch.ones_like(self.logit_idx)
+            if self.lens.max() < self.max_len
+            else (self.logit_idx % self.max_len).lt(self.max_len - 1)
+        )[:, None].float()
+        self.tail_stop_mask = torch.ones((len(seqs), 1))
+        self.tail_append_mask = (self.lens[:, None] < self.max_len).float()
 
     def to(self, device):
         for name in dir(self):
@@ -84,7 +93,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
     This context gets an agent to generate sequences of tokens from left to right, i.e. in an autoregressive fashion.
     """
 
-    def __init__(self, alphabet: Sequence[str], num_cond_dim=0):
+    def __init__(self, alphabet: Sequence[str], num_cond_dim=0, max_len=None):
         self.alphabet = alphabet
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode]
 
@@ -93,6 +102,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
         self.pad_token = len(alphabet) + 1
         self.num_actions = len(alphabet) + 1  # Alphabet + Stop
         self.num_cond_dim = num_cond_dim
+        self.max_len = max_len
 
     def aidx_to_GraphAction(self, g: Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
         # Since there's only one "object" per timestep to act upon (in graph parlance), the row is always == 0
@@ -120,7 +130,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
         return torch.tensor([self.bos_token] + s.seq, dtype=torch.long)
 
     def collate(self, graphs: List[Data]):
-        return SeqBatch(graphs, pad=self.pad_token)
+        return SeqBatch(graphs, pad=self.pad_token, max_len=self.max_len)
 
     def is_sane(self, g: Graph) -> bool:
         return True
@@ -131,3 +141,6 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
 
     def object_to_log_repr(self, g: Graph):
         return self.graph_to_mol(g)
+
+    def mol_to_graph(self, mol) -> Graph:
+        return mol

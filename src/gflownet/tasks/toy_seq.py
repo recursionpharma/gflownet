@@ -37,6 +37,7 @@ from gflownet.envs.graph_building_env import (
     GraphBuildingEnv,
 )
 
+
 def hamming(s1, s2):
     assert len(s1) == len(s2)
     return sum(c1 != c2 for c1, c2 in zip(s1, s2))
@@ -52,7 +53,7 @@ def old_edit_distance(s1, s2):
 
     distances = range(len(s1) + 1)
     for i2, c2 in enumerate(s2):
-        distances_ = [i2+1]
+        distances_ = [i2 + 1]
         for i1, c1 in enumerate(s1):
             if c1 == c2:
                 distances_.append(distances[i1])
@@ -60,7 +61,7 @@ def old_edit_distance(s1, s2):
                 distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
         distances = distances_
     return distances[-1]
-                
+
 
 def get_seq_modes(states, num_modes=60, seed=142857):
     rng = np.random.default_rng(seed)
@@ -76,20 +77,20 @@ def seq_reward(s, max_len=9):
 
 def edit_reward(s, modes, max_len=7):
     ds = [edit_distance(s, m) for m in modes]
-    #return (1.0 - np.float32(min(ds))) / max_len # log rewards of exp((1 - d) / n)
-    return (- np.float32(min(ds))) / max_len * 10 # log rewards of exp((-d) / n) * 10
+    # return (1.0 - np.float32(min(ds))) / max_len # log rewards of exp((1 - d) / n)
+    return (-np.float32(min(ds))) / max_len * 10 * 4  # log rewards of exp((-d) / n) * 10
 
 
-def generate_seq_data(data_root, max_len=9, syms=['0', '1']):
-    all_seqs = sum([list(product(syms, repeat=n)) for n in range(max_len+1)], [])
+def generate_seq_data(data_root, max_len=9, syms=["0", "1"]):
+    all_seqs = sum([list(product(syms, repeat=n)) for n in range(max_len + 1)], [])
     return all_seqs
 
 
-def old_generate_seq_data(data_root, max_len=9, syms=['0', '1']):
+def old_generate_seq_data(data_root, max_len=9, syms=["0", "1"]):
     seq_objs = []
     for l in range(max_len):
-        obj = list(product(syms, repeat=l+1))
-        [seq_objs.append(''.join(s)) for s in obj]
+        obj = list(product(syms, repeat=l + 1))
+        [seq_objs.append("".join(s)) for s in obj]
     if data_root is None:
         return seq_objs
     else:
@@ -111,6 +112,27 @@ def load_seq_data(data_root, max_len=7, generate_if_missing=True):
         return data
 
 
+class SeqTrajectoryBalance(TrajectoryBalance):
+    # The graphs here are actually Seq objects
+    def create_training_data_from_graphs(self, graphs):
+        trajs = []
+        for g in graphs:
+            trajs.append(
+                {
+                    "traj": [
+                        (Seq(g.seq[:i]), GraphAction(GraphActionType.AddNode, value=g.seq[i]))
+                        for i in range(len(g.seq))
+                    ]
+                    + [(g, GraphAction(GraphActionType.Stop))],
+                    "is_valid": True,
+                    "is_sink": [0] * len(g.seq) + [1],
+                    "bck_logprobs": torch.tensor([0] * len(g.seq) + [0]).to(self.ctx.device),
+                    "result": g,
+                }
+            )
+        return trajs
+
+
 class SeqDataset(Dataset):
     def __init__(
         self,
@@ -121,15 +143,15 @@ class SeqDataset(Dataset):
         split_seed=142857,
         ratio=0.9,
         max_len=7,
-        reward_func="edit", 
+        reward_func="edit",
         reward_reshape: bool = False,
         reward_corrupt: bool = False,
         reward_shuffle: bool = False,
         reward_temper: bool = False,
         reward_skewed_random: bool = False,
         reward_param: float = 0.0,
-        regress_to_F: bool = False, 
-        compute_Fsa: bool = False, 
+        regress_to_F: bool = False,
+        compute_Fsa: bool = False,
         compute_normalized_Fsa: bool = False,
     ):
         self.data = data
@@ -147,14 +169,14 @@ class SeqDataset(Dataset):
         if data is None:
             return
 
-        #self.compute_Fsa = False
-        #self.compute_normalized_Fsa = False
-        #self.regress_to_F = False
+        # self.compute_Fsa = False
+        # self.compute_normalized_Fsa = False
+        # self.regress_to_F = False
         self.regress_to_F = regress_to_F
         self.compute_Fsa = compute_Fsa
         self.compute_normalized_Fsa = compute_normalized_Fsa  # === compute_P_F
 
-        idcs_for_split = np.arange(len(data)) # o.g.
+        idcs_for_split = np.arange(len(data))  # o.g.
         rng = np.random.default_rng(split_seed)
         rng.shuffle(idcs_for_split)
         if train:
@@ -164,9 +186,11 @@ class SeqDataset(Dataset):
 
         print(train, self.idcs_for_split.shape)
 
-        # We only want the intermediate states
+        # ~We only want the intermediate states~
         if self.regress_to_F or self.compute_Fsa or self.compute_normalized_Fsa:
-            self.idcs = np.int32([i for i in range(len(self.data)) if len(self.data[i]) < max_len])
+            # self.idcs = np.int32([i for i in range(len(self.data)) if len(self.data[i]) < max_len])
+            # Actually we want all the states
+            self.idcs = np.arange(len(self.data))
         else:
             self.idcs = self.idcs_for_split
 
@@ -186,7 +210,9 @@ class SeqDataset(Dataset):
         if self.reward_temper:
             adjusted_log_rewards = self.temper_reward_values(adjusted_log_rewards, beta=self.reward_param)
         if self.reward_skewed_random:
-            adjusted_log_rewards = self.skewed_random_values(size=len(adjusted_log_rewards), sparse_reward=self.reward_param)
+            adjusted_log_rewards = self.skewed_random_values(
+                size=len(adjusted_log_rewards), sparse_reward=self.reward_param
+            )
 
         if self.reward_reshape or self.reward_corrupt or self.reward_shuffle:
             self.adjusted_log_rewards = adjusted_log_rewards
@@ -196,12 +222,12 @@ class SeqDataset(Dataset):
             self.mdp = nx.MultiDiGraph()
             self.s2id = {}  # can use this to lookup F(s)
             self.s2id[tuple()] = 0
-            self.mdp.add_node(0, s='', r=0)
+            self.mdp.add_node(0, s="", r=0)
             print("\n Computing MDP ... ")
             Z = self.compute_flows([], 0)
             print("logZ:", np.log(Z))
             print("... MDP done \n")
-            self.epc = namedtuple('epc', ['mdp_graph'])(self.mdp)
+            self.epc = namedtuple("epc", ["mdp_graph"])(self.mdp)
             self.is_doing_seq = True
 
         self._gc = nx.complete_graph(7)
@@ -214,18 +240,18 @@ class SeqDataset(Dataset):
         if self.adjusted_log_rewards is not None:
             g_idx = self.get_graph_idx(g, self.data)
             return self.adjusted_log_rewards[g_idx]
-        #else:
+        # else:
         #    return self.reward_type(g)
         else:
             g_idx = self.get_graph_idx(g, self.data)
             return self.pre_computed_log_rewards[g_idx]
-            
+
     def reward_type(self, g):
         if self.reward_func == "edit":
-            return edit_reward(g, self.modes)
+            return edit_reward(g, self.modes, self.max_len)
         else:
             return -100
-    
+
     def monotonic_skew_reward_values(self, log_rewards, lam=0.1):
         """
         Apply monotonic trasnformation on reward values
@@ -234,15 +260,15 @@ class SeqDataset(Dataset):
 
     def corrupt_reward_values(self, log_rewards, std=1.0):
         """
-        Corrupt reward values with noised. Used to 
-        emulate "Rethinking Generalization" experiments, but for 
+        Corrupt reward values with noised. Used to
+        emulate "Rethinking Generalization" experiments, but for
         GFlowNets
-            TODO: 
+            TODO:
                 - Currently only for Guassian noise.
                   Could add implementation for Laplace and others.
                 - Currently noise is just over one seed
         """
-        if std <= 0.:
+        if std <= 0.0:
             return log_rewards
         rng = np.random.default_rng(12345)
         noise = rng.normal(loc=0.0, scale=std, size=np.array(log_rewards).shape)
@@ -250,8 +276,8 @@ class SeqDataset(Dataset):
 
     def shuffle_reward_values(self, log_rewards):
         """
-        Shuffles reward value pairing for given graphs. Used to 
-        emulate "Rethinking Generalization" experiments, but for 
+        Shuffles reward value pairing for given graphs. Used to
+        emulate "Rethinking Generalization" experiments, but for
         GFlowNets
         """
         rng = np.random.default_rng(12345)
@@ -275,34 +301,34 @@ class SeqDataset(Dataset):
         rng = np.random.default_rng(12345)
         if sparse_reward > 0.0:
             x = rng.rayleigh(2.6, size=size_log_rewards) - 10
-            idcs = (x > 0)
+            idcs = x > 0
             x[idcs] = 0
-            idcs = (x < -10)
+            idcs = x < -10
             x[idcs] = -10
         else:
-            x = - rng.rayleigh(2.6, size=size_log_rewards) 
-            idcs = (x > 0)
+            x = -rng.rayleigh(2.6, size=size_log_rewards)
+            idcs = x > 0
             x[idcs] = 0
-            idcs = (x < -10)
+            idcs = x < -10
             x[idcs] = -10
         return x
 
     def adjust_reward_skew(self, log_rewards, lam=0.1):
         """
         Skew the reward function towards favouring higher reward
-        values. 
+        values.
         """
-        r_bins = list(set(log_rewards)) 
-        mono_weights = np.exp(- lam * np.array(r_bins))
+        r_bins = list(set(log_rewards))
+        mono_weights = np.exp(-lam * np.array(r_bins))
         log_rewards_skew = []
-        
+
         for r in log_rewards:
             i = np.where(r_bins == r)[0][0]
             log_rewards_skew.append(mono_weights[i] * r)
-        
+
         log_rewards_skew = np.array(log_rewards_skew) / np.min(log_rewards_skew) * np.min(r_bins)
         return list(log_rewards_skew)
-    
+
     def get_graph_idx(self, g, states, default=None):
         h = hash(g)
         if h not in self._hash_to_objs:
@@ -318,7 +344,7 @@ class SeqDataset(Dataset):
         if default is not None:
             return default
         raise ValueError(g)
-      
+
     def hash_for_objs(self):
         states = self.data
         _hash_to_objs = {}
@@ -329,28 +355,28 @@ class SeqDataset(Dataset):
 
     def pre_compute_rewards(self):
         self._hash_to_objs = self.hash_for_objs()
-        rewards = [
-            self.reward_type(self.data[self.get_graph_idx(g, self.data)])
-            for g in self.data
-            ]
+        rewards = [self.reward_type(self.data[self.get_graph_idx(g, self.data)]) for g in tqdm(self.data)]
         return rewards
 
     def compute_flows(self, seq, parent):
-        flow = r = self.mdp.nodes[parent]['r']
+        flow = r = self.mdp.nodes[parent]["r"]
         for i, token in enumerate(self.ctx.alphabet):
             n = len(self.mdp)
             new_seq = seq + [token]
             self.s2id[tuple(new_seq)] = n
-            self.mdp.add_node(n, s=''.join(new_seq), r=np.exp(self.reward(tuple(new_seq))))
-            self.mdp.add_edge(parent, n, a=(1, 0, i)) 
+            child_r = np.exp(self.reward(tuple(new_seq)))
+            self.mdp.add_node(n, s="".join(new_seq), r=child_r)
+            self.mdp.add_edge(parent, n, a=(1, 0, i))
             if len(new_seq) < self.max_len:
                 edge_flow = self.compute_flows(new_seq, n)
             else:
-                edge_flow = self.mdp.nodes[n]['r']
-            self.mdp.edges[(parent, n, 0)]['F'] = np.log(edge_flow)
+                edge_flow = child_r
+                self.mdp.add_edge(n, n, a=(0, 0, 0), F=np.log(child_r))
+                self.mdp.nodes[n]["F"] = np.log(child_r)
+            self.mdp.edges[(parent, n, 0)]["F"] = np.log(edge_flow)
             flow += edge_flow
-        self.mdp.add_edge(parent, parent, a=(0,0,0), F=r)
-        self.mdp.nodes[parent]['F'] = np.log(flow)
+        self.mdp.add_edge(parent, parent, a=(0, 0, 0), F=r)
+        self.mdp.nodes[parent]["F"] = np.log(flow)
         return flow
 
     def collate_fn(self, batch):
@@ -362,10 +388,7 @@ class SeqDataset(Dataset):
             all_targets = []
             for data_idx in idcs:
                 if self.is_doing_seq:
-                    targets = [
-                        torch.zeros((1, n)) - 100
-                        for n in [1, len(self.ctx.alphabet)] # Stop, AddNode
-                    ]
+                    targets = [torch.zeros((1, n)) - 100 for n in [1, len(self.ctx.alphabet)]]  # Stop, AddNode
                 else:
                     targets = [
                         torch.zeros_like(getattr(self.epc._Data[data_idx], i.mask_name)) - 100
@@ -393,11 +416,11 @@ class SeqDataset(Dataset):
             seq = Seq()
             seq.seq = [self.ctx.alphabet.index(i) for i in g]
             g = seq
-        if self.is_doing_seq or self.output_graphs:
+        if self.output_graphs:
             return self.ctx.graph_to_Data(g), r, idx
         else:
             return g, r
-        
+
     def old_collate_fn(self, batch):
         graphs, rewards, idcs = zip(*batch)
         batch = self.ctx.collate(graphs)
@@ -467,7 +490,11 @@ class ToySeqTask(GFNTask):
     def encode_conditional_information(self, info):
         if self.cfg.cond.logZ.sample_dist is not None:
             encoding = self.logZ_conditional.encode(info)
-            return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": torch.tensor(info).float()}
+            return {
+                "beta": torch.ones(len(info)),
+                "encoding": encoding.float(),
+                "preferences": torch.tensor(info).float(),
+            }
         else:
             encoding = torch.zeros((len(info), 1))
             return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
@@ -489,7 +516,7 @@ class OldToySeqTask(GFNTask):
 
     def flat_reward_transform(self, y: Tensor) -> FlatRewards:
         return FlatRewards(y.float())
-    
+
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
@@ -508,48 +535,51 @@ class OldToySeqTask(GFNTask):
         return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
 
 
-class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
+class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
     task: ToySeqTask
 
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
         cfg.num_workers = 8
-        cfg.opt.learning_rate = 1e-4
+        cfg.opt.learning_rate = 3e-4
         cfg.opt.weight_decay = 1e-8
         cfg.opt.momentum = 0.9
         cfg.opt.adam_eps = 1e-8
         cfg.opt.lr_decay = 20_000
-        cfg.opt.clip_grad_type = "norm"
+        cfg.opt.clip_grad_type = "none"
         cfg.opt.clip_grad_param = 10
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.global_batch_size = 32
+        cfg.algo.offline_ratio = 0.  # This works now, incl 0.0-1.0
         cfg.model.num_emb = 64
         cfg.model.num_layers = 4
 
+        # This seems to work: self.cfg.task.toy_seq.train_ratio = 0.75
+
         cfg.algo.method = "TB"
-        cfg.algo.max_nodes = cfg.algo.max_nodes
-        cfg.algo.max_len = cfg.algo.max_len
-        cfg.algo.sampling_tau = 0.9
+        # cfg.algo.max_nodes = cfg.algo.max_nodes
+        # cfg.algo.max_len = cfg.algo.max_len
+        cfg.algo.sampling_tau = 0.0
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
         cfg.algo.valid_offline_ratio = 0
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
-        cfg.algo.tb.Z_learning_rate = 1e-2
+        cfg.algo.tb.Z_learning_rate = 1e-2  # This is not being respected
         cfg.algo.tb.Z_lr_decay = 50_000
         cfg.algo.tb.do_parameterize_p_b = False
         cfg.algo.tb.do_correct_idempotent = False  # No idepotent correction for append oly MDPs
 
     def setup(self):
+        assert self.cfg.algo.max_nodes + 1 == self.cfg.algo.max_len, "For implementation reasons this needs to be true"
         mcfg = self.cfg.task.toy_seq
         self.log_sampling_g_distribution = None
         self.rng = np.random.default_rng(self.cfg.seed)
 
-        self.env = SeqBuildingEnv('')
+        self.env = SeqBuildingEnv("")
         if mcfg.reward_func == "edit":
-            self.ctx = AutoregressiveSeqBuildingContext(['0', '1'], num_cond_dim=1)
+            self.ctx = AutoregressiveSeqBuildingContext(["0", "1"], num_cond_dim=1, max_len=self.cfg.algo.max_nodes)
         else:
             raise ValueError("Invalid reward function")
         self._do_supervised = self.cfg.task.toy_seq.do_supervised
@@ -557,37 +587,37 @@ class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
         self._data = load_seq_data(None, max_len=self.cfg.algo.max_nodes)
 
         self.training_data = SeqDataset(
-            self._data, 
-            self.ctx, 
-            train=True, 
-            ratio=mcfg.train_ratio, 
+            self._data,
+            self.ctx,
+            train=True,
+            ratio=mcfg.train_ratio,
             split_seed=mcfg.test_split_seed,
-            max_len=self.cfg.algo.max_nodes, 
-            reward_func=mcfg.reward_func, 
-            reward_reshape=mcfg.reward_reshape, 
+            max_len=self.cfg.algo.max_nodes,
+            reward_func=mcfg.reward_func,
+            reward_reshape=mcfg.reward_reshape,
             reward_corrupt=mcfg.reward_corrupt,
             reward_shuffle=mcfg.reward_shuffle,
             reward_temper=mcfg.reward_temper,
             reward_param=mcfg.reward_param,
-            regress_to_F=mcfg.regress_to_F, 
-            compute_Fsa=mcfg.regress_to_Fsa, 
+            regress_to_F=mcfg.regress_to_F,
+            compute_Fsa=mcfg.regress_to_Fsa,
             compute_normalized_Fsa=mcfg.regress_to_Fsa,
         )
         self.test_data = SeqDataset(
-            self._data, 
-            self.ctx, 
-            train=False, 
-            ratio=mcfg.train_ratio, 
+            self._data,
+            self.ctx,
+            train=False,
+            ratio=mcfg.train_ratio,
             split_seed=mcfg.test_split_seed,
-            max_len=self.cfg.algo.max_nodes, 
-            reward_func=mcfg.reward_func, 
-            reward_reshape=mcfg.reward_reshape, 
+            max_len=self.cfg.algo.max_nodes,
+            reward_func=mcfg.reward_func,
+            reward_reshape=mcfg.reward_reshape,
             reward_corrupt=mcfg.reward_corrupt,
             reward_shuffle=mcfg.reward_shuffle,
             reward_temper=mcfg.reward_temper,
             reward_param=mcfg.reward_param,
-            regress_to_F=mcfg.regress_to_F, 
-            compute_Fsa=mcfg.regress_to_Fsa, 
+            regress_to_F=mcfg.regress_to_F,
+            compute_Fsa=mcfg.regress_to_Fsa,
             compute_normalized_Fsa=mcfg.regress_to_Fsa,
         )
 
@@ -597,7 +627,9 @@ class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
             self.training_data.mdp,
             self.cfg.algo.max_nodes,
             self.device,
-            log_rewards=self.training_data.adjusted_log_rewards if mcfg.reward_reshape or mcfg.reward_corrupt or mcfg.reward_shuffle else None,
+            log_rewards=self.training_data.adjusted_log_rewards
+            if mcfg.reward_reshape or mcfg.reward_corrupt or mcfg.reward_shuffle
+            else None,
             logits_shuffle=mcfg.logits_shuffle,
         )
 
@@ -633,7 +665,7 @@ class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
 
         algo = self.cfg.algo.method
         if algo == "TB" or algo == "subTB":
-            self.algo = TrajectoryBalance(self.env, self.ctx, self.rng, self.cfg)
+            self.algo = SeqTrajectoryBalance(self.env, self.ctx, self.rng, self.cfg)
         elif algo == "FM":
             self.algo = FlowMatching(self.env, self.ctx, self.rng, self.cfg)
 
@@ -645,28 +677,35 @@ class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
             if self.cfg.algo.use_true_log_Z:
                 self.cfg.algo.true_log_Z = float(self.exact_prob_cb.logZ)
             # select x ~ p(x) sampling
-            if self.cfg.algo.offline_sampling_g_distribution == "log_rewards": # x ~ R(x)/Z
+            if self.cfg.algo.offline_sampling_g_distribution == "log_rewards":  # x ~ R(x)/Z
                 self.log_sampling_g_distribution = self.exact_prob_cb.true_log_probs
-            elif self.cfg.algo.offline_sampling_g_distribution == "log_p": # x ~ p(x; \theta)
-                self.log_sampling_g_distribution = self.exact_prob_cb.compute_prob(model.to(self.cfg.device))[0].cpu().numpy()[:-1]
-            elif self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn" or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn": # x ~ ||p(x; \theta) - p(x)||
+            elif self.cfg.algo.offline_sampling_g_distribution == "log_p":  # x ~ p(x; \theta)
+                self.log_sampling_g_distribution = (
+                    self.exact_prob_cb.compute_prob(model.to(self.cfg.device))[0].cpu().numpy()[:-1]
+                )
+            elif (
+                self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn"
+                or self.cfg.algo.offline_sampling_g_distribution == "l1_error_gfn"
+            ):  # x ~ ||p(x; \theta) - p(x)||
                 model_log_probs = self.exact_prob_cb.compute_prob(model.to(self.cfg.device))[0].cpu().numpy()[:-1]
                 true_log_probs = self.exact_prob_cb.true_log_probs
                 err = []
                 for lq, lp in zip(model_log_probs, true_log_probs):
                     if self.cfg.algo.offline_sampling_g_distribution == "l2_log_error_gfn":
-                        err.append((lq - lp)**2)
+                        err.append((lq - lp) ** 2)
                     else:
                         err.append(np.abs(np.exp(lq) - np.exp(lp)))
                 err = np.array(err)
                 err = err / np.sum(err)
                 self.log_sampling_g_distribution = np.log(err)
-            elif self.cfg.algo.offline_sampling_g_distribution == "uniform": # x ~ Unif(x)
-                self.log_sampling_g_distribution = -1 * np.ones_like(self.exact_prob_cb.true_log_probs) # uniform distribution
+            elif self.cfg.algo.offline_sampling_g_distribution == "uniform":  # x ~ Unif(x)
+                self.log_sampling_g_distribution = -1 * np.ones_like(
+                    self.exact_prob_cb.true_log_probs
+                )  # uniform distribution
             elif self.cfg.algo.offline_sampling_g_distribution == "random":
                 rng = np.random.default_rng(self.cfg.seed)
                 self.log_sampling_g_distribution = rng.uniform(0, 10, len(self.exact_prob_cb.true_log_probs))
-            else: 
+            else:
                 self.log_sampling_g_distribution = None
         self.sampling_tau = self.cfg.algo.sampling_tau
         self.mb_size = self.cfg.algo.global_batch_size
@@ -681,9 +720,7 @@ class ToySeqTrainer(GFNTrainer): # o.g. inheritence from StandardOnlineTrainer
         if self.cfg.task.toy_seq.test_split_type == "random":
             pass
         elif self.cfg.task.toy_seq.test_split_type == "bck_traj":
-            train_idcs, test_idcs = self.exact_prob_cb.get_bck_trajectory_test_split(
-                self.cfg.task.toy_seq.train_ratio
-            )
+            train_idcs, test_idcs = self.exact_prob_cb.get_bck_trajectory_test_split(self.cfg.task.toy_seq.train_ratio)
             self.training_data.idcs = train_idcs
             self.test_data.idcs = test_idcs
         elif self.cfg.task.toy_seq.test_split_type == "subtrees":
@@ -747,7 +784,7 @@ class ExactSeqProbCompCallback:
         self.states = states
         self.mdp_graph = mdp
         self.max_len = max_len
-        #if self.cache_path is not None:
+        # if self.cache_path is not None:
         #    self.load_cache(self.cache_path)
         if log_rewards is None:
             self.log_rewards = np.array(
@@ -776,7 +813,7 @@ class ExactSeqProbCompCallback:
         self.trial.model_log_probs, self.trial.true_log_probs = log_probs, self.true_log_probs
         mae_log_probs = np.mean(abs(lp - lq))
         js_log_probs = (p * (lp - lq) + q * (lq - lp)).sum() / 2
-        mae_log_rewards = np.mean(abs(log_rewards_estimate - log_rewards)) 
+        mae_log_rewards = np.mean(abs(log_rewards_estimate - log_rewards))
         print("L1 logpx error", mae_log_probs, "JS divergence", js_log_probs)
 
         if self.do_save_px and self.trial.cfg.cond.logZ.sample_dist is None:
@@ -790,40 +827,59 @@ class ExactSeqProbCompCallback:
             test_mae_log_probs = np.mean(abs(lp_valid - lq_valid))
             metrics_dict["test_graphs-L1_logpx_error"] = test_mae_log_probs
             if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
-                test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
+                test_mae_log_rewards = np.mean(
+                    abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids])
+                )
                 metrics_dict["test_graphs-L1_log_R_error"] = test_mae_log_rewards
-         
+
         metrics_dict["L1_logpx_error"] = mae_log_probs
         metrics_dict["JS_divergence"] = js_log_probs
         metrics_dict["L1_log_R_error"] = mae_log_rewards
 
-        return metrics_dict 
+        return metrics_dict
 
     def on_validation_end(self, metrics, valid_batch_ids=None):
         # Compute exact sampling probabilities of the model, last probability is p(illegal), remove it.
         if self.trial.cfg.cond.logZ.sample_dist is not None:
-            logZ_true = self.logZ * torch.ones((1, 1)) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+            logZ_true = self.logZ * torch.ones(
+                (1, 1)
+            )  # * torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
             logZ_true_enc = self.trial.task.encode_conditional_information(logZ_true)
-            cond_info = logZ_true_enc['encoding'].squeeze(0).to(self.dev)
-            log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info) # compute once using correct logZ
+            cond_info = logZ_true_enc["encoding"].squeeze(0).to(self.dev)
+            log_probs, state_flows, log_rewards_estimate = self.compute_prob(
+                self.trial.model, cond_info=cond_info
+            )  # compute once using correct logZ
             metrics_true_logZ = self.compute_metrics(log_probs, state_flows, log_rewards_estimate, valid_batch_ids)
-            
+
             if self.do_save_px:
-                torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logZ_true.mean()}.pt", "wb"))
-            
+                torch.save(
+                    log_probs,
+                    open(
+                        self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logZ_true.mean()}.pt",
+                        "wb",
+                    ),
+                )
+
             dist_params = self.trial.cfg.cond.logZ.dist_params
             num_logZ = self.trial.cfg.cond.logZ.num_valid_logZ_samples
             metrics_range_logZ = {k: [v] for k, v in metrics_true_logZ.items()}
 
-            for logz in np.linspace(dist_params[0], dist_params[1], num_logZ).tolist(): # select size of range for logZ's
-                logZ_sampled = logz * torch.ones((1, 1)) #* torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
+            for logz in np.linspace(
+                dist_params[0], dist_params[1], num_logZ
+            ).tolist():  # select size of range for logZ's
+                logZ_sampled = logz * torch.ones(
+                    (1, 1)
+                )  # * torch.ones((1, self.trial.cfg.cond.logZ.num_thermometer_dim + 1)).to(self.dev)
                 logZ_sampled_enc = self.trial.task.encode_conditional_information(logZ_sampled)
-                cond_info = logZ_sampled_enc['encoding'].squeeze(0).to(self.dev)
+                cond_info = logZ_sampled_enc["encoding"].squeeze(0).to(self.dev)
                 log_probs, state_flows, log_rewards_estimate = self.compute_prob(self.trial.model, cond_info=cond_info)
                 metrics_tmp = self.compute_metrics(log_probs, state_flows, log_rewards_estimate, valid_batch_ids)
 
                 if self.do_save_px:
-                    torch.save(log_probs, open(self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logz}.pt", "wb"))
+                    torch.save(
+                        log_probs,
+                        open(self.trial.cfg.log_dir + f"/log_px_val_iter_{self._save_increment}_logZ_{logz}.pt", "wb"),
+                    )
 
                 for k in metrics_range_logZ.keys():
                     metrics_range_logZ[k].append(metrics_tmp[k])
@@ -859,17 +915,18 @@ class ExactSeqProbCompCallback:
     def get_data_batch_actions(self, s):
         # If the string is max_len then there's no stop action
         is_max_len = len(s) == self.max_len
-        
+
         seq = Seq()
         seq.seq = [self.ctx.alphabet.index(i) for i in s]
         true_seq = seq.seq
         if is_max_len:
-            seq.seq = seq.seq[:-1] # the last action is adding the last token, so no need for that state
+            seq.seq = seq.seq[:-1]  # the last action is adding the last token, so no need for that state
+            # because the mask is going to make p(stop) = 1 anyways
         data = self.ctx.graph_to_Data(seq)
         actions = torch.zeros(len(seq.seq) + 1, 3)
         tokens = torch.tensor(true_seq)
-        actions[:len(tokens), 0] = 1
-        actions[:len(tokens), 2] = tokens
+        actions[: len(tokens), 0] = 1
+        actions[: len(tokens), 2] = tokens
         if not is_max_len:
             actions[len(seq.seq), 0] = 0
         return data, actions
@@ -879,7 +936,7 @@ class ExactSeqProbCompCallback:
         prob_of_being_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
         prob_of_being_t[0] = 0
         prob_of_ending_t = torch.zeros(len(self.states) + 1).to(self.dev) - 100
-        state_log_flows = torch.zeros((len(self.states), 1)).to(self.dev) 
+        state_log_flows = torch.zeros((len(self.states), 1)).to(self.dev)
         log_rewards_estimate = torch.zeros((len(self.states), 1)).to(self.dev)
         if cond_info is None:
             cond_info = torch.zeros((self.mbs, self.ctx.num_cond_dim)).to(self.dev)
@@ -890,7 +947,7 @@ class ExactSeqProbCompCallback:
         # Note: visiting the states in order works because the ordering here is a natural topological sort.
         # Wrong results otherwise.
 
-        #all_seqs = [torch.tensor(list(map(int, [*s]))) for s in self.states]
+        # all_seqs = [torch.tensor(list(map(int, [*s]))) for s in self.states]
         for bi in tqdm(range(0, len(self.states), self.mbs), disable=tqdm_disable):
             bs = self.states[bi : bi + self.mbs]
             all_term_states, all_actions = zip(*[self.get_data_batch_actions(i) for i in bs])
@@ -899,25 +956,27 @@ class ExactSeqProbCompCallback:
 
             with torch.no_grad():
                 cat, o = model(batch, torch.zeros((len(batch.lens)), 1).to(self.dev), batched=True)
-                #cat, o = model(batch, torch.zeros((batch.lens.sum(), 1)).to(self.dev), batched=True) # leads to [1, 128, 64] x [1, 777, 64]
+                # cat, o = model(batch, torch.zeros((batch.lens.sum(), 1)).to(self.dev), batched=True) # leads to [1, 128, 64] x [1, 777, 64]
             lp_of_steps = cat.log_prob(actions)
-            lp_of_ending = scatter_sum(lp_of_steps, torch.arange(len(batch.seqs)).to(self.dev).repeat_interleave(batch.lens))
+            lp_of_ending = scatter_sum(
+                lp_of_steps, torch.arange(len(batch.seqs)).to(self.dev).repeat_interleave(batch.lens)
+            )
 
             prob_of_ending_t[bi : bi + len(bs)] = lp_of_ending
-            #print(o)
-            #print(o.shape)
-            #print(cat.logsoftmax()[0].shape)
-            #print(batch.lens)
-            #print(batch.lens.shape)
-            #print(o[batch.lens])
-            #print(o[batch.lens].shape)
-            #final_graph_idx = torch.cumsum(batch.lens, 0) - 1 # maybe need this?
+            # print(o)
+            # print(o.shape)
+            # print(cat.logsoftmax()[0].shape)
+            # print(batch.lens)
+            # print(batch.lens.shape)
+            # print(o[batch.lens])
+            # print(o[batch.lens].shape)
+            # final_graph_idx = torch.cumsum(batch.lens, 0) - 1 # maybe need this?
             state_log_flows[bi : bi + len(bs)] = o[batch.lens]
             log_rewards_estimate[bi : bi + len(bs)] = o[batch.lens] + (cat.logsoftmax()[0])[batch.lens]
-        
-        #print("\n Full probs")
-        #print(prob_of_ending_t.exp())
-        #print(prob_of_ending_t.exp().sum())
+
+        # print("\n Full probs")
+        # print(prob_of_ending_t.exp())
+        # print(prob_of_ending_t.exp().sum())
 
         return prob_of_ending_t, state_log_flows, log_rewards_estimate
 
@@ -935,7 +994,7 @@ class ExactSeqProbCompCallback:
                         g.nodes[j]["F"] = rng.uniform(-10, 0)
                         g.edges[(i, i, 0)]["F"] = rng.uniform(-10, 0)
                     else:
-                        #backflow = np.log(np.exp(g.nodes[i]["F"]) / num_back)
+                        # backflow = np.log(np.exp(g.nodes[i]["F"]) / num_back)
                         g.nodes[j]["F"] = rng.uniform(-10, 0)
                         # Here we're making a decision to split flow backwards equally for idempotent actions
                         # from the same state. I think it's ok?
@@ -1033,15 +1092,17 @@ def main():
             epc.save_cache(sys.argv[2] + f"/toy_seq_epc_cache_{max_nodes}.pkl")
         else:
             raise ValueError(sys.argv)
-        
+
     else:
         hps = {
             "log_dir": "./logs/debug_run_toy_seq",
             "device": "cuda",
             "overwrite_existing_exp": True,
-            "num_training_steps": 2_000,
+            "num_training_steps": 5_000,
+            "validate_every": 200,
             "checkpoint_every": 200,
-            "num_workers": 4,
+            "num_workers": 0,
+            "log_tags": [],
             "cond": {
                 "temperature": {
                     "sample_dist": "constant",
@@ -1049,13 +1110,15 @@ def main():
                     "num_thermometer_dim": 1,
                 }
             },
-            "algo": {"train_random_action_prob": 0.05},
+            "algo": {"train_random_action_prob": 0.05, "max_nodes": 5, "max_len": 6},
         }
         if os.path.exists(hps["log_dir"]):
             if hps["overwrite_existing_exp"]:
                 shutil.rmtree(hps["log_dir"])
             else:
-                raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
+                raise ValueError(
+                    f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it."
+                )
         os.makedirs(hps["log_dir"])
 
         trial = ToySeqTrainer(hps)
