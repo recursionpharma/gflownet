@@ -58,6 +58,31 @@ class QM9TaskConfig:
 
 
 @dataclass
+class ToySeqConfig:
+    data_root: str = "./data/toy_01_seq"
+    reward_func: str = "edit"  # One of cliques, even_neighbors, count, const
+    reward_reshape: bool = False # Selects to use reward skew adjustment -- if True, also use hashed-reward
+    reward_corrupt: bool = False
+    reward_shuffle: bool = False
+    logits_shuffle: bool = False # use this when using standard reward computation but want to shuffle flow logits
+    reward_temper: bool = False
+    reward_skewed_random: bool = False
+    reward_param: float = 0.0  # if 0.0, then same as base-reward (but hashed version). Parameter for the reward reshape
+    do_supervised: bool = False
+    do_tabular_model: bool = False
+    supervised_loss: str = "MSE"
+    train_ratio: float = 0.9
+    i2h_width: int = 4  # This is a model hyperparameter that I'm testing out here, should move to model config
+    # Distillation:
+    regress_to_F: bool = False
+    regress_to_Fsa: bool = False
+    regress_to_P_F: bool = False
+    # Test split
+    test_split_type: str = "random"
+    test_split_seed: int = 142857
+    
+
+@dataclass
 class BasicGraphConfig:
     do_save_generated: bool = True
     data_root: str = "./data/basic_graph_task"
@@ -89,3 +114,4 @@ class TasksConfig:
     seh: SEHTaskConfig = SEHTaskConfig()
     seh_moo: SEHMOOTaskConfig = SEHMOOTaskConfig()
     basic_graph: BasicGraphConfig = BasicGraphConfig()
+    toy_seq: ToySeqConfig = ToySeqConfig()

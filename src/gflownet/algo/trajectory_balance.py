@@ -141,6 +141,10 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(torch.device(cfg.device))  # TODO: where are we getting device info?
+        elif self.cfg.variant == TBVariant.SubTBMC:
+            self._subtb_max_len = self.global_cfg.algo.max_len + 2
+            self._init_subtb_mc(torch.device(cfg.device))  # TODO: where are we getting device info?
+            assert not self.cfg.cum_subtb
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float, model_pretrain_for_sampling: TrajectoryBalanceModel = None, alpha: float = 0.0
@@ -402,7 +406,7 @@ class TrajectoryBalance(GFNAlgorithm):
             # If we're modeling P_B then trajectories are padded with a virtual terminal state sF,
             # zero-out the logP_F of those states
             log_p_F[final_graph_idx] = 0
-            if self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.DB:
+            if self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.DB or self.cfg.variant == TBVariant.SubTBMC:
                 # Force the pad states' F(s) prediction to be R
                 per_graph_out[final_graph_idx, 0] = clip_log_R
 
@@ -425,7 +429,7 @@ class TrajectoryBalance(GFNAlgorithm):
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=num_trajs, reduce="sum")
 
-        if self.cfg.variant == TBVariant.SubTB1:
+        if self.cfg.variant == TBVariant.SubTB1 or self.cfg.variant == TBVariant.SubTBMC:
             if self.global_cfg.algo.flow_reg:
                 if self.global_cfg.algo.supervised_reward_predictor is not None:
                     log_reward_estimate = self.model_supervised_reward_predictor(batch, torch.zeros((batch.num_graphs, 1), device=batch.x.device))
@@ -595,6 +599,14 @@ class TrajectoryBalance(GFNAlgorithm):
             for T in range(1, self._subtb_max_len)
         ]
 
+    def _init_subtb_mc(self, dev):
+        ar = torch.arange(self._subtb_max_len, device=dev)
+        rar = torch.arange(self._subtb_max_len, 0, -1, device=dev)
+        self._precomp = [
+            (torch.cat([ar[i:T] for i in range(T)]), ar[:T].repeat_interleave(rar[-T:]))
+            for T in range(1, self._subtb_max_len)
+        ]
+
     def subtb_loss_fast(self, P_F, P_B, F, R, traj_lengths):
         r"""Computes the full SubTB(1) loss (all arguments on log-scale).
 
@@ -641,14 +653,20 @@ class TrajectoryBalance(GFNAlgorithm):
                 # The length of the trajectory is the padded length, reduce by 1
                 T -= 1
             idces, dests = self._precomp[T - 1]
-            fidces = torch.cat(
-                [torch.cat([ar[i + 1 : T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)]
-            )
+            if self.cfg.variant == TBVariant.SubTBMC:
+                F_start = F[offset : offset + T]
+                F_end = R[ep]
+                num_losses = T #T - 1
+            else:
+                fidces = torch.cat(
+                    [torch.cat([ar[i + 1 : T] + offset, torch.tensor([R_start + ep], device=dev)]) for i in range(T)]
+                )
+                F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
+                F_end = F_and_R[fidces]
+                num_losses = car[T]
             P_F_sums = scatter_sum(P_F[idces + offset], dests)
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
-            F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
-            F_end = F_and_R[fidces]
-            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / num_losses
         return total_loss
 
     def subtb_cum(self, P_F, P_B, F, R, traj_lengths):

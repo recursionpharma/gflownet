@@ -105,6 +105,7 @@ class GFNTrainer:
         # self.setup should at least set these up:
         self.training_data: Dataset
         self.test_data: Dataset
+        self.full_data: Dataset # used for select task(s)
         self.model: nn.Module
         # `sampling_model` is used by the data workers to sample new objects from the model. Can be
         # the same as `model`.
@@ -404,15 +405,33 @@ class GFNTrainer:
                             self.log(info, it, "valid")
                         logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
 
-                end_metrics = {}
-                for c in callbacks.values():
-                    if hasattr(c, "on_validation_end"):
-                        #c.on_validation_end(end_metrics)
-                        if self.cfg.task.basic_graph.train_ratio == 1.0: # this only works for basic_graph task ... change to be more general
-                            c.on_validation_end(end_metrics, valid_batch_ids=None)
-                        else:
-                            c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
-                self.log(end_metrics, it, "valid_end")
+                if self.algo.model_is_autoregressive: # True for sequence task
+                    #print("\n CHECK \n")
+                    #print(self.cfg.algo.valid_offline_ratio)
+                    #print(self.ctx)
+                    end_metrics = {}
+                    for c in callbacks.values():
+                        if hasattr(c, "on_validation_end"):
+                            if self.cfg.task.basic_graph.train_ratio == 1.0: # this only works for basic_graph task ... change to be more general
+                                c.on_validation_end(end_metrics, valid_batch_ids=None)
+                            else:
+                                c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
+                    self.log(end_metrics, it, "valid_end")
+                    #for batch in full_dl:
+                        #print(batch)
+                        #print(asdasd)
+                        #state_log_flows[bi : bi + len(bs)] = mo
+                        #log_rewards_estimate[bi : bi + len(bs)] = mo + cat.logsoftmax()[0]
+                else: # for graph task
+                    end_metrics = {}
+                    for c in callbacks.values():
+                        if hasattr(c, "on_validation_end"):
+                            #c.on_validation_end(end_metrics)
+                            if self.cfg.task.basic_graph.train_ratio == 1.0: # this only works for basic_graph task ... change to be more general
+                                c.on_validation_end(end_metrics, valid_batch_ids=None)
+                            else:
+                                c.on_validation_end(end_metrics, valid_batch_ids=self.test_data.idcs)
+                    self.log(end_metrics, it, "valid_end")
 
                 # log valid-wandb
                 info['num_examples_seen'] = it*self.cfg.algo.global_batch_size

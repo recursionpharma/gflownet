@@ -8,7 +8,7 @@ from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.models.config import SeqPosEnc
-
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
 
 class MLPWithDropout(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_layers, dropout_prob, init_drop=False):
@@ -30,6 +30,17 @@ class SeqTransformerGFN(nn.Module):
     """A standard transformer-encoder based GFN model for sequences."""
 
     ctx: GraphBuildingEnvContext
+
+    _action_type_to_graph_part = {
+        GraphActionType.Stop: "graph",
+        GraphActionType.AddNode: "node",
+    }
+    _graph_part_to_key = {
+        "graph": None,
+        "node": "x",
+        "non_edge": "non_edge_index",
+        "edge": "edge_index",
+    }
 
     def __init__(
         self,
@@ -58,6 +69,10 @@ class SeqTransformerGFN(nn.Module):
         else:
             self.output = MLPWithDropout(num_hid, num_outs, [2 * num_hid, 2 * num_hid], mc.dropout)
         self.num_hid = num_hid
+
+        self._action_type_to_key = {
+            at: self._graph_part_to_key[self._action_type_to_graph_part[at]] for at in self._action_type_to_graph_part
+        }
 
     def forward(self, xs: SeqBatch, cond, batched=False):
         """Returns a GraphActionCategorical and a tensor of state predictions.

@@ -97,8 +97,8 @@ class FocusRegionConfig:
 
 @dataclass
 class ConditionalsConfig:
-    logZ: LogZCondConfig = LogZCondConfig()
     temperature: TempCondConfig = TempCondConfig()
+    logZ: LogZCondConfig = LogZCondConfig()
     moo: MultiObjectiveConfig = MultiObjectiveConfig()
     weighted_prefs: WeightedPreferencesConfig = WeightedPreferencesConfig()
     focus_region: FocusRegionConfig = FocusRegionConfig()

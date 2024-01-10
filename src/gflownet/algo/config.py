@@ -9,6 +9,7 @@ class TBVariant(Enum):
     TB = 0
     SubTB1 = 1
     DB = 2
+    SubTBMC = 3
 
 
 @dataclass
@@ -49,9 +50,10 @@ class TBConfig:
     do_parameterize_p_b: bool = False
     do_length_normalize: bool = False
     subtb_max_len: int = 128
+    do_length_normalize: bool = True
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
-    cum_subtb: bool = True
+    cum_subtb: bool = False 
 
 
 @dataclass
