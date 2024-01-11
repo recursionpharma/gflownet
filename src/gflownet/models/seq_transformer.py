@@ -8,7 +8,9 @@ from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.models.config import SeqPosEnc
+from gflownet.models.graph_transformer import mlp
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
+
 
 class MLPWithDropout(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_layers, dropout_prob, init_drop=False):
@@ -62,7 +64,7 @@ class SeqTransformerGFN(nn.Module):
         self.embedding = nn.Embedding(env_ctx.num_tokens, num_hid)
         encoder_layers = nn.TransformerEncoderLayer(num_hid, mc.seq_transformer.num_heads, num_hid, dropout=mc.dropout)
         self.encoder = nn.TransformerEncoder(encoder_layers, mc.num_layers)
-        self.logZ = nn.Linear(env_ctx.num_cond_dim, 1)
+        self.logZ = mlp(env_ctx.num_cond_dim, num_hid, 1, 2) #nn.Linear(env_ctx.num_cond_dim, 1)
         if self.use_cond:
             self.output = MLPWithDropout(num_hid + num_hid, num_outs, [4 * num_hid, 4 * num_hid], mc.dropout)
             self.cond_embed = nn.Linear(env_ctx.num_cond_dim, num_hid)
@@ -109,6 +111,7 @@ class SeqTransformerGFN(nn.Module):
             state_preds = out[xs.logit_idx, 0:ns]  # (proper_time, num_state_out)
             stop_logits = out[xs.logit_idx, ns : ns + 1]  # (proper_time, 1)
             add_node_logits = out[xs.logit_idx, ns + 1 :]  # (proper_time, nout - 1)
+            masks = [xs.batch_stop_mask, xs.batch_append_mask]
             # `time` above is really max_time, whereas proper_time = sum(len(traj) for traj in xs))
             # which is what we need to give to GraphActionCategorical
         else:
@@ -119,6 +122,10 @@ class SeqTransformerGFN(nn.Module):
             state_preds = out[:, 0:ns]
             stop_logits = out[:, ns : ns + 1]
             add_node_logits = out[:, ns + 1 :]
+            masks = [xs.tail_stop_mask, xs.tail_append_mask]
+
+        stop_logits = self._mask(stop_logits, masks[0])
+        add_node_logits = self._mask(add_node_logits, masks[1])
 
         return (
             GraphActionCategorical(
@@ -126,10 +133,14 @@ class SeqTransformerGFN(nn.Module):
                 logits=[stop_logits, add_node_logits],
                 keys=[None, None],
                 types=self.ctx.action_type_order,
+                masks=masks,
                 slice_dict={},
             ),
             state_preds,
         )
+
+    def _mask(self, logits, mask):
+        return logits * mask + (1 - mask) * -1e6
 
 
 def generate_square_subsequent_mask(sz: int):

@@ -150,6 +150,7 @@ class GFNTrainer:
             config=hps, # Track hyperparameters and run metadata
             dir=hps['log_dir'],
             tags=hps['log_tags'],
+            mode='disabled' if 'DISABLE_WANDB' in os.environ else None,
         )
         
         self.setup()
