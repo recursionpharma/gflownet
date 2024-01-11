@@ -27,7 +27,7 @@ from gflownet.config import Config
 from gflownet.envs.seq_building_env import Seq, AutoregressiveSeqBuildingContext, SeqBuildingEnv
 from gflownet.models.seq_transformer import SeqTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer, GFNTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
+from gflownet.trainer import FlatRewards, GFNTask, RewardScalar, GFNAlgorithm
 from gflownet.utils.conditioning import TemperatureConditional, LogZConditional
 from gflownet.envs.graph_building_env import (
     Graph,
@@ -186,13 +186,7 @@ class SeqDataset(Dataset):
 
         print(train, self.idcs_for_split.shape)
 
-        # ~We only want the intermediate states~
-        if self.regress_to_F or self.compute_Fsa or self.compute_normalized_Fsa:
-            # self.idcs = np.int32([i for i in range(len(self.data)) if len(self.data[i]) < max_len])
-            # Actually we want all the states
-            self.idcs = np.arange(len(self.data))
-        else:
-            self.idcs = self.idcs_for_split
+        self.idcs = self.idcs_for_split
 
         self.modes = get_seq_modes(self.data, num_modes=60, seed=split_seed)
 
@@ -218,20 +212,16 @@ class SeqDataset(Dataset):
             self.adjusted_log_rewards = adjusted_log_rewards
 
         # compute MDP
-        if train:
-            self.mdp = nx.MultiDiGraph()
-            self.s2id = {}  # can use this to lookup F(s)
-            self.s2id[tuple()] = 0
-            self.mdp.add_node(0, s="", r=0)
-            print("\n Computing MDP ... ")
-            Z = self.compute_flows([], 0)
-            print("logZ:", np.log(Z))
-            print("... MDP done \n")
-            self.epc = namedtuple("epc", ["mdp_graph"])(self.mdp)
-            self.is_doing_seq = True
-
-        self._gc = nx.complete_graph(7)
-        self._enum_edges = list(self._gc.edges)
+        self.mdp = nx.MultiDiGraph()
+        self.s2id = {}  # can use this to lookup F(s)
+        self.s2id[tuple()] = 0
+        self.mdp.add_node(0, s="", r=0)
+        #print("\n Computing MDP ... ")
+        Z = self.compute_flows([], 0)
+        print("logZ:", np.log(Z))
+        #print("... MDP done \n")
+        self.epc = namedtuple("epc", ["mdp_graph"])(self.mdp)
+        self.is_doing_seq = True
 
     def __len__(self):
         return len(self.idcs)
@@ -361,8 +351,8 @@ class SeqDataset(Dataset):
     def compute_flows(self, seq, parent):
         flow = r = self.mdp.nodes[parent]["r"]
         for i, token in enumerate(self.ctx.alphabet):
-            n = len(self.mdp)
             new_seq = seq + [token]
+            n = self.get_graph_idx(tuple(new_seq), self.data)
             self.s2id[tuple(new_seq)] = n
             child_r = np.exp(self.reward(tuple(new_seq)))
             self.mdp.add_node(n, s="".join(new_seq), r=child_r)
@@ -554,7 +544,12 @@ class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
         cfg.model.num_emb = 64
         cfg.model.num_layers = 4
 
-        # This seems to work: self.cfg.task.toy_seq.train_ratio = 0.75
+        # These seems to work:
+        self.cfg.task.toy_seq.regress_to_F = False
+        self.cfg.task.toy_seq.regress_to_Fsa = False
+        self.cfg.task.toy_seq.regress_to_P_F = False
+        self.cfg.task.toy_seq.do_supervised = False
+        self.cfg.task.toy_seq.train_ratio = 1
 
         cfg.algo.method = "TB"
         # cfg.algo.max_nodes = cfg.algo.max_nodes
@@ -601,7 +596,7 @@ class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
             reward_param=mcfg.reward_param,
             regress_to_F=mcfg.regress_to_F,
             compute_Fsa=mcfg.regress_to_Fsa,
-            compute_normalized_Fsa=mcfg.regress_to_Fsa,
+            compute_normalized_Fsa=mcfg.regress_to_P_F,
         )
         self.test_data = SeqDataset(
             self._data,
@@ -618,7 +613,7 @@ class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
             reward_param=mcfg.reward_param,
             regress_to_F=mcfg.regress_to_F,
             compute_Fsa=mcfg.regress_to_Fsa,
-            compute_normalized_Fsa=mcfg.regress_to_Fsa,
+            compute_normalized_Fsa=mcfg.regress_to_P_F,
         )
 
         self.exact_prob_cb = ExactSeqProbCompCallback(
@@ -633,10 +628,16 @@ class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
             logits_shuffle=mcfg.logits_shuffle,
         )
 
-        model = SeqTransformerGFN(
-            self.ctx,
-            self.cfg,
-        )
+        if mcfg.do_supervised and not mcfg.regress_to_Fsa:
+            class _RegressionModel(SeqTransformerGFN):
+                def forward(self, *a):
+                    return super().forward(*a)[1].flatten()
+            model = _RegressionModel(self.ctx, self.cfg)
+        else:
+            model = SeqTransformerGFN(
+                self.ctx,
+                self.cfg,
+            )
 
         self.task = ToySeqTask(
             cfg=self.cfg,
@@ -1072,6 +1073,64 @@ class ExactSeqProbCompCallback:
         return train_set, test_set
 
 
+class Regression(GFNAlgorithm):
+    regress_to_Fsa: bool = False
+    loss_type: str = "MSE"
+    model_is_autoregressive = False
+
+    def compute_batch_losses(self, model, batch, **kw):
+        if self.regress_to_Fsa:
+            fwd_cat, *other = model(batch, torch.zeros((batch.lens.shape[0], 1), device=batch.x.device))
+            mask = torch.cat([(i * torch.ones_like(j)).flatten() for i, j in zip(fwd_cat.masks, fwd_cat.logits)])
+            pred = torch.cat([i.flatten() for i in fwd_cat.logits]) * mask
+            batch.y = batch.y * mask
+        else:
+            pred = model(batch, torch.zeros((batch.lens.shape[0], 1), device=batch.x.device))
+        if self.loss_type == "MSE":
+            loss = (pred - batch.y).pow(2).mean()
+        elif self.loss_type == "MAE":
+            loss = abs(pred - batch.y).mean()
+        else:
+            raise NotImplementedError
+        return loss, {"loss": loss}
+
+class SeqSupervisedTrainer(ToySeqTrainer):
+    def setup(self):
+        super().setup()
+        self.algo = Regression()
+        self.algo.loss_type = self.cfg.task.toy_seq.supervised_loss
+        self.algo.regress_to_Fsa = self.cfg.task.toy_seq.regress_to_Fsa
+        self.log_sampling_g_distribution = self.cfg.algo.offline_sampling_g_distribution
+        if self.cfg.task.toy_seq.regress_to_P_F:
+            # P_F is just the normalized Fsa, so this flag must be on
+            assert self.cfg.task.toy_seq.regress_to_Fsa
+
+        for i in [self.training_data, self.test_data]:
+            i.output_graphs = True
+            i.compute_Fsa = self.cfg.task.toy_seq.regress_to_Fsa
+            i.regress_to_F = self.cfg.task.toy_seq.regress_to_F
+            i.compute_normalized_Fsa = self.cfg.task.toy_seq.regress_to_P_F
+            i.epc = self.exact_prob_cb
+
+    def build_training_data_loader(self) -> DataLoader:
+        return torch.utils.data.DataLoader(
+            self.training_data,
+            batch_size=self.mb_size,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            shuffle=True,
+            collate_fn=self.training_data.collate_fn,
+        )
+
+    def build_validation_data_loader(self) -> DataLoader:
+        return torch.utils.data.DataLoader(
+            self.test_data,
+            batch_size=self.mb_size,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            collate_fn=self.test_data.collate_fn,
+        )
+
 def main():
     """Example of how this model can be run outside of Determined"""
     import sys
@@ -1110,7 +1169,8 @@ def main():
                     "num_thermometer_dim": 1,
                 }
             },
-            "algo": {"train_random_action_prob": 0.05, "max_nodes": 5, "max_len": 6},
+            "task": {"toy_seq": {"do_supervised": False}},
+            "algo": {"train_random_action_prob": 0.05, "max_nodes": 5, "max_len": 6, 'tb': {'variant': 'SubTB1'}},
         }
         if os.path.exists(hps["log_dir"]):
             if hps["overwrite_existing_exp"]:
@@ -1121,7 +1181,11 @@ def main():
                 )
         os.makedirs(hps["log_dir"])
 
-        trial = ToySeqTrainer(hps)
+        if hps["task"]["toy_seq"]["do_supervised"]:
+            hps['run_valid_dl'] = True
+            trial = SeqSupervisedTrainer(hps)
+        else:
+            trial = ToySeqTrainer(hps)
         trial.print_every = 1
         trial.run()
 
