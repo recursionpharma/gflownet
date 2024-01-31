@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/supervised_gnn_Nov_20"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/supervised_gnn_bs256_tr05_Dec_21"
 counter = itertools.count()
 
 base_hps = {
@@ -23,7 +23,7 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 2048, #256
+    "global_batch_size": 256, #2048
     "max_nodes": 7,
     "offline_ratio": 0 / 4,
 }
@@ -32,17 +32,17 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["supervised_gnn_v3"],
+        "log_tags": ["supervised_gnn_tr05"],
         "seed": seed,
         
         "task": {
         "basic_graph": {
-            "test_split_seed": 1, #seed, 
+            "test_split_seed": seed, #1
             "do_supervised": True, 
             "do_tabular_model": False, 
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
-            "train_ratio": 0.9,
+            "train_ratio": 0.5,
             "reward_shuffle": False,
             "reward_func": reward, 
             },

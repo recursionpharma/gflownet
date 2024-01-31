@@ -64,7 +64,7 @@ class SeqTransformerGFN(nn.Module):
         self.embedding = nn.Embedding(env_ctx.num_tokens, num_hid)
         encoder_layers = nn.TransformerEncoderLayer(num_hid, mc.seq_transformer.num_heads, num_hid, dropout=mc.dropout)
         self.encoder = nn.TransformerEncoder(encoder_layers, mc.num_layers)
-        self.logZ = mlp(env_ctx.num_cond_dim, num_hid, 1, 2) #nn.Linear(env_ctx.num_cond_dim, 1)
+        self.logZ = mlp(env_ctx.num_cond_dim, num_hid * 2, 1, 2) #nn.Linear(env_ctx.num_cond_dim, 1)
         if self.use_cond:
             self.output = MLPWithDropout(num_hid + num_hid, num_outs, [4 * num_hid, 4 * num_hid], mc.dropout)
             self.cond_embed = nn.Linear(env_ctx.num_cond_dim, num_hid)

@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_single_run_gfn/log-%A-%a.out
-#SBATCH --job-name=gfn-single
+#SBATCH -o /mnt/ps/home/CORP/lazar.atanackovic/gflownet/expts/slurm_logs_gfn_seq_train_dist_sample/log-%A-%a.out
+#SBATCH --job-name=gfn-off-seq
 #SBATCH --partition=long
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=160:00:00
@@ -12,4 +12,4 @@
 source venv-gfn/bin/activate
 
 # Launch these jobs with sbatch --array=0-N%M job.sh   (N is inclusive, M limits number of tasks run at once)
-python expts/task_single_run_gfn.py $SLURM_ARRAY_TASK_ID
+python expts/task_gfn_seq_train_dist_sample.py $SLURM_ARRAY_TASK_ID

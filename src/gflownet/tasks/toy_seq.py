@@ -47,22 +47,6 @@ def edit_distance(s1, s2):
     return distance.levenshtein(s1, s2)
 
 
-def old_edit_distance(s1, s2):
-    if len(s1) > len(s2):
-        s1, s2 = s2, s1
-
-    distances = range(len(s1) + 1)
-    for i2, c2 in enumerate(s2):
-        distances_ = [i2 + 1]
-        for i1, c1 in enumerate(s1):
-            if c1 == c2:
-                distances_.append(distances[i1])
-            else:
-                distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
-        distances = distances_
-    return distances[-1]
-
-
 def get_seq_modes(states, num_modes=60, seed=142857):
     rng = np.random.default_rng(seed)
     modes_idcs = rng.choice(np.arange(0, len(states), 1), size=num_modes, replace=False)
@@ -77,26 +61,13 @@ def seq_reward(s, max_len=9):
 
 def edit_reward(s, modes, max_len=7):
     ds = [edit_distance(s, m) for m in modes]
-    # return (1.0 - np.float32(min(ds))) / max_len # log rewards of exp((1 - d) / n)
-    return (-np.float32(min(ds))) / max_len * 10 * 4  # log rewards of exp((-d) / n) * 10
+    return (-np.float32(min(ds))) / max_len * 10  # log rewards of exp((-d) / n) * 10
 
 
 def generate_seq_data(data_root, max_len=9, syms=["0", "1"]):
     all_seqs = sum([list(product(syms, repeat=n)) for n in range(max_len + 1)], [])
     return all_seqs
 
-
-def old_generate_seq_data(data_root, max_len=9, syms=["0", "1"]):
-    seq_objs = []
-    for l in range(max_len):
-        obj = list(product(syms, repeat=l + 1))
-        [seq_objs.append("".join(s)) for s in obj]
-    if data_root is None:
-        return seq_objs
-    else:
-        with bz2.open(data_root + f"/toy_seq_{max_len}_objs.pkl.bz", "wb") as f:
-            pickle.dump(seq_objs, f)
-        return seq_objs
 
 
 def load_seq_data(data_root, max_len=7, generate_if_missing=True):
@@ -227,11 +198,11 @@ class SeqDataset(Dataset):
         return len(self.idcs)
 
     def reward(self, g):
+        if self.reward_func == "const":
+            return self.reward_type(g)
         if self.adjusted_log_rewards is not None:
             g_idx = self.get_graph_idx(g, self.data)
             return self.adjusted_log_rewards[g_idx]
-        # else:
-        #    return self.reward_type(g)
         else:
             g_idx = self.get_graph_idx(g, self.data)
             return self.pre_computed_log_rewards[g_idx]
@@ -239,6 +210,8 @@ class SeqDataset(Dataset):
     def reward_type(self, g):
         if self.reward_func == "edit":
             return edit_reward(g, self.modes, self.max_len)
+        elif self.reward_func == "const":
+            return np.float32(0)
         else:
             return -100
 
@@ -490,41 +463,6 @@ class ToySeqTask(GFNTask):
             return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
 
 
-class OldToySeqTask(GFNTask):
-    """Sets up a task where the reward is the number of times some sequences appear in the input. Normalized to be
-    in [0,1]"""
-
-    def __init__(
-        self,
-        cfg: Config,
-        dataset: SeqDataset,
-        rng: np.random.Generator,
-    ):
-        self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
-        self.num_cond_dim = self.temperature_conditional.encoding_size()
-
-    def flat_reward_transform(self, y: Tensor) -> FlatRewards:
-        return FlatRewards(y.float())
-
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
-        return self.temperature_conditional.sample(n)
-
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
-
-    def compute_flat_rewards(self, objs: List[str]) -> Tuple[FlatRewards, Tensor]:
-        if not len(objs):
-            return FlatRewards(torch.zeros((0, 1))), torch.zeros((0,)).bool()
-        is_valid = torch.ones(len(objs)).bool()
-        flat_rewards = torch.tensor([self.dataset.reward(tuple([*i])) for i in objs]).float().reshape((-1, 1))
-        return FlatRewards(flat_rewards), is_valid
-
-    def encode_conditional_information(self, info):
-        encoding = torch.zeros((len(info), 1))
-        return {"beta": torch.ones(len(info)), "encoding": encoding.float(), "preferences": info.float()}
-
-
 class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
     task: ToySeqTask
 
@@ -573,7 +511,7 @@ class ToySeqTrainer(GFNTrainer):  # o.g. inheritence from StandardOnlineTrainer
         self.rng = np.random.default_rng(self.cfg.seed)
 
         self.env = SeqBuildingEnv("")
-        if mcfg.reward_func == "edit":
+        if mcfg.reward_func == "edit" or mcfg.reward_func == "const":
             self.ctx = AutoregressiveSeqBuildingContext(["0", "1"], num_cond_dim=1, max_len=self.cfg.algo.max_nodes)
         else:
             raise ValueError("Invalid reward function")
@@ -828,9 +766,10 @@ class ExactSeqProbCompCallback:
             test_mae_log_probs = np.mean(abs(lp_valid - lq_valid))
             metrics_dict["test_graphs-L1_logpx_error"] = test_mae_log_probs
             if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
-                test_mae_log_rewards = np.mean(
-                    abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids])
-                )
+                if isinstance(log_rewards, list):
+                    test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - np.array(log_rewards)[valid_batch_ids]))
+                else:
+                    test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
                 metrics_dict["test_graphs-L1_log_R_error"] = test_mae_log_rewards
 
         metrics_dict["L1_logpx_error"] = mae_log_probs
@@ -972,8 +911,12 @@ class ExactSeqProbCompCallback:
             # print(o[batch.lens])
             # print(o[batch.lens].shape)
             # final_graph_idx = torch.cumsum(batch.lens, 0) - 1 # maybe need this?
-            state_log_flows[bi : bi + len(bs)] = o[batch.lens]
-            log_rewards_estimate[bi : bi + len(bs)] = o[batch.lens] + (cat.logsoftmax()[0])[batch.lens]
+            #state_log_flows[bi : bi + len(bs)] = o[batch.lens]
+            #log_rewards_estimate[bi : bi + len(bs)] = o[batch.lens] + (cat.logsoftmax()[0])[batch.lens]
+
+            final_graph_idx = torch.cumsum(batch.lens, 0) - 1
+            state_log_flows[bi : bi + len(bs)] = o[final_graph_idx]
+            log_rewards_estimate[bi : bi + len(bs)] = o[final_graph_idx] + (cat.logsoftmax()[0])[final_graph_idx]
 
         # print("\n Full probs")
         # print(prob_of_ending_t.exp())
@@ -1076,7 +1019,7 @@ class ExactSeqProbCompCallback:
 class Regression(GFNAlgorithm):
     regress_to_Fsa: bool = False
     loss_type: str = "MSE"
-    model_is_autoregressive = False
+    model_is_autoregressive = True
 
     def compute_batch_losses(self, model, batch, **kw):
         if self.regress_to_Fsa:
@@ -1087,12 +1030,17 @@ class Regression(GFNAlgorithm):
         else:
             pred = model(batch, torch.zeros((batch.lens.shape[0], 1), device=batch.x.device))
         if self.loss_type == "MSE":
-            loss = (pred - batch.y).pow(2).mean()
+            #targets = (batch.y - torch.mean(batch.y)) / torch.std(batch.y)
+            targets = batch.y
+            loss = (pred - targets).pow(2).mean()
         elif self.loss_type == "MAE":
-            loss = abs(pred - batch.y).mean()
+            #targets = (batch.y - torch.mean(batch.y)) / torch.std(batch.y)
+            targets = batch.y
+            loss = abs(pred - targets).mean()
         else:
             raise NotImplementedError
         return loss, {"loss": loss}
+
 
 class SeqSupervisedTrainer(ToySeqTrainer):
     def setup(self):

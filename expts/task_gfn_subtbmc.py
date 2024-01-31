@@ -1,12 +1,12 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_rewards_skew_Jan_11"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_SubTBMC_high_lr_Jan_10"
 counter = itertools.count()
 
 base_hps = {
     "num_training_steps": 100000,
-    "validate_every": 1000,
+    "validate_every": 1000, # use 1000 might be faster
     "num_workers": 8,
     "pickle_mp_messages": True, # when using 1 or mor worker always have this True (otherwise slow)
     "model": {
@@ -17,7 +17,7 @@ base_hps = {
             "num_mlp_layers": 2, 
             },
         },
-    "opt": {"learning_rate": 1e-4},
+    "opt": {"learning_rate": 1e-3},
     "device": 'cuda',
 }
 
@@ -32,7 +32,7 @@ hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_rewards_skew_v3"],
+        "log_tags": ["gfn_subtbmc_high_lr"],
         "seed": seed,
         
         "task": {
@@ -44,11 +44,6 @@ hps = [
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
             "reward_func": reward, 
-            "reward_reshape": True,
-            "reward_corrupt": False,
-            "reward_shuffle": False,
-            "reward_temper": False,
-            "reward_param": lam,
             },
         },  
         
@@ -58,16 +53,30 @@ hps = [
         },
         
     }
-    for reward in ['cliques', 'even_neighbors', 'count']
-    for lam in [0.0, 0.5, 1.0, 1.5]
+    for reward in ['count', 'even_neighbors', 'cliques']
     for seed in [1, 2, 3]
     for algo in [
         {
             "method": "TB", # either TB or FM
             "tb": {
-                "variant": "SubTB1", #"SubTBMC", 
-                "cum_subtb": False ,
+                "variant": "TB", 
                 "do_parameterize_p_b": False
+                },
+        },
+        {
+            "method": "TB", # either TB or FM
+            "tb": {
+                "variant": "SubTB1", 
+                "do_parameterize_p_b": False,
+                "cum_subtb": False,
+                },
+        },
+        {
+            "method": "TB", # either TB or FM
+            "tb": {
+                "variant": "SubTBMC", 
+                "do_parameterize_p_b": False, 
+                "cum_subtb": False ,
                 },
         },
     ]
@@ -76,5 +85,5 @@ hps = [
 from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
 
 trial = BasicGraphTaskTrainer(hps[int(sys.argv[1])])
-#trial.print_every = 1
+trial.print_every = 1
 trial.run()

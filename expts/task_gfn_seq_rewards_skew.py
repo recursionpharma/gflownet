@@ -1,7 +1,7 @@
 import sys
 import itertools
 
-root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_TB_rewards_skew_Jan_11"
+root = "/mnt/ps/home/CORP/lazar.atanackovic/project/gflownet-runs/logs/gfn_seq_rewards_skew_Jan_15"
 counter = itertools.count()
 
 base_hps = {
@@ -14,7 +14,6 @@ base_hps = {
         "num_emb": 128,
         "graph_transformer": {
             "num_heads": 4,
-            "num_mlp_layers": 2, 
             },
         },
     "opt": {"learning_rate": 1e-4},
@@ -23,31 +22,31 @@ base_hps = {
 
 
 base_algo_hps = {
-    "global_batch_size": 256,
-    "max_nodes": 7,
-    "offline_ratio": 0 / 4,
+    "global_batch_size": 256, # 256
+    "max_nodes": 15,
+    "max_len": 16, # needs to be max_len = max_nodes + 1
+    "offline_ratio": 0, # 1
 }
 
 hps = [
     {
         **base_hps,
         "log_dir": f"{root}/run_{next(counter)}/",
-        "log_tags": ["gfn_rewards_skew_v3"],
+        "log_tags": ["gfn_seq_rewards_skew_v2"],
         "seed": seed,
         
         "task": {
-        "basic_graph": {
+        "toy_seq": {
             "test_split_seed": seed, 
             "do_supervised": False, 
             "do_tabular_model": False, 
             "regress_to_P_F": False,
             "regress_to_Fsa": False,
             "train_ratio": 0.9,
-            "reward_func": reward, 
+            "reward_func": 'edit', 
             "reward_reshape": True,
             "reward_corrupt": False,
             "reward_shuffle": False,
-            "reward_temper": False,
             "reward_param": lam,
             },
         },  
@@ -58,7 +57,6 @@ hps = [
         },
         
     }
-    for reward in ['cliques', 'even_neighbors', 'count']
     for lam in [0.0, 0.5, 1.0, 1.5]
     for seed in [1, 2, 3]
     for algo in [
@@ -73,8 +71,8 @@ hps = [
     ]
 ]
 
-from gflownet.tasks.basic_graph_task import BasicGraphTaskTrainer
+from gflownet.tasks.toy_seq import ToySeqTrainer
 
-trial = BasicGraphTaskTrainer(hps[int(sys.argv[1])])
-#trial.print_every = 1
+trial = ToySeqTrainer(hps[int(sys.argv[1])])
+trial.print_every = 1
 trial.run()

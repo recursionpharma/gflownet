@@ -574,6 +574,8 @@ class BasicGraphTaskTrainer(GFNTrainer):
         elif algo == "FM":
             self.algo = FlowMatching(self.env, self.ctx, self.rng, self.cfg)
 
+        self.algo.model_is_autoregressive = False
+
         #if self.cfg.cond.logZ.sample_dist is None:
         #    assert "offline_ration == 0 but using conditional logZ for online model", self.cfg.algo.offline_ratio == 0
         self.task = BasicGraphTask(
@@ -884,8 +886,11 @@ class ExactProbCompCallback:
             lq_valid, q_valid = self.true_log_probs[valid_batch_ids], np.exp(self.true_log_probs[valid_batch_ids])
             test_mae_log_probs = np.mean(abs(lp_valid - lq_valid))
             metrics_dict["test_graphs-L1_logpx_error"] = test_mae_log_probs
-            if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:
-                test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
+            if self.trial.cfg.algo.dir_model_pretrain_for_sampling is None:        
+                if isinstance(log_rewards, list):
+                    test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - np.array(log_rewards)[valid_batch_ids]))
+                else:
+                    test_mae_log_rewards = np.mean(abs(log_rewards_estimate[valid_batch_ids] - log_rewards[valid_batch_ids]))
                 metrics_dict["test_graphs-L1_log_R_error"] = test_mae_log_rewards
          
         metrics_dict["L1_logpx_error"] = mae_log_probs
@@ -1209,6 +1214,7 @@ class ExactProbCompCallback:
 class Regression(GFNAlgorithm):
     regress_to_Fsa: bool = False
     loss_type: str = "MSE"
+    model_is_autoregressive = False
 
     def compute_batch_losses(self, model, batch, **kw):
         if self.regress_to_Fsa:
@@ -1242,8 +1248,11 @@ class BGSupervisedTrainer(BasicGraphTaskTrainer):
 
         for i in [self.training_data, self.test_data]:
             i.compute_Fsa = self.cfg.task.basic_graph.regress_to_Fsa
-            i.regress_to_F = self.cfg.task.basic_graph.regress_to_Fsa
-            i.compute_normalized_Fsa = self.cfg.task.basic_graph.regress_to_Fsa
+            i.regress_to_F = self.cfg.task.toy_seq.regress_to_F
+            i.compute_normalized_Fsa = self.cfg.task.basic_graph.regress_to_P_F
+            #i.compute_Fsa = self.cfg.task.basic_graph.regress_to_Fsa
+            #i.regress_to_F = self.cfg.task.basic_graph.regress_to_Fsa
+            #i.compute_normalized_Fsa = self.cfg.task.basic_graph.regress_to_Fsa
             i.epc = self.exact_prob_cb
 
     def build_training_data_loader(self) -> DataLoader:
