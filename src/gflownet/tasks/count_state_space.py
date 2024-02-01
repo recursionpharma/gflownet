@@ -5,10 +5,14 @@ import shutil
 from pathlib import Path
 from gflownet.tasks.seh_frag_moo import SEHMOOFragTrainer
 
+def parse_bool(x):
+    return x.lower() in ["true", "t", "1"]
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--desc", type=str, default="no_description")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--just_count", type=parse_bool, default=False)
     return parser.parse_args()
 
 
@@ -28,7 +32,7 @@ if __name__ == "__main__":
         "overwrite_existing_exp": False,
         "seed": args.seed,
         "num_training_steps": 10_000,
-        "num_final_gen_steps": 10_000,
+        "num_final_gen_steps": 1000,
         "validate_every": 1000,
         "num_workers": 0,
         "algo": {
@@ -50,6 +54,7 @@ if __name__ == "__main__":
                 "objectives": ["seh", "qed"],
                 "n_valid": 15,
                 "n_valid_repeats": 128,
+                "just_count": args.just_count,
             },
         },
         "opt": {

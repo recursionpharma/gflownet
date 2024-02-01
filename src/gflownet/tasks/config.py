@@ -49,6 +49,7 @@ class SEHMOOTaskConfig:
     n_valid: int = 15
     n_valid_repeats: int = 128
     objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
+    just_count: bool = False
 
 
 @dataclass

@@ -159,6 +159,12 @@ class SEHMOOTask(SEHTask):
             else scalarized_reward
         )
         tempered_reward = self.temperature_conditional.transform(cond_info, focused_reward)
+        
+        if self.cfg.task.seh_moo.just_count:
+            # if we are simply counting the number of molecules, we set the reward to 1 for all valid molecules
+            # (and thus logreward to 0), this is simply to see whether the GFN can estimate the size of the state space
+            return RewardScalar(torch.zeros_like(tempered_reward))
+        
         return RewardScalar(tempered_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
