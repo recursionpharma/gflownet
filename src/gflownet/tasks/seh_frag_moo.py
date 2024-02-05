@@ -146,26 +146,30 @@ class SEHMOOTask(SEHTask):
         return cond_info, log_rewards
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+        """
+        Compute the logreward from the flat_reward and the conditional information
+        """
         if isinstance(flat_reward, list):
             if isinstance(flat_reward[0], Tensor):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
 
-        scalarized_reward = self.pref_cond.transform(cond_info, flat_reward)
-        focused_reward = (
-            self.focus_cond.transform(cond_info, flat_reward, scalarized_reward)
+        scalarized_logrewards = self.pref_cond.transform(cond_info, flat_reward)
+        focused_logreward = (
+            self.focus_cond.transform(cond_info, flat_reward, scalarized_logrewards)
             if self.focus_cond is not None
-            else scalarized_reward
+            else scalarized_logrewards
         )
-        tempered_reward = self.temperature_conditional.transform(cond_info, focused_reward)
+        tempered_reward = self.temperature_conditional.transform(cond_info, focused_logreward)
+        clamped_reward = tempered_reward.clamp(min=self.cfg.algo.illegal_action_logreward)
         
         if self.cfg.task.seh_moo.just_count:
             # if we are simply counting the number of molecules, we set the reward to 1 for all valid molecules
             # (and thus logreward to 0), this is simply to see whether the GFN can estimate the size of the state space
-            return RewardScalar(torch.zeros_like(tempered_reward))
+            return RewardScalar(torch.zeros_like(clamped_reward))
         
-        return RewardScalar(tempered_reward)
+        return RewardScalar(clamped_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
