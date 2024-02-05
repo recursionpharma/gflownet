@@ -259,41 +259,41 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 self.cfg.log_dir,
                 compute_igd=True,
                 compute_pc_entropy=True,
-                compute_focus_accuracy=True if self.cfg.task.seh_moo.focus_type is not None else False,
-                focus_cosim=self.cfg.task.seh_moo.focus_cosim,
+                compute_focus_accuracy=True if self.cfg.cond.focus_region.focus_type is not None else False,
+                focus_cosim=self.cfg.cond.focus_region.focus_cosim,
             )
         )
         # instantiate preference and focus conditioning vectors for validation
 
-        tcfg = self.cfg.task.seh_moo
-        n_obj = len(tcfg.objectives)
+        n_obj = len(self.cfg.task.seh_moo.objectives)
+        cond_cfg = self.cfg.cond
 
         # making sure hyperparameters for preferences and focus regions are consistent
         if not (
-            tcfg.focus_type is None
-            or tcfg.focus_type == "centered"
-            or (isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) == 1)
+            cond_cfg.focus_region.focus_type is None
+            or cond_cfg.focus_region.focus_type == "centered"
+            or (isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) == 1)
         ):
-            assert tcfg.preference_type is None, (
-                f"Cannot use preferences with multiple focus regions, here focus_type={tcfg.focus_type} "
-                f"and preference_type={tcfg.preference_type}"
+            assert cond_cfg.weighted_prefs.preference_type is None, (
+                f"Cannot use preferences with multiple focus regions, here focus_type={cond_cfg.focus_region.focus_type} "
+                f"and preference_type={cond_cfg.weighted_prefs.preference_type }"
             )
 
-        if isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) > 1:
-            n_valid = len(tcfg.focus_type)
+        if isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) > 1:
+            n_valid = len(cond_cfg.focus_region.focus_type)
         else:
-            n_valid = tcfg.n_valid
+            n_valid = self.cfg.task.seh_moo.n_valid
 
         # preference vectors
-        if tcfg.preference_type is None:
+        if cond_cfg.weighted_prefs.preference_type is None:
             valid_preferences = np.ones((n_valid, n_obj))
-        elif tcfg.preference_type == "dirichlet":
+        elif cond_cfg.weighted_prefs.preference_type == "dirichlet":
             valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
-        elif tcfg.preference_type == "seeded_single":
+        elif cond_cfg.weighted_prefs.preference_type == "seeded_single":
             seeded_prefs = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
-        elif tcfg.preference_type == "seeded_many":
+        elif cond_cfg.weighted_prefs.preference_type == "seeded_many":
             valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
             raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
@@ -317,8 +317,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             valid_cond_vector = valid_preferences
 
-        self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, n_valid)
-        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
+        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.seh_moo.n_valid_repeats)
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
