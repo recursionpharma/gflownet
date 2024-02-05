@@ -366,7 +366,7 @@ def main():
         "num_training_steps": 500,
         "num_final_gen_steps": 50,
         "validate_every": 100,
-        "num_workers": 8,
+        "num_workers": 0,
         "algo": {
             "global_batch_size": 64,
             "method": "TB",
