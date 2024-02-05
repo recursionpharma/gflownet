@@ -152,14 +152,15 @@ class SEHMOOTask(SEHTask):
             else:
                 flat_reward = torch.tensor(flat_reward)
 
-        scalarized_reward = self.pref_cond.transform(cond_info, flat_reward)
-        focused_reward = (
-            self.focus_cond.transform(cond_info, flat_reward, scalarized_reward)
+        scalarized_logreward = self.pref_cond.transform(cond_info, flat_reward)
+        focused_logreward = (
+            self.focus_cond.transform(cond_info, flat_reward, scalarized_logreward)
             if self.focus_cond is not None
-            else scalarized_reward
+            else scalarized_logreward
         )
-        tempered_reward = self.temperature_conditional.transform(cond_info, focused_reward)
-        return RewardScalar(tempered_reward)
+        # Temperature conditionals expect linear scalars and output log-scalars
+        tempered_logreward = self.temperature_conditional.transform(cond_info, focused_logreward.exp())
+        return RewardScalar(tempered_logreward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
@@ -365,7 +366,7 @@ def main():
         "num_training_steps": 500,
         "num_final_gen_steps": 50,
         "validate_every": 100,
-        "num_workers": 0,
+        "num_workers": 8,
         "algo": {
             "global_batch_size": 64,
             "method": "TB",

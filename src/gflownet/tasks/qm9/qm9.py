@@ -63,7 +63,15 @@ class QM9GapTask(GFNTask):
     def load_task_models(self, path):
         gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
         # TODO: this path should be part of the config?
-        state_dict = torch.load(path)
+        try:
+            state_dict = torch.load(path)
+        except Exception as e:
+            print(
+                "Could not load model.",
+                e,
+                "\nModel weights can be found at",
+                "https://storage.googleapis.com/emmanuel-data/models/mxmnet_gap_model.pt",
+            )
         gap_model.load_state_dict(state_dict)
         gap_model.cuda()
         gap_model, self.device = self._wrap_model(gap_model, send_to_device=True)
