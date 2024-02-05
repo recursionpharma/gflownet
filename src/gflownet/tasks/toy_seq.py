@@ -13,6 +13,7 @@ from gflownet.models.seq_transformer import SeqTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
+from gflownet.utils.transforms import to_logreward
 
 
 class ToySeqTask(GFNTask):
@@ -34,7 +35,7 @@ class ToySeqTask(GFNTask):
         return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
+        return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
     def compute_flat_rewards(self, objs: List[str]) -> Tuple[FlatRewards, Tensor]:
         rs = torch.tensor([sum([s.count(p) for p in self.seqs]) for s in objs]).float() / self.norm
