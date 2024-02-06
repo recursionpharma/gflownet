@@ -1,3 +1,4 @@
+import math
 import pathlib
 import queue
 import threading
@@ -231,10 +232,12 @@ class TopKHook:
         assert len(top_ks) == self.num_preferences  # Make sure we got all of them?
         return top_ks
 
+
 class RewardStats:
     """
     Calculate percentiles of the reward
     """
+
     def __init__(self, idx=None):
         if idx is None:
             idx = [1.0, 0.75, 0.5, 0.25, 0]

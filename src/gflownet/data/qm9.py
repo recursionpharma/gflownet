@@ -3,11 +3,11 @@ import tarfile
 import numpy as np
 import pandas as pd
 import rdkit.Chem as Chem
-from rdkit.Chem import QED, Descriptors
-from rdkit.Chem.rdchem import Mol as RDMol
-from gflownet.utils import metrics, sascore
 import torch
+from rdkit.Chem import QED, Descriptors
 from torch.utils.data import Dataset
+
+from gflownet.utils import sascore
 
 
 class QM9Dataset(Dataset):
@@ -25,7 +25,7 @@ class QM9Dataset(Dataset):
         else:
             self.idcs = idcs[int(np.floor(ratio * len(self.df))) :]
         self.mol_to_graph = lambda x: x
-        
+
     def setup(self, task, ctx):
         self.mol_to_graph = ctx.mol_to_graph
 

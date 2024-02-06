@@ -16,12 +16,14 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 
 from .trainer import GFNTrainer
 
+
 def model_grad_norm(model):
     x = 0
-    for i in self.model.parameters():
+    for i in model.parameters():
         if i.grad is not None:
             x += (i.grad * i.grad).sum()
     return torch.sqrt(x)
+
 
 class StandardOnlineTrainer(GFNTrainer):
     def setup_model(self):
@@ -109,13 +111,13 @@ class StandardOnlineTrainer(GFNTrainer):
             print(yaml)
         with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w", encoding="utf8") as f:
             f.write(yaml)
-    
+
     def step(self, loss: Tensor):
         loss.backward()
         with torch.no_grad():
-            g0 = model_grad_norm(model)
+            g0 = model_grad_norm(self.model)
             self.clip_grad_callback(self.model.parameters())
-            g1 = model_grad_norm(model)
+            g1 = model_grad_norm(self.model)
         self.opt.step()
         self.opt.zero_grad()
         self.opt_Z.step()
@@ -125,3 +127,4 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
+        return {"grad_norm": g0, "grad_norm_clip": g1}

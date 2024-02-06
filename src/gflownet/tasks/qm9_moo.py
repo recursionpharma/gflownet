@@ -1,34 +1,24 @@
-import os
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
-from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import Dataset
-from rdkit.Chem import QED, Descriptors
-from gflownet.utils import metrics, sascore
-from gflownet.algo.envelope_q_learning import EnvelopeQLearning
-from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
-from gflownet.utils import metrics
-from gflownet.utils.conditioning import (
-    FocusRegionConditional,
-    MultiObjectiveWeightedPreferences,
-    TemperatureConditional,
-)
 from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
-from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.trainer import FlatRewards, RewardScalar
+from gflownet.utils import metrics, sascore
+from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
+from gflownet.utils.multiobjective_hooks import TopKHook
 
 
 def safe(f, x, default):
@@ -215,7 +205,7 @@ class QM9GapMOOTask(QM9GapTask):
         return RewardScalar(tempered_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        graphs = [mxmnet.mol2graph(i) for i in mols]
+        graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         assert len(graphs) == len(mols)
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         valid_graphs = [g for g in graphs if g is not None]
@@ -229,7 +219,8 @@ class QM9GapMOOTask(QM9GapTask):
                 if obj == "gap":
                     batch = gd.Batch.from_data_list(valid_graphs)
                     batch.to(self.device)
-                    preds = self.models["mxmnet_gap"](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
+                    preds = self.models["mxmnet_gap"](batch)
+                    preds = preds.reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
                     preds[preds.isnan()] = 1
                 elif obj == "qed":
                     preds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])

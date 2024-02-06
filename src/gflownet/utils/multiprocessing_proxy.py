@@ -72,6 +72,7 @@ class KeepAlive:
     def __del__(self):
         self.close()
 
+
 class MPObjectProxy:
     """This class maintains a reference to some object and
     creates a `placeholder` attribute which can be safely passed to

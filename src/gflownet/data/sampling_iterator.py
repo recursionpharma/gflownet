@@ -189,7 +189,7 @@ class SamplingIterator(IterableDataset):
                 flat_rewards = (
                     list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
                 )
-                
+
                 trajs = self.algo.create_training_data_from_graphs(
                     graphs, self.model, cond_info["encoding"][:num_offline], 0
                 )

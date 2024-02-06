@@ -1,12 +1,12 @@
 from collections import defaultdict
 from math import log
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
+import networkx as nx
 import numpy as np
 import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
-import networkx as nx
 from scipy import special
 
 from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
@@ -368,10 +368,11 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
 class NCounter:
     """
-    See Appendix D of "Maximum entropy GFlowNets with soft Q-learning" Mohammadpour et al 2024 (https://arxiv.org/abs/2312.14331) for a proof.
     Dynamic program to calculate the number of trajectories to a state.
-    
+    See Appendix D of "Maximum entropy GFlowNets with soft Q-learning"
+    by Mohammadpour et al 2024 (https://arxiv.org/abs/2312.14331) for a proof.
     """
+
     def __init__(self):
         # Hold the log factorial
         self.cache = [0.0, 0.0]
@@ -437,6 +438,7 @@ class NCounter:
             acc.append(x)
 
         return special.logsumexp(acc)
+
 
 def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, numiters=None):
     if numiters is None:

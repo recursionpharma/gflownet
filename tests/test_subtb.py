@@ -1,10 +1,10 @@
 from functools import reduce
 
-import numpy as np
 import networkx as nx
+import numpy as np
 import torch
 
-from gflownet.algo.trajectory_balance import log_mixture, subTB
+from gflownet.algo.trajectory_balance import subTB
 from gflownet.envs.frag_mol_env import NCounter
 
 
@@ -30,13 +30,6 @@ def test_subTB():
         P_B = torch.randint(1, 10, (T,))
         F = torch.randint(1, 10, (T + 1,))
         assert (subTB(F, P_F - P_B) == subTB_ref(P_F, P_B, F)).all()
-def test_log_mixture():
-    for a in [0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1]:
-        x = -abs(torch.randn(10))
-        y = -abs(torch.randn(10))
-        a = 0.9
-        approx = a * torch.exp(x) + (1 - a) * torch.exp(y)
-        assert (log_mixture(x, y, a).exp() - approx).max() < 1e-3
 
 
 def test_n():

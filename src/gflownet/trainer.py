@@ -1,6 +1,9 @@
+import gc
 import os
 import pathlib
-from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
+import shutil
+import time
+from typing import Any, Callable, Dict, List, NewType, Optional, Protocol, Tuple
 
 import numpy as np
 import torch
@@ -18,6 +21,7 @@ from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger
+from gflownet.utils.multiobjective_hooks import RewardStats
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 from .config import Config
@@ -35,6 +39,7 @@ class GFNAlgorithm:
 
     def step(self):
         self.updates += 1
+
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
@@ -94,6 +99,11 @@ class GFNTask:
         raise NotImplementedError()
 
 
+class Closable(Protocol):
+    def close(self):
+        pass
+
+
 class GFNTrainer:
     def __init__(self, hps: Dict[str, Any], print=True):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
@@ -106,7 +116,7 @@ class GFNTrainer:
             The torch device of the main worker.
         """
         self.print = print
-        self.to_close = []
+        self.to_close: List[Closable] = []
         # self.setup should at least set these up:
         self.training_data: Dataset
         self.test_data: Dataset
@@ -409,14 +419,14 @@ class GFNTrainer:
                 state,
                 fd,
             )
-        shutil.copy(fn, pathlib.Path(self.cfg.log_dir)  / f"model_state_{it}.pt")
+        shutil.copy(fn, pathlib.Path(self.cfg.log_dir) / f"model_state_{it}.pt")
 
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
-    
+
     def close(self):
         while len(self.to_close) > 0:
             try:

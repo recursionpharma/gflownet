@@ -7,6 +7,7 @@ from
 In particular, this model class allows us to compare to the same
 target proxy used in that paper (sEH binding affinity prediction).
 """
+
 import gzip
 import os
 import pickle  # nosec
@@ -128,6 +129,7 @@ FRAGMENTS_18 = [
     ["C1CCOC1", [2, 4]],
     ["C1CCNCC1", [1, 0]],
 ]
+
 
 class MPNNet(nn.Module):
     def __init__(

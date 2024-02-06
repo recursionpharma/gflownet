@@ -536,9 +536,12 @@ class GraphActionCategorical:
         # This generalizes to edges and non-edges.
         # Append '_batch' to keys except for 'x', since TG has a special case (done by default for 'x')
         self.batch = [
-            getattr(graphs, f"{k}_batch" if k != "x" else "batch") if k is not None
-            # None signals a global logit rather than a per-instance logit
-            else torch.arange(graphs.num_graphs, device=dev)
+            (
+                getattr(graphs, f"{k}_batch" if k != "x" else "batch")
+                if k is not None
+                # None signals a global logit rather than a per-instance logit
+                else torch.arange(graphs.num_graphs, device=dev)
+            )
             for k in keys
         ]
         # This is the cumulative sum (prefixed by 0) of N[i]s
@@ -957,6 +960,7 @@ class GraphBuildingEnvContext:
         return json.dumps(
             [[(i, g.nodes[i]) for i in g.nodes], [(e, g.edges[e]) for e in g.edges]], separators=(",", ":")
         )
+
     def has_n(self) -> bool:
         return False
 
