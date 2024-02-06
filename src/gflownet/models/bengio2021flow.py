@@ -106,9 +106,9 @@ FRAGMENTS = [
     ["c1ncc2nc[nH]c2n1", [2, 6]],
 ]
 
-"""
-18 fragments from "Towards Understanding and Improving GFlowNet Training" by Shen et al. (https://arxiv.org/abs/2305.07170)
-"""
+# 18 fragments from "Towards Understanding and Improving GFlowNet Training"
+# by Shen et al. (https://arxiv.org/abs/2305.07170)
+
 FRAGMENTS_18 = [
     ["CO", [1, 0]],
     ["O=c1[nH]cnc2[nH]cnc12", [3, 6]],

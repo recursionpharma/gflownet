@@ -53,7 +53,7 @@ def load_tar(xyz_file):
     f = tarfile.TarFile(xyz_file, "r")
     all_mols = []
     for pt in f:
-        pt = f.extractfile(pt)  # type: ignore3
+        pt = f.extractfile(pt)  # type: ignore
         data = pt.read().decode().splitlines()  # type: ignore
         all_mols.append(data[-2].split()[:1] + list(map(float, data[1].split()[2:])))
     df = pd.DataFrame(all_mols, columns=["SMILES"] + labels)
