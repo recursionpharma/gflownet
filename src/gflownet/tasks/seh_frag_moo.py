@@ -165,7 +165,7 @@ class SEHMOOTask(SEHTask):
         )
         tempered_logreward = self.temperature_conditional.transform(cond_info, focused_logreward)
         clamped_logreward = tempered_logreward.clamp(min=self.cfg.algo.illegal_action_logreward)
-        
+
         return RewardScalar(clamped_logreward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
@@ -275,7 +275,8 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             or (isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) == 1)
         ):
             assert cond_cfg.weighted_prefs.preference_type is None, (
-                f"Cannot use preferences with multiple focus regions, here focus_type={cond_cfg.focus_region.focus_type} "
+                f"Cannot use preferences with multiple focus regions, "
+                f"here focus_type={cond_cfg.focus_region.focus_type} "
                 f"and preference_type={cond_cfg.weighted_prefs.preference_type }"
             )
 
@@ -350,8 +351,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def run(self):
         super().run()
         for hook in self.sampling_hooks:
-            if hasattr(hook, 'terminate'):
+            if hasattr(hook, "terminate"):
                 hook.terminate()
+
 
 class RepeatedCondInfoDataset:
     def __init__(self, cond_info_vectors, repeat):

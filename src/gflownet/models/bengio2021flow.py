@@ -7,6 +7,7 @@ from
 In particular, this model class allows us to compare to the same
 target proxy used in that paper (sEH binding affinity prediction).
 """
+
 import gzip
 import os
 import pickle  # nosec

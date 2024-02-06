@@ -12,7 +12,7 @@ from torch_geometric import data as gd
 from gflownet.config import Config
 from gflownet.utils import metrics
 from gflownet.utils.focus_model import TabularFocusModel
-from gflownet.utils.transforms import thermometer, to_logreward
+from gflownet.utils.transforms import thermometer
 
 
 class Conditional(abc.ABC):

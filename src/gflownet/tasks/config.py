@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List
 
 
 @dataclass
@@ -20,6 +20,7 @@ class SEHMOOTaskConfig:
     objectives : List[str]
         The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
     """
+
     n_valid: int = 15
     n_valid_repeats: int = 128
     objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
