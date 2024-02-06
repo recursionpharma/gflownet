@@ -197,6 +197,10 @@ class MultiObjectiveStatsHook:
 
         return info
 
+    def terminate(self):
+        self.stop.set()
+        self.pareto_thread.join()
+
 
 class TopKHook:
     def __init__(self, k, repeats, num_preferences):
