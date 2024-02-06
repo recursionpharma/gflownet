@@ -53,9 +53,11 @@ class TemperatureConditional(Conditional):
         cfg = self.cfg.cond.temperature
         beta = None
         if cfg.sample_dist == "constant":
-            assert isinstance(cfg.dist_params[0], float)
-            beta = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
-            beta_enc = torch.zeros((n, cfg.num_thermometer_dim))
+            if isinstance(cfg.dist_params[0], (float, int, np.int64, np.int32)):
+                beta = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
+                beta_enc = torch.zeros((n, cfg.num_thermometer_dim))
+            else:
+                raise ValueError(f"{cfg.dist_params[0]} is not a float)")
         else:
             if cfg.sample_dist == "gamma":
                 loc, scale = cfg.dist_params
@@ -102,11 +104,11 @@ class MultiObjectiveWeightedPreferences(Conditional):
         elif self.cfg.preference_type == "seeded":
             preferences = torch.tensor(self.seeded_prefs).float().repeat(n, 1)
         elif self.cfg.preference_type == "dirichlet_exponential":
-            a = np.random.dirichlet([1] * self.num_objectives, n)
+            a = np.random.dirichlet([self.cfg.preference_param] * self.num_objectives, n)
             b = np.random.exponential(1, n)[:, None]
             preferences = Dirichlet(torch.tensor(a * b)).sample([1])[0].float()
         elif self.cfg.preference_type == "dirichlet":
-            m = Dirichlet(torch.FloatTensor([1.0] * self.num_objectives))
+            m = Dirichlet(torch.FloatTensor([self.cfg.preference_param] * self.num_objectives))
             preferences = m.sample([n])
         else:
             raise ValueError(f"Unknown preference type {self.cfg.preference_type}")
@@ -114,7 +116,8 @@ class MultiObjectiveWeightedPreferences(Conditional):
         return {"preferences": preferences, "encoding": self.encode(preferences)}
 
     def transform(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
-        scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30).log()
+        # NO LOG NO LOG NO LOG NO LOG NO LOG NO LOG
+        scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30)
         assert len(scalar_logreward.shape) == 1, f"scalar_logreward should be a 1D array, got {scalar_logreward.shape}"
         return scalar_logreward
 

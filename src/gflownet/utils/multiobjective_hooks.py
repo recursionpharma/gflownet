@@ -10,6 +10,7 @@ import torch.multiprocessing as mp
 from torch import Tensor
 
 from gflownet.utils import metrics
+from gflownet.utils.multiprocessing_proxy import KeepAlive
 
 
 class MultiObjectiveStatsHook:
@@ -54,9 +55,7 @@ class MultiObjectiveStatsHook:
         self.log_path = pathlib.Path(log_dir) / "pareto.pt"
         self.pareto_thread = threading.Thread(target=self._run_pareto_accumulation, daemon=True)
         self.pareto_thread.start()
-
-    def __del__(self):
-        self.stop.set()
+        self.keep_alive = KeepAlive(self.stop)
 
     def _hsri(self, x):
         assert x.ndim == 2, "x should have shape (num points, num objectives)"
@@ -71,15 +70,18 @@ class MultiObjectiveStatsHook:
 
     def _run_pareto_accumulation(self):
         num_updates = 0
-        while not self.stop.is_set():
+        timeouts = 0
+        while not self.stop.is_set() or timeouts < 200:
             try:
                 r, smi, owid = self.pareto_queue.get(block=True, timeout=1)
             except queue.Empty:
+                timeouts += 1
                 continue
             except ConnectionError as e:
                 print("Pareto Accumulation thread Queue ConnectionError", e)
                 break
 
+            timeouts = 0
             # accumulates pareto fronts across batches
             if self.pareto_front is None:
                 p = self.pareto_front = r
@@ -108,14 +110,19 @@ class MultiObjectiveStatsHook:
             if num_updates % self.save_every == 0:
                 if self.pareto_queue.qsize() > 10:
                     print("Warning: pareto metrics computation lagging")
-                torch.save(
-                    {
-                        "pareto_front": self.pareto_front,
-                        "pareto_metrics": list(self.pareto_metrics),
-                        "pareto_front_smi": self.pareto_front_smi,
-                    },
-                    open(self.log_path, "wb"),
-                )
+                self._save()
+        self._save()
+
+    def _save(self):
+        with open(self.log_path, "wb") as fd:
+            torch.save(
+                {
+                    "pareto_front": self.pareto_front,
+                    "pareto_metrics": list(self.pareto_metrics),
+                    "pareto_front_smi": self.pareto_front_smi,
+                },
+                fd,
+            )
 
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
         # locally (in-process) accumulate flat rewards to build a better pareto estimate
@@ -223,3 +230,25 @@ class TopKHook:
         top_ks = [np.mean(sorted(i)[-self.k :]) for i in repeats.values()]
         assert len(top_ks) == self.num_preferences  # Make sure we got all of them?
         return top_ks
+
+class RewardStats:
+    """
+    Calculate percentiles of the reward
+    """
+    def __init__(self, idx=None):
+        if idx is None:
+            idx = [1.0, 0.75, 0.5, 0.25, 0]
+        self.idx = idx
+
+    def __call__(self, trajs, rewards, flat_rewards, cond_info):
+        x = np.sort(flat_rewards.numpy(), axis=0)
+        ret = {}
+        y = np.sort(rewards.numpy())
+        for i, idx in enumerate(self.idx):
+            f = max(min(math.floor(x.shape[0] * idx), x.shape[0] - 1), 0)
+            for j in range(x.shape[1]):
+                ret[f"fr_{j}_{idx:.2f}%"] = x[f, j]
+            ret[f"r_{idx:.2f}%"] = y[f]
+
+        ret["sample_len"] = sum([len(i["traj"]) for i in trajs]) / len(trajs)
+        return ret

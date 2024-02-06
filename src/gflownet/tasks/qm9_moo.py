@@ -1,30 +1,44 @@
 import os
 import pathlib
-import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
+from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import Dataset
-
-from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
-from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.config import Config
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.models import bengio2021flow
-from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
-from gflownet.trainer import FlatRewards, RewardScalar
+from rdkit.Chem import QED, Descriptors
 from gflownet.utils import metrics, sascore
-from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
+from gflownet.algo.envelope_q_learning import EnvelopeQLearning
+from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
+
+import gflownet.models.mxmnet as mxmnet
+from gflownet.config import Config
+from gflownet.data.qm9 import QM9Dataset
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.online_trainer import StandardOnlineTrainer
+from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
+from gflownet.utils import metrics
+from gflownet.utils.conditioning import (
+    FocusRegionConditional,
+    MultiObjectiveWeightedPreferences,
+    TemperatureConditional,
+)
+from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 
 
-class SEHMOOTask(SEHTask):
+def safe(f, x, default):
+    try:
+        return f(x)
+    except Exception:
+        return default
+
+
+class QM9GapMOOTask(QM9GapTask):
     """Sets up a multiobjective task where the rewards are (functions of):
     - the the binding energy of a molecule to Soluble Epoxide Hydrolases.
     - its QED
@@ -43,8 +57,8 @@ class SEHMOOTask(SEHTask):
     ):
         super().__init__(dataset, cfg, rng, wrap_model)
         self.cfg = cfg
-        mcfg = self.cfg.task.seh_moo
-        self.objectives = cfg.task.seh_moo.objectives
+        mcfg = self.cfg.task.qm9_moo
+        self.objectives = cfg.task.qm9_moo.objectives
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
@@ -59,13 +73,52 @@ class SEHMOOTask(SEHTask):
             + self.pref_cond.encoding_size()
             + (self.focus_cond.encoding_size() if self.focus_cond is not None else 0)
         )
-        assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
+        assert set(self.objectives) <= {"gap", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y))
+    def flat_reward_transform(self, y: Tensor) -> FlatRewards:
+        assert y.shape[-1] == len(self.objectives)
+        if len(y.shape) == 1:
+            y = y[None, :]
+        assert len(y.shape) == 2
+
+        flat_r = []
+        for i, obj in enumerate(self.objectives):
+            preds = y[:, i]
+            if obj == "gap":
+                preds = super().flat_reward_transform(preds)
+            elif obj == "qed":
+                pass
+            elif obj == "sa":
+                preds = (10 - preds) / 9  # Turn into a [0-1] reward
+            elif obj == "mw":
+                preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
+            else:
+                raise ValueError(f"{obj} not known")
+            flat_r.append(preds)
+        return FlatRewards(torch.stack(flat_r, dim=1))
 
     def inverse_flat_reward_transform(self, rp):
-        return rp
+        assert rp.shape[-1] == len(self.objectives)
+        if len(rp.shape) == 1:
+            rp = rp[None, :]
+        assert len(rp.shape) == 2
+
+        flat_r = []
+        for i, obj in enumerate(self.objectives):
+            preds = rp[:, i]
+            if obj == "qed":
+                preds = super().inverse_flat_reward_transform(preds)
+            elif obj == "qed":
+                pass
+            elif obj == "sa":
+                preds = 10 - 9 * preds
+            elif obj == "mw":
+                preds = 300 - 700 * (preds - 1)
+            else:
+                raise ValueError(f"{obj} not known")
+            flat_r.append(preds)
+
+        return FlatRewards(torch.stack(flat_r, dim=1))
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
@@ -162,7 +215,7 @@ class SEHMOOTask(SEHTask):
         return RewardScalar(tempered_reward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        graphs = [bengio2021flow.mol2graph(i) for i in mols]
+        graphs = [mxmnet.mol2graph(i) for i in mols]
         assert len(graphs) == len(mols)
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         valid_graphs = [g for g in graphs if g is not None]
@@ -170,47 +223,32 @@ class SEHMOOTask(SEHTask):
         assert len(valid_mols) == len(valid_graphs)
         if not is_valid.any():
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
-
         else:
             flat_r: List[Tensor] = []
-            if "seh" in self.objectives:
-                batch = gd.Batch.from_data_list(valid_graphs)
-                batch.to(self.device)
-                seh_preds = self.models["seh"](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
-                seh_preds[seh_preds.isnan()] = 0
-                flat_r.append(seh_preds)
-                assert len(seh_preds) == len(valid_graphs), f"{len(seh_preds)} != {len(valid_graphs)}"
-
-            def safe(f, x, default):
-                try:
-                    return f(x)
-                except Exception:
-                    return default
-
-            if "qed" in self.objectives:
-                qeds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
-                flat_r.append(qeds)
-                assert len(qeds) == len(valid_graphs), f"{len(qeds)} != {len(valid_graphs)}"
-
-            if "sa" in self.objectives:
-                sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
-                sas = (10 - sas) / 9  # Turn into a [0-1] reward
-                flat_r.append(sas)
-                assert len(sas) == len(valid_graphs), f"{len(sas)} != {len(valid_graphs)}"
-
-            if "mw" in self.objectives:
-                molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
-                molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-                flat_r.append(molwts)
-                assert len(molwts) == len(valid_graphs), f"{len(molwts)} != {len(valid_graphs)}"
+            for obj in self.objectives:
+                if obj == "gap":
+                    batch = gd.Batch.from_data_list(valid_graphs)
+                    batch.to(self.device)
+                    preds = self.models["mxmnet_gap"](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
+                    preds[preds.isnan()] = 1
+                elif obj == "qed":
+                    preds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
+                elif obj == "sa":
+                    preds = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
+                elif obj == "mw":
+                    preds = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
+                else:
+                    raise ValueError(f"{obj} not known")
+                flat_r.append(preds)
+                assert len(preds) == len(valid_graphs), f"{len(preds)} != {len(valid_graphs)} for obj {obj}"
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            return FlatRewards(flat_rewards), is_valid
+            return self.flat_reward_transform(flat_rewards), is_valid
 
 
-class SEHMOOFragTrainer(SEHFragTrainer):
-    task: SEHMOOTask
-    ctx: FragMolBuildingEnvContext
+class QM9MOOTrainer(QM9GapTrainer):
+    task: QM9GapMOOTask
+    ctx: MolBuildingEnvContext
 
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
@@ -220,67 +258,47 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         cfg.algo.valid_sample_cond_info = False
         cfg.algo.valid_offline_ratio = 1
 
-    def setup_algo(self):
-        algo = self.cfg.algo.method
-        if algo == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
-        elif algo == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
-        else:
-            super().setup_algo()
-
     def setup_task(self):
-        self.task = SEHMOOTask(
+        self.task = QM9GapMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 
-    def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
-
-    def setup_model(self):
-        if self.cfg.algo.method == "MOQL":
-            self.model = GraphTransformerFragEnvelopeQL(
-                self.ctx,
-                num_emb=self.cfg.model.num_emb,
-                num_layers=self.cfg.model.num_layers,
-                num_heads=self.cfg.model.graph_transformer.num_heads,
-                num_objectives=len(self.cfg.task.seh_moo.objectives),
-            )
-        else:
-            super().setup_model()
-
     def setup(self):
         super().setup()
-        self.sampling_hooks.append(
-            MultiObjectiveStatsHook(
-                256,
-                self.cfg.log_dir,
-                compute_igd=True,
-                compute_pc_entropy=True,
-                compute_focus_accuracy=True if self.cfg.task.seh_moo.focus_type is not None else False,
-                focus_cosim=self.cfg.task.seh_moo.focus_cosim,
-            )
-        )
+        # self.sampling_hooks.append(
+        #     MultiObjectiveStatsHook(
+        #         256,
+        #         self.cfg.log_dir,
+        #         compute_igd=True,
+        #         compute_hvi=False,
+        #         compute_hsri=False,
+        #         compute_normed=False,
+        #         compute_pc_entropy=True,
+        #         compute_focus_accuracy=True if self.cfg.task.qm9_moo.focus_type is not None else False,
+        #         focus_cosim=self.cfg.task.qm9_moo.focus_cosim,
+        #     )
+        # )
+        # self.to_close.append(self.sampling_hooks[-1].keep_alive)
         # instantiate preference and focus conditioning vectors for validation
 
-        tcfg = self.cfg.task.seh_moo
+        tcfg = self.cfg.task.qm9_moo
         n_obj = len(tcfg.objectives)
 
         # making sure hyperparameters for preferences and focus regions are consistent
         if not (
             tcfg.focus_type is None
             or tcfg.focus_type == "centered"
-            or (isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) == 1)
+            or (type(tcfg.focus_type) is list and len(tcfg.focus_type) == 1)
         ):
             assert tcfg.preference_type is None, (
                 f"Cannot use preferences with multiple focus regions, here focus_type={tcfg.focus_type} "
                 f"and preference_type={tcfg.preference_type}"
             )
 
-        if isinstance(tcfg.focus_type, list) and len(tcfg.focus_type) > 1:
+        if type(tcfg.focus_type) is list and len(tcfg.focus_type) > 1:
             n_valid = len(tcfg.focus_type)
         else:
             n_valid = tcfg.n_valid
@@ -297,7 +315,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif tcfg.preference_type == "seeded_many":
             valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
-            raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
+            raise NotImplementedError(f"Unknown preference type {self.cfg.task.qm9_moo.preference_type}")
 
         # TODO: this was previously reported, would be nice to serialize it
         # hps["fixed_focus_dirs"] = (
@@ -323,6 +341,10 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
+
+    def setup_data(self):
+        self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, targets=self.cfg.task.qm9_moo.objectives)
+        self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, targets=self.cfg.task.qm9_moo.objectives)
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
@@ -360,80 +382,3 @@ class RepeatedCondInfoDataset:
     def __getitem__(self, idx):
         assert 0 <= idx < len(self)
         return torch.tensor(self.cond_info_vectors[int(idx // self.repeat)])
-
-
-def main():
-    """Example of how this model can be run."""
-    hps = {
-        "log_dir": "./logs/debug_run_sfm",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "pickle_mp_messages": True,
-        "overwrite_existing_exp": True,
-        "seed": 0,
-        "num_training_steps": 500,
-        "num_final_gen_steps": 50,
-        "validate_every": 100,
-        "num_workers": 0,
-        "algo": {
-            "global_batch_size": 64,
-            "method": "TB",
-            "sampling_tau": 0.95,
-            "train_random_action_prob": 0.01,
-            "tb": {
-                "Z_learning_rate": 1e-3,
-                "Z_lr_decay": 50000,
-            },
-        },
-        "model": {
-            "num_layers": 2,
-            "num_emb": 256,
-        },
-        "task": {
-            "seh_moo": {
-                "objectives": ["seh", "qed"],
-                "n_valid": 15,
-                "n_valid_repeats": 128,
-            },
-        },
-        "opt": {
-            "learning_rate": 1e-4,
-            "lr_decay": 20000,
-        },
-        "cond": {
-            "temperature": {
-                "sample_dist": "constant",
-                "dist_params": [60.0],
-                "num_thermometer_dim": 32,
-            },
-            "weighted_prefs": {
-                "preference_type": "dirichlet",
-            },
-            "focus_region": {
-                "focus_type": None,  # "learned-tabular",
-                "focus_cosim": 0.98,
-                "focus_limit_coef": 1e-1,
-                "focus_model_training_limits": (0.25, 0.75),
-                "focus_model_state_space_res": 30,
-                "max_train_it": 5_000,
-            },
-        },
-        "replay": {
-            "use": False,
-            "warmup": 1000,
-            "hindsight_ratio": 0.0,
-        },
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
-        else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
-
-    trial = SEHMOOFragTrainer(hps)
-    trial.print_every = 1
-    trial.run()
-
-
-if __name__ == "__main__":
-    main()

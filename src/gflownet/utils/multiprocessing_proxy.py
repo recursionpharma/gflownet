@@ -62,6 +62,16 @@ class MPObjectPlaceholder:
         return self.out_queue.get()
 
 
+class KeepAlive:
+    def __init__(self, flag):
+        self.flag = flag
+
+    def close(self):
+        self.flag.set()
+
+    def __del__(self):
+        self.close()
+
 class MPObjectProxy:
     """This class maintains a reference to some object and
     creates a `placeholder` attribute which can be safely passed to
@@ -103,11 +113,9 @@ class MPObjectProxy:
             self.device = torch.device("cpu")
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
+        self.keepalive = KeepAlive(self.stop)
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
-
-    def __del__(self):
-        self.stop.set()
 
     def encode(self, m):
         if self.pickle_messages:
@@ -123,14 +131,18 @@ class MPObjectProxy:
         return i.detach().to(torch.device("cpu")) if isinstance(i, self.cuda_types) else i
 
     def run(self):
-        while not self.stop.is_set():
+        timeouts = 0
+
+        while not self.stop.is_set() or timeouts < 500:
             for qi, q in enumerate(self.in_queues):
                 try:
                     r = self.decode(q.get(True, 1e-5))
                 except queue.Empty:
+                    timeouts += 1
                     continue
                 except ConnectionError:
                     break
+                timeouts = 0
                 attr, args, kwargs = r
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
@@ -190,4 +202,5 @@ def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = Fals
         A placeholder object whose method calls route arguments to the main process
 
     """
-    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages).placeholder
+    x = MPObjectProxy(obj, num_workers, cast_types, pickle_messages)
+    return x.placeholder, x.keepalive

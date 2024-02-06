@@ -108,10 +108,11 @@ class LittleSEHDataset(Dataset):
 
     To turn on, self `cfg.algo.offline_ratio > 0`"""
 
-    def __init__(self) -> None:
+    def __init__(self, smis) -> None:
         super().__init__()
         self.props: List[Tensor] = []
         self.mols: List[Graph] = []
+        self.smis = smis
 
     def setup(self, task, ctx):
         rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
@@ -173,10 +174,18 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
     def setup_data(self):
         super().setup_data()
-        self.training_data = LittleSEHDataset()
+        if self.cfg.task.seh.reduced_frag:
+            # The examples don't work with the 18 frags
+            self.training_data = LittleSEHDataset([])
+        else:
+            self.training_data = LittleSEHDataset(SOME_MOLS)
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
+        self.ctx = FragMolBuildingEnvContext(
+            max_frags=self.cfg.algo.max_nodes,
+            num_cond_dim=self.task.num_cond_dim,
+            fragments=bengio2021flow.FRAGMENTS_18 if self.cfg.task.seh.reduced_frag else bengio2021flow.FRAGMENTS,
+        )
 
     def setup(self):
         super().setup()

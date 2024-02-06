@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 
 @dataclass
 class SEHTaskConfig:
-    pass  # SEH just uses a temperature conditional
+    reduced_frag: bool = False
 
 
 @dataclass
@@ -58,7 +58,24 @@ class QM9TaskConfig:
 
 
 @dataclass
+class QM9MOOTaskConfig:
+    use_steer_thermometer: bool = False
+    preference_type: Optional[str] = "dirichlet"
+    focus_type: Optional[str] = None
+    focus_dirs_listed: Optional[List[List[float]]] = None
+    focus_cosim: float = 0.0
+    focus_limit_coef: float = 1.0
+    focus_model_training_limits: Optional[Tuple[int, int]] = None
+    focus_model_state_space_res: Optional[int] = None
+    max_train_it: Optional[int] = None
+    n_valid: int = 15
+    n_valid_repeats: int = 128
+    objectives: List[str] = field(default_factory=lambda: ["gap", "qed", "sa"])
+
+
+@dataclass
 class TasksConfig:
     qm9: QM9TaskConfig = QM9TaskConfig()
+    qm9_moo: QM9MOOTaskConfig = QM9MOOTaskConfig()
     seh: SEHTaskConfig = SEHTaskConfig()
     seh_moo: SEHMOOTaskConfig = SEHMOOTaskConfig()

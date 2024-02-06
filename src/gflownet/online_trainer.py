@@ -16,6 +16,12 @@ from gflownet.models.graph_transformer import GraphTransformerGFN
 
 from .trainer import GFNTrainer
 
+def model_grad_norm(model):
+    x = 0
+    for i in self.model.parameters():
+        if i.grad is not None:
+            x += (i.grad * i.grad).sum()
+    return torch.sqrt(x)
 
 class StandardOnlineTrainer(GFNTrainer):
     def setup_model(self):
@@ -43,6 +49,22 @@ class StandardOnlineTrainer(GFNTrainer):
         self.training_data = []
         self.test_data = []
 
+    def _opt(self, params, lr=None, momentum=None):
+        if lr is None:
+            lr = self.cfg.opt.learning_rate
+        if momentum is None:
+            momentum = self.cfg.opt.momentum
+        if self.cfg.opt.opt == "adam":
+            return torch.optim.Adam(
+                params,
+                lr,
+                (momentum, 0.999),
+                weight_decay=self.cfg.opt.weight_decay,
+                eps=self.cfg.opt.adam_eps,
+            )
+
+        raise NotImplementedError(f"{self.opt.opt} is not implemented")
+
     def setup(self):
         super().setup()
         self.offline_ratio = 0
@@ -55,14 +77,8 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             Z_params = []
             non_Z_params = list(self.model.parameters())
-        self.opt = torch.optim.Adam(
-            non_Z_params,
-            self.cfg.opt.learning_rate,
-            (self.cfg.opt.momentum, 0.999),
-            weight_decay=self.cfg.opt.weight_decay,
-            eps=self.cfg.opt.adam_eps,
-        )
-        self.opt_Z = torch.optim.Adam(Z_params, self.cfg.algo.tb.Z_learning_rate, (0.9, 0.999))
+        self.opt = self._opt(non_Z_params)
+        self.opt_Z = self._opt(Z_params, self.cfg.algo.tb.Z_learning_rate, 0.9)
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
         self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
             self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
@@ -77,7 +93,8 @@ class StandardOnlineTrainer(GFNTrainer):
         self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_callback = {
             "value": lambda params: torch.nn.utils.clip_grad_value_(params, self.cfg.opt.clip_grad_param),
-            "norm": lambda params: torch.nn.utils.clip_grad_norm_(params, self.cfg.opt.clip_grad_param),
+            "norm": lambda params: [torch.nn.utils.clip_grad_norm_(p, self.cfg.opt.clip_grad_param) for p in params],
+            "total_norm": lambda params: torch.nn.utils.clip_grad_norm_(params, self.cfg.opt.clip_grad_param),
             "none": lambda x: None,
         }[self.cfg.opt.clip_grad_type]
 
@@ -85,17 +102,20 @@ class StandardOnlineTrainer(GFNTrainer):
         git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
         self.cfg.git_hash = git_hash
 
-        os.makedirs(self.cfg.log_dir, exist_ok=True)
-        print("\n\nHyperparameters:\n")
         yaml = OmegaConf.to_yaml(self.cfg)
-        print(yaml)
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
+        os.makedirs(self.cfg.log_dir, exist_ok=True)
+        if self.print:
+            print("\n\nHyperparameters:\n")
+            print(yaml)
+        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w", encoding="utf8") as f:
             f.write(yaml)
-
+    
     def step(self, loss: Tensor):
         loss.backward()
-        for i in self.model.parameters():
-            self.clip_grad_callback(i)
+        with torch.no_grad():
+            g0 = model_grad_norm(model)
+            self.clip_grad_callback(self.model.parameters())
+            g1 = model_grad_norm(model)
         self.opt.step()
         self.opt.zero_grad()
         self.opt_Z.step()

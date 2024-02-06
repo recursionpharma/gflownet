@@ -31,6 +31,10 @@ RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
 
 
 class GFNAlgorithm:
+    updates: int = 0
+
+    def step(self):
+        self.updates += 1
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
@@ -91,7 +95,7 @@ class GFNTask:
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any]):
+    def __init__(self, hps: Dict[str, Any], print=True):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
@@ -101,6 +105,8 @@ class GFNTrainer:
         device: torch.device
             The torch device of the main worker.
         """
+        self.print = print
+        self.to_close = []
         # self.setup should at least set these up:
         self.training_data: Dataset
         self.test_data: Dataset
@@ -129,7 +135,7 @@ class GFNTrainer:
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
-        self.sampling_hooks: List[Callable] = []
+        self.sampling_hooks: List[Callable] = [RewardStats()]
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
@@ -173,12 +179,13 @@ class GFNTrainer:
         if send_to_device:
             obj.to(self.device)
         if self.cfg.num_workers > 0 and obj is not None:
-            placeholder = mp_object_wrapper(
+            placeholder, keepalive = mp_object_wrapper(
                 obj,
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
             )
+            self.to_close.append(keepalive)
             return placeholder, torch.device("cpu")
         else:
             return obj, self.device
@@ -202,6 +209,7 @@ class GFNTrainer:
             ratio=self.cfg.algo.offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
             random_action_prob=self.cfg.algo.train_random_action_prob,
+            det_after=self.cfg.algo.train_det_after,
             hindsight_ratio=self.cfg.replay.hindsight_ratio,
         )
         for hook in self.sampling_hooks:
@@ -272,11 +280,14 @@ class GFNTrainer:
         )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
+        tick = time.time()
+        self.model.train()
         try:
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
             step_info = self.step(loss)
+            self.algo.step()
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
         except ValueError as e:
@@ -288,12 +299,16 @@ class GFNTrainer:
             info.update(step_info)
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
+        info["train_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
+        tick = time.time()
+        self.model.eval()
         loss, info = self.algo.compute_batch_losses(self.model, batch)
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
+        info["eval_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
     def run(self, logger=None):
@@ -316,7 +331,14 @@ class GFNTrainer:
         start = self.cfg.start_at_step + 1
         num_training_steps = self.cfg.num_training_steps
         logger.info("Starting training")
+        start_time = time.time()
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
+            # the memory fragmentation or allocation keeps growing, how often should we clean up?
+            # is changing the allocation strategy helpful?
+
+            if it % 1024 == 0:
+                gc.collect()
+                torch.cuda.empty_cache()
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
@@ -325,6 +347,8 @@ class GFNTrainer:
                 )
                 continue
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
+            info["time_spent"] = time.time() - start_time
+            start_time = time.time()
             self.log(info, it, "train")
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
@@ -344,30 +368,65 @@ class GFNTrainer:
         self._save_state(num_training_steps)
 
         num_final_gen_steps = self.cfg.num_final_gen_steps
+        final_info = {}
         if num_final_gen_steps:
             logger.info(f"Generating final {num_final_gen_steps} batches ...")
             for it, batch in zip(
-                range(num_training_steps, num_training_steps + num_final_gen_steps + 1),
+                range(num_training_steps + 1, num_training_steps + num_final_gen_steps + 1),
                 cycle(final_dl),
             ):
-                pass
-            logger.info("Final generation steps completed.")
+                if hasattr(batch, "extra_info"):
+                    for k, v in batch.extra_info.items():
+                        if k not in final_info:
+                            final_info[k] = []
+                        if hasattr(v, "item"):
+                            v = v.item()
+                        final_info[k].append(v)
+                if it % self.print_every == 0:
+                    logger.info(f"Generating mols {it - num_training_steps}/{num_final_gen_steps}")
+            final_info = {k: np.mean(v) for k, v in final_info.items()}
+
+            logger.info("Final generation steps completed - " + " ".join(f"{k}:{v:.2f}" for k, v in final_info.items()))
+            self.log(final_info, num_training_steps, "final")
+
+        # for pypy and other GC havers
+        del train_dl
+        del valid_dl
+        if self.cfg.num_final_gen_steps:
+            del final_dl
 
     def _save_state(self, it):
-        torch.save(
-            {
-                "models_state_dict": [self.model.state_dict()],
-                "cfg": self.cfg,
-                "step": it,
-            },
-            open(pathlib.Path(self.cfg.log_dir) / "model_state.pt", "wb"),
-        )
+        state = {
+            "models_state_dict": [self.model.state_dict()],
+            "cfg": self.cfg,
+            "step": it,
+        }
+        if self.sampling_model is not self.model:
+            state["sampling_model_state_dict"] = [self.sampling_model.state_dict()]
+        fn = pathlib.Path(self.cfg.log_dir) / "model_state.pt"
+        with open(fn, "wb") as fd:
+            torch.save(
+                state,
+                fd,
+            )
+        shutil.copy(fn, pathlib.Path(self.cfg.log_dir)  / f"model_state_{it}.pt")
 
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
+    
+    def close(self):
+        while len(self.to_close) > 0:
+            try:
+                i = self.to_close.pop()
+                i.close()
+            except Exception as e:
+                print(e)
+
+    def __del__(self):
+        self.close()
 
 
 def cycle(it):

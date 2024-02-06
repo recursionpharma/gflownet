@@ -31,11 +31,12 @@ class QM9GapTask(GFNTask):
     ):
         self._wrap_model = wrap_model
         self.rng = rng
-        self.models = self.load_task_models(cfg.task.qm9.model_path)
+        self.models = self.load_task_models(cfg.task.qm9.model_path, torch.device(cfg.device))
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.num_cond_dim = self.temperature_conditional.encoding_size()
         # TODO: fix interface
-        self._min, self._max, self._percentile_95 = self.dataset.get_stats(percentile=0.05)  # type: ignore
+        self._min, self._max, self._percentile_95 = self.dataset.get_stats("gap", percentile=0.05)  # type: ignore
         self._width = self._max - self._min
         self._rtrans = "unit+95p"  # TODO: hyperparameter
 
@@ -60,12 +61,12 @@ class QM9GapTask(GFNTask):
         elif self._rtrans == "unit+95p":
             return (1 - rp + (1 - self._percentile_95)) * self._width + self._min
 
-    def load_task_models(self, path):
+    def load_task_models(self, path, device):
         gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
         # TODO: this path should be part of the config?
-        state_dict = torch.load(path)
+        state_dict = torch.load(path, map_location=device)
         gap_model.load_state_dict(state_dict)
-        gap_model.cuda()
+        gap_model.to(device)
         gap_model, self.device = self._wrap_model(gap_model, send_to_device=True)
         return {"mxmnet_gap": gap_model}
 
@@ -112,7 +113,10 @@ class QM9GapTrainer(StandardOnlineTrainer):
 
     def setup_env_context(self):
         self.ctx = MolBuildingEnvContext(
-            ["C", "N", "F", "O"], expl_H_range=[0, 1, 2, 3], num_cond_dim=32, allow_5_valence_nitrogen=True
+            ["C", "N", "F", "O"],
+            expl_H_range=[0, 1, 2, 3],
+            num_cond_dim=self.task.num_cond_dim,
+            allow_5_valence_nitrogen=True,
         )
         # Note: we only need the allow_5_valence_nitrogen flag because of how we generate trajectories
         # from the dataset. For example, consider tue Nitrogen atom in this: C[NH+](C)C, when s=CN(C)C, if the action
@@ -122,8 +126,8 @@ class QM9GapTrainer(StandardOnlineTrainer):
         # (PR #98) this edge case is the only case where the ordering in which attributes are set can matter.
 
     def setup_data(self):
-        self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, target="gap")
-        self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, target="gap")
+        self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, targets=["gap"])
+        self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, targets=["gap"])
 
     def setup_task(self):
         self.task = QM9GapTask(
@@ -132,6 +136,11 @@ class QM9GapTrainer(StandardOnlineTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
+
+    def setup(self):
+        super().setup()
+        self.training_data.setup(self.task, self.ctx)
+        self.test_data.setup(self.task, self.ctx)
 
 
 def main():
