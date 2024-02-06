@@ -89,12 +89,12 @@ class TabularFocusModel(FocusModel):
         """
         sampling_likelihoods = torch.zeros_like(self.focus_dir_count).float().to(self.device)
         sampling_likelihoods[self.focus_dir_count == 0] = self.feasible_flow
-        sampling_likelihoods[
-            torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count > 0)
-        ] = self.feasible_flow
-        sampling_likelihoods[
-            torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count == 0)
-        ] = self.infeasible_flow
+        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count > 0)] = (
+            self.feasible_flow
+        )
+        sampling_likelihoods[torch.logical_and(self.focus_dir_count > 0, self.focus_dir_population_count == 0)] = (
+            self.infeasible_flow
+        )
         focus_dir_indices = torch.multinomial(sampling_likelihoods, n, replacement=True)
         return self.focus_dir_dataset[focus_dir_indices].to("cpu")
 
