@@ -76,12 +76,11 @@ class TemperatureConditional(Conditional):
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
         return {"beta": torch.tensor(beta), "encoding": beta_enc}
 
-    def transform(self, cond_info: Dict[str, Tensor], linear_reward: Tensor) -> Tensor:
-        scalar_logreward = linear_reward.squeeze().clamp(min=1e-30).log()
-        assert len(scalar_logreward.shape) == len(
+    def transform(self, cond_info: Dict[str, Tensor], logreward: Tensor) -> Tensor:
+        assert len(logreward.shape) == len(
             cond_info["beta"].shape
-        ), f"dangerous shape mismatch: {scalar_logreward.shape} vs {cond_info['beta'].shape}"
-        return scalar_logreward * cond_info["beta"]
+        ), f"dangerous shape mismatch: {logreward.shape} vs {cond_info['beta'].shape}"
+        return logreward * cond_info["beta"]
 
     def encode(self, conditional: Tensor) -> Tensor:
         cfg = self.cfg.cond.temperature
@@ -116,10 +115,9 @@ class MultiObjectiveWeightedPreferences(Conditional):
         return {"preferences": preferences, "encoding": self.encode(preferences)}
 
     def transform(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
-        # NO LOG NO LOG NO LOG NO LOG NO LOG NO LOG
-        scalar_logreward = (flat_reward * cond_info["preferences"]).sum(1).clamp(min=1e-30)
-        assert len(scalar_logreward.shape) == 1, f"scalar_logreward should be a 1D array, got {scalar_logreward.shape}"
-        return scalar_logreward
+        scalar_reward = (flat_reward * cond_info["preferences"]).sum(1)
+        assert len(scalar_reward.shape) == 1, f"scalar_reward should be a 1D array, got {scalar_reward.shape}"
+        return scalar_reward
 
     def encoding_size(self):
         return max(1, self.num_thermometer_dim * self.num_objectives)
@@ -230,11 +228,8 @@ class FocusRegionConditional(Conditional):
         focus_coef, in_focus_mask = metrics.compute_focus_coef(
             flat_rewards, cond_info["focus_dir"], self.cfg.focus_cosim, self.cfg.focus_limit_coef
         )
-        if scalar_logreward is None:
-            scalar_logreward = torch.log(focus_coef)
-        else:
-            scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
-            scalar_logreward[~in_focus_mask] = self.ocfg.algo.illegal_action_logreward
+        scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
+        scalar_logreward[~in_focus_mask] = self.ocfg.algo.illegal_action_logreward
 
         return scalar_logreward
 

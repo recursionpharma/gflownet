@@ -268,6 +268,7 @@ class SamplingIterator(IterableDataset):
                     {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
                 )
             if num_online > 0:
+                extra_info["sampled_reward_avg"] = rewards[num_offline:].mean().item()
                 for hook in self.log_hooks:
                     extra_info.update(
                         hook(

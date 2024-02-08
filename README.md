@@ -64,4 +64,5 @@ If package dependencies seem not to work, you may need to install the exact froz
 
 ## Developing & Contributing
 
-TODO: Write Contributing.md.
+External contributions are welcome. We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
+To ensure that these checks pass, simply run `tox -e style` and `tox run` to run linters and tests, respectively.

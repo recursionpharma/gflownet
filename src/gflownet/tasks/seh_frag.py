@@ -18,6 +18,7 @@ from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
+from gflownet.utils.transforms import to_logreward
 
 
 class SEHTask(GFNTask):
@@ -59,7 +60,7 @@ class SEHTask(GFNTask):
         return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, flat_reward))
+        return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
