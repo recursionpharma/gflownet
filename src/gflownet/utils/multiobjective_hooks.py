@@ -237,25 +237,40 @@ class TopKHook:
         return top_ks
 
 
-class RewardStats:
+class RewardPercentilesHook:
     """
-    Calculate percentiles of the reward
+    Calculate percentiles of the reward.
+
+    Parameters
+    ----------
+    idx: List[float]
+        The percentiles to calculate. Should be in the range [0, 1].
+        Default: [1.0, 0.75, 0.5, 0.25, 0]
     """
 
-    def __init__(self, idx=None):
-        if idx is None:
-            idx = [1.0, 0.75, 0.5, 0.25, 0]
-        self.idx = idx
+    def __init__(self, percentiles=None):
+        if percentiles is None:
+            percentiles = [1.0, 0.75, 0.5, 0.25, 0]
+        self.percentiles = percentiles
 
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
         x = np.sort(flat_rewards.numpy(), axis=0)
         ret = {}
         y = np.sort(rewards.numpy())
-        for i, idx in enumerate(self.idx):
-            f = max(min(math.floor(x.shape[0] * idx), x.shape[0] - 1), 0)
+        for p in self.percentiles:
+            f = max(min(math.floor(x.shape[0] * p), x.shape[0] - 1), 0)
             for j in range(x.shape[1]):
-                ret[f"fr_{j}_{idx:.2f}%"] = x[f, j]
-            ret[f"r_{idx:.2f}%"] = y[f]
+                ret[f"percentile_flat_reward_{j}_{p:.2f}"] = x[f, j]
+            ret[f"percentile_reward_{p:.2f}%"] = y[f]
+        return ret
 
+
+class TrajectoryLengthHook:
+    """
+    Report the average trajectory length.
+    """
+
+    def __call__(self, trajs, rewards, flat_rewards, cond_info):
+        ret = {}
         ret["sample_len"] = sum([len(i["traj"]) for i in trajs]) / len(trajs)
         return ret
