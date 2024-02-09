@@ -21,7 +21,6 @@ from gflownet.data.sampling_iterator import SamplingIterator
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger
-from gflownet.utils.multiobjective_hooks import RewardStats
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 from .config import Config
@@ -145,7 +144,7 @@ class GFNTrainer:
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
-        self.sampling_hooks: List[Callable] = [RewardStats()]
+        self.sampling_hooks: List[Callable] = []
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False

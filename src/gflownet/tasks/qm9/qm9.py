@@ -5,10 +5,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+import yaml
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
-import yaml
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.config import Config

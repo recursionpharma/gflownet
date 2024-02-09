@@ -270,6 +270,9 @@ class TrajectoryLengthHook:
     Report the average trajectory length.
     """
 
+    def __init__(self) -> None:
+        pass
+
     def __call__(self, trajs, rewards, flat_rewards, cond_info):
         ret = {}
         ret["sample_len"] = sum([len(i["traj"]) for i in trajs]) / len(trajs)
