@@ -259,20 +259,6 @@ class QM9MOOTrainer(QM9GapTrainer):
 
     def setup(self):
         super().setup()
-        # self.sampling_hooks.append(
-        #     MultiObjectiveStatsHook(
-        #         256,
-        #         self.cfg.log_dir,
-        #         compute_igd=True,
-        #         compute_hvi=False,
-        #         compute_hsri=False,
-        #         compute_normed=False,
-        #         compute_pc_entropy=True,
-        #         compute_focus_accuracy=True if self.cfg.task.qm9_moo.focus_type is not None else False,
-        #         focus_cosim=self.cfg.task.qm9_moo.focus_cosim,
-        #     )
-        # )
-        # self.to_close.append(self.sampling_hooks[-1].keep_alive)
         # instantiate preference and focus conditioning vectors for validation
 
         tcfg = self.cfg.task.qm9_moo

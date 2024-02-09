@@ -271,6 +271,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 focus_cosim=self.cfg.cond.focus_region.focus_cosim,
             )
         )
+        self.to_close.append(self.sampling_hooks[-1].keep_alive)
         # instantiate preference and focus conditioning vectors for validation
 
         n_obj = len(self.cfg.task.seh_moo.objectives)
