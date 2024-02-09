@@ -106,7 +106,7 @@ class StandardOnlineTrainer(GFNTrainer):
 
         yaml = OmegaConf.to_yaml(self.cfg)
         os.makedirs(self.cfg.log_dir, exist_ok=True)
-        if self.print:
+        if self.print_hps:
             print("\n\nHyperparameters:\n")
             print(yaml)
         with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w", encoding="utf8") as f:

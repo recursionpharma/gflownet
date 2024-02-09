@@ -105,7 +105,7 @@ class Closable(Protocol):
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any], print=True):
+    def __init__(self, hps: Dict[str, Any], print_hps=True):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
@@ -115,7 +115,7 @@ class GFNTrainer:
         device: torch.device
             The torch device of the main worker.
         """
-        self.print = print
+        self.print_hps = print_hps
         self.to_close: List[Closable] = []
         # self.setup should at least set these up:
         self.training_data: Dataset
