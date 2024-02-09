@@ -6,9 +6,9 @@ import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 from rdkit.Chem.rdchem import Mol as RDMol
-from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import Dataset
+import yaml
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.config import Config
@@ -154,10 +154,9 @@ class QM9GapTrainer(StandardOnlineTrainer):
 
 def main():
     """Example of how this model can be run."""
-    yaml = YAML(typ="safe", pure=True)
     config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.yaml")
     with open(config_file, "r") as f:
-        hps = yaml.load(f)
+        hps = yaml.safe_load(f)
     trial = QM9GapTrainer(hps)
     trial.run()
 
