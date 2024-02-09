@@ -1,3 +1,4 @@
+import sys
 import tarfile
 
 import numpy as np
@@ -15,9 +16,11 @@ class QM9Dataset(Dataset):
         if h5_file is not None:
             self.df = pd.HDFStore(h5_file, "r")["df"]
         elif xyz_file is not None:
-            self.load_tar()
+            self.df = load_tar(xyz_file)
+        else:
+            raise ValueError("Either h5_file or xyz_file must be provided")
         rng = np.random.default_rng(split_seed)
-        idcs = np.arange(len(self.df))  # TODO: error if there is no h5_file provided. Should h5 be required
+        idcs = np.arange(len(self.df))
         rng.shuffle(idcs)
         self.targets = targets
         if train:
@@ -34,9 +37,6 @@ class QM9Dataset(Dataset):
             target = self.targets[0]
         y = self.df[target]
         return y.min(), y.max(), np.sort(y)[int(y.shape[0] * percentile)]
-
-    def load_tar(self, xyz_file):
-        self.df = load_tar(xyz_file)
 
     def __len__(self):
         return len(self.idcs)
@@ -64,10 +64,17 @@ def load_tar(xyz_file):
     return df
 
 
-def convert_h5():
+def convert_h5(xyz_file="qm9.xyz.tar", h5_file="qm9.h5"):
+    """
+    Convert `xyz_file` and dump it into `h5_file`
+    """
     # File obtained from
     # https://figshare.com/collections/Quantum_chemistry_structures_and_properties_of_134_kilo_molecules/978904
     # (from http://quantum-machine.org/datasets/)
-    df = load_tar("qm9.xyz.tar")
-    with pd.HDFStore("qm9.h5", "w") as store:
+    df = load_tar(xyz_file)
+    with pd.HDFStore(h5_file, "w") as store:
         store["df"] = df
+
+
+if __name__ == "__main__":
+    convert_h5(*sys.argv[1:])
