@@ -418,7 +418,8 @@ class GFNTrainer:
                 state,
                 fd,
             )
-        shutil.copy(fn, pathlib.Path(self.cfg.log_dir) / f"model_state_{it}.pt")
+        if self.cfg.store_all_checkpoints:
+            shutil.copy(fn, pathlib.Path(self.cfg.log_dir) / f"model_state_{it}.pt")
 
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):
