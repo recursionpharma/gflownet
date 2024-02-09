@@ -30,10 +30,10 @@ def safe(f, x, default):
 
 class QM9GapMOOTask(QM9GapTask):
     """Sets up a multiobjective task where the rewards are (functions of):
-    - the the binding energy of a molecule to Soluble Epoxide Hydrolases.
-    - its QED
-    - its synthetic accessibility
-    - its molecular weight
+    - the homo-lumo gap,
+    - its QED,
+    - its synthetic accessibility,
+    - and its molecular weight.
 
     The proxy is pretrained, and obtained from the original GFlowNet paper, see `gflownet.models.bengio2021flow`.
     """
