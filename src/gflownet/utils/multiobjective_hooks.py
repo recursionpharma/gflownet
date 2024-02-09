@@ -15,6 +15,10 @@ from gflownet.utils.multiprocessing_proxy import KeepAlive
 
 
 class MultiObjectiveStatsHook:
+    """
+    This hook is multithreaded and the keep_alive object needs to be closed for graceful termination.
+    """
+
     def __init__(
         self,
         num_to_keep: int,
