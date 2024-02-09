@@ -522,9 +522,9 @@ class Normalizer(object):
         return self.scale * arr + self.loc
 
 
-def chunkedsim(thresh, fp, mode_fps, delta=16):
+def all_are_tanimoto_different(thresh, fp, mode_fps, delta=16):
     """
-    Equivalent to `all(DataStructs.BulkTanimotoSimilarity(fp, mode_fps) < thresh)`
+    Equivalent to `all(DataStructs.BulkTanimotoSimilarity(fp, mode_fps) < thresh)` but much faster.
     """
     assert delta > 0
     s = 0
