@@ -1,7 +1,7 @@
 import os
 import shutil
 import socket
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -63,20 +63,31 @@ class SEHTask(GFNTask):
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
+    def compute_reward_from_graph(self, graphs: List[Data], is_valid: Optional[Tensor]) -> Tensor:
+        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
+        if is_valid is None:
+            is_valid = torch.tensor([i is not None for i in graphs], dtype=torch.bool)
+        batch.to(self.device)
+        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
+        preds[preds.isnan()] = 0
+        preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1,))
+        if is_valid is not None:
+            assert len(is_valid) >= len(preds)
+            preds_full = torch.zeros(len(is_valid), 1)
+            preds_full[is_valid] = preds
+            return preds_full
+        else:
+            return preds
+
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return FlatRewards(torch.zeros((0, 1))), is_valid
-        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
-        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
-        preds[preds.isnan()] = 0
-        preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1, 1))
-        preds_full = torch.zeros(len(is_valid), 1)
-        preds_full[is_valid] = preds
-        assert preds_full.shape == (len(is_valid), 1)
-        return FlatRewards(preds_full), is_valid
+
+        preds = self.compute_reward_from_graph(graphs, is_valid).reshape((-1, 1))
+        assert len(preds) == len(mols)
+        return FlatRewards(preds), is_valid
 
 
 SOME_MOLS = [
