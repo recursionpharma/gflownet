@@ -10,6 +10,8 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
+from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 import gflownet.models.mxmnet as mxmnet
 from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
@@ -18,14 +20,9 @@ from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
-from gflownet.utils.multiobjective_hooks import TopKHook
-
-
-def safe(f, x, default):
-    try:
-        return f(x)
-    except Exception:
-        return default
+from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.transforms import to_logreward
+from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, safe
 
 
 class QM9GapMOOTask(QM9GapTask):
@@ -65,50 +62,11 @@ class QM9GapMOOTask(QM9GapTask):
         )
         assert set(self.objectives) <= {"gap", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
-    def flat_reward_transform(self, y: Tensor) -> FlatRewards:
-        assert y.shape[-1] == len(self.objectives)
-        if len(y.shape) == 1:
-            y = y[None, :]
-        assert len(y.shape) == 2
-
-        flat_r = []
-        for i, obj in enumerate(self.objectives):
-            preds = y[:, i]
-            if obj == "gap":
-                preds = super().flat_reward_transform(preds)
-            elif obj == "qed":
-                pass
-            elif obj == "sa":
-                preds = (10 - preds) / 9  # Turn into a [0-1] reward
-            elif obj == "mw":
-                preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-            else:
-                raise ValueError(f"{obj} not known")
-            flat_r.append(preds)
-        return FlatRewards(torch.stack(flat_r, dim=1))
+    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
+        return FlatRewards(torch.as_tensor(y))
 
     def inverse_flat_reward_transform(self, rp):
-        assert rp.shape[-1] == len(self.objectives)
-        if len(rp.shape) == 1:
-            rp = rp[None, :]
-        assert len(rp.shape) == 2
-
-        flat_r = []
-        for i, obj in enumerate(self.objectives):
-            preds = rp[:, i]
-            if obj == "qed":
-                preds = super().inverse_flat_reward_transform(preds)
-            elif obj == "qed":
-                pass
-            elif obj == "sa":
-                preds = 10 - 9 * preds
-            elif obj == "mw":
-                preds = 300 - 700 * (preds - 1)
-            else:
-                raise ValueError(f"{obj} not known")
-            flat_r.append(preds)
-
-        return FlatRewards(torch.stack(flat_r, dim=1))
+        return rp
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
@@ -189,20 +147,26 @@ class QM9GapMOOTask(QM9GapTask):
         return cond_info, log_rewards
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+        """
+        Compute the logreward from the flat_reward and the conditional information
+        """
         if isinstance(flat_reward, list):
             if isinstance(flat_reward[0], Tensor):
                 flat_reward = torch.stack(flat_reward)
             else:
                 flat_reward = torch.tensor(flat_reward)
 
-        scalarized_reward = self.pref_cond.transform(cond_info, flat_reward)
-        focused_reward = (
-            self.focus_cond.transform(cond_info, flat_reward, scalarized_reward)
+        scalarized_rewards = self.pref_cond.transform(cond_info, flat_reward)
+        scalarized_logrewards = to_logreward(scalarized_rewards)
+        focused_logreward = (
+            self.focus_cond.transform(cond_info, flat_reward, scalarized_logrewards)
             if self.focus_cond is not None
-            else scalarized_reward
+            else scalarized_logrewards
         )
-        tempered_reward = self.temperature_conditional.transform(cond_info, focused_reward)
-        return RewardScalar(tempered_reward)
+        tempered_logreward = self.temperature_conditional.transform(cond_info, focused_logreward)
+        clamped_logreward = tempered_logreward.clamp(min=self.cfg.algo.illegal_action_logreward)
+
+        return RewardScalar(clamped_logreward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
@@ -222,19 +186,23 @@ class QM9GapMOOTask(QM9GapTask):
                     preds = self.models["mxmnet_gap"](batch)
                     preds = preds.reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
                     preds[preds.isnan()] = 1
+                    preds = super().flat_reward_transform(preds)
                 elif obj == "qed":
                     preds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
                 elif obj == "sa":
                     preds = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
+                    preds = (10 - preds) / 9  # Turn into a [0-1] reward
                 elif obj == "mw":
                     preds = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
+                    preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 else:
-                    raise ValueError(f"{obj} not known")
+                    raise ValueError(f"MOO objective {obj} not known")
+                assert len(preds) == len(valid_graphs), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
                 flat_r.append(preds)
-                assert len(preds) == len(valid_graphs), f"{len(preds)} != {len(valid_graphs)} for obj {obj}"
+                
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            return self.flat_reward_transform(flat_rewards), is_valid
+            return FlatRewards(flat_rewards), is_valid
 
 
 class QM9MOOTrainer(QM9GapTrainer):
@@ -249,6 +217,14 @@ class QM9MOOTrainer(QM9GapTrainer):
         cfg.algo.valid_sample_cond_info = False
         cfg.algo.valid_offline_ratio = 1
 
+    def setup_algo(self):
+        algo = self.cfg.algo.method
+        if algo == "MOREINFORCE":
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
+        elif algo == "MOQL":
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
+        else:
+            super().setup_algo()
     def setup_task(self):
         self.task = QM9GapMOOTask(
             dataset=self.training_data,
@@ -257,42 +233,68 @@ class QM9MOOTrainer(QM9GapTrainer):
             wrap_model=self._wrap_for_mp,
         )
 
+    def setup_env_context(self):
+        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
+
+    def setup_model(self):
+        if self.cfg.algo.method == "MOQL":
+            self.model = GraphTransformerFragEnvelopeQL(
+                self.ctx,
+                num_emb=self.cfg.model.num_emb,
+                num_layers=self.cfg.model.num_layers,
+                num_heads=self.cfg.model.graph_transformer.num_heads,
+                num_objectives=len(self.cfg.task.seh_moo.objectives),
+            )
+        else:
+            super().setup_model()
     def setup(self):
         super().setup()
+        self.sampling_hooks.append(
+            MultiObjectiveStatsHook(
+                256,
+                self.cfg.log_dir,
+                compute_igd=True,
+                compute_pc_entropy=True,
+                compute_focus_accuracy=True if self.cfg.cond.focus_region.focus_type is not None else False,
+                focus_cosim=self.cfg.cond.focus_region.focus_cosim,
+            )
+        )
+        self.to_close.append(self.sampling_hooks[-1].keep_alive)
         # instantiate preference and focus conditioning vectors for validation
 
-        tcfg = self.cfg.task.qm9_moo
-        n_obj = len(tcfg.objectives)
+        n_obj = len(self.cfg.task.seh_moo.objectives)
+        cond_cfg = self.cfg.cond
 
         # making sure hyperparameters for preferences and focus regions are consistent
         if not (
-            tcfg.focus_type is None
-            or tcfg.focus_type == "centered"
-            or (type(tcfg.focus_type) is list and len(tcfg.focus_type) == 1)
+            cond_cfg.focus_region.focus_type is None
+            or cond_cfg.focus_region.focus_type == "centered"
+            or (isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) == 1)
         ):
-            assert tcfg.preference_type is None, (
-                f"Cannot use preferences with multiple focus regions, here focus_type={tcfg.focus_type} "
-                f"and preference_type={tcfg.preference_type}"
+            assert cond_cfg.weighted_prefs.preference_type is None, (
+                f"Cannot use preferences with multiple focus regions, "
+                f"here focus_type={cond_cfg.focus_region.focus_type} "
+                f"and preference_type={cond_cfg.weighted_prefs.preference_type }"
             )
 
-        if type(tcfg.focus_type) is list and len(tcfg.focus_type) > 1:
-            n_valid = len(tcfg.focus_type)
+        if isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) > 1:
+            n_valid = len(cond_cfg.focus_region.focus_type)
         else:
-            n_valid = tcfg.n_valid
+            n_valid = self.cfg.task.seh_moo.n_valid
 
         # preference vectors
-        if tcfg.preference_type is None:
+        if cond_cfg.weighted_prefs.preference_type is None:
             valid_preferences = np.ones((n_valid, n_obj))
-        elif tcfg.preference_type == "dirichlet":
+        elif cond_cfg.weighted_prefs.preference_type == "dirichlet":
             valid_preferences = metrics.partition_hypersphere(d=n_obj, k=n_valid, normalisation="l1")
-        elif tcfg.preference_type == "seeded_single":
+        elif cond_cfg.weighted_prefs.preference_type == "seeded_single":
             seeded_prefs = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
             valid_preferences = seeded_prefs[0].reshape((1, n_obj))
             self.task.seeded_preference = valid_preferences[0]
-        elif tcfg.preference_type == "seeded_many":
+        elif cond_cfg.weighted_prefs.preference_type == "seeded_many":
             valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
-            raise NotImplementedError(f"Unknown preference type {self.cfg.task.qm9_moo.preference_type}")
+            raise NotImplementedError(f"Unknown preference type {cond_cfg.weighted_prefs.preference_type}")
 
         # TODO: this was previously reported, would be nice to serialize it
         # hps["fixed_focus_dirs"] = (
@@ -313,8 +315,8 @@ class QM9MOOTrainer(QM9GapTrainer):
         else:
             valid_cond_vector = valid_preferences
 
-        self._top_k_hook = TopKHook(10, tcfg.n_valid_repeats, n_valid)
-        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=tcfg.n_valid_repeats)
+        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.seh_moo.n_valid_repeats)
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
@@ -347,15 +349,9 @@ class QM9MOOTrainer(QM9GapTrainer):
             self.task.focus_cond.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
 
+    def run(self):
+        super().run()
+        for hook in self.sampling_hooks:
+            if hasattr(hook, "terminate"):
+                hook.terminate()
 
-class RepeatedCondInfoDataset:
-    def __init__(self, cond_info_vectors, repeat):
-        self.cond_info_vectors = cond_info_vectors
-        self.repeat = repeat
-
-    def __len__(self):
-        return len(self.cond_info_vectors) * self.repeat
-
-    def __getitem__(self, idx):
-        assert 0 <= idx < len(self)
-        return torch.tensor(self.cond_info_vectors[int(idx // self.repeat)])

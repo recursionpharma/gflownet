@@ -24,6 +24,11 @@ from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWe
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import to_logreward
 
+def safe(f, x, default):
+    try:
+        return f(x)
+    except Exception:
+        return default
 
 class SEHMOOTask(SEHTask):
     """Sets up a multiobjective task where the rewards are (functions of):
@@ -180,37 +185,26 @@ class SEHMOOTask(SEHTask):
 
         else:
             flat_r: List[Tensor] = []
-            if "seh" in self.objectives:
-                batch = gd.Batch.from_data_list(valid_graphs)
-                batch.to(self.device)
-                seh_preds = self.models["seh"](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
-                seh_preds[seh_preds.isnan()] = 0
-                flat_r.append(seh_preds)
-                assert len(seh_preds) == len(valid_graphs), f"{len(seh_preds)} != {len(valid_graphs)}"
-
-            def safe(f, x, default):
-                try:
-                    return f(x)
-                except Exception:
-                    return default
-
-            if "qed" in self.objectives:
-                qeds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
-                flat_r.append(qeds)
-                assert len(qeds) == len(valid_graphs), f"{len(qeds)} != {len(valid_graphs)}"
-
-            if "sa" in self.objectives:
-                sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
-                sas = (10 - sas) / 9  # Turn into a [0-1] reward
-                flat_r.append(sas)
-                assert len(sas) == len(valid_graphs), f"{len(sas)} != {len(valid_graphs)}"
-
-            if "mw" in self.objectives:
-                molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
-                molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-                flat_r.append(molwts)
-                assert len(molwts) == len(valid_graphs), f"{len(molwts)} != {len(valid_graphs)}"
-
+            for obj in self.objectives:
+                if obj == "seh":
+                    batch = gd.Batch.from_data_list(valid_graphs)
+                    batch.to(self.device)
+                    preds = self.models["seh"](batch).reshape((-1,)).clip(1e-4, 100).data.cpu()
+                    preds[preds.isnan()] = 0
+                    preds = super().flat_reward_transform(preds)
+                elif obj == "qed":
+                    preds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
+                elif obj == "sa":
+                    preds = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
+                    preds = (10 - preds) / 9  # Turn into a [0-1] reward
+                elif obj == "mw":
+                    preds = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
+                    preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
+                else:
+                    raise ValueError(f"MOO objective {obj} not known")
+                assert len(preds) == len(valid_graphs), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
+                flat_r.append(preds)
+                
             flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
@@ -306,7 +300,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif cond_cfg.weighted_prefs.preference_type == "seeded_many":
             valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
-            raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
+            raise NotImplementedError(f"Unknown preference type {cond_cfg.weighted_prefs.preference_type}")
 
         # TODO: this was previously reported, would be nice to serialize it
         # hps["fixed_focus_dirs"] = (
