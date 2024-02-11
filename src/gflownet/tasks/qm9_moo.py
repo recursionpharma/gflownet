@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -10,19 +10,19 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-import gflownet.models.mxmnet as mxmnet
 from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
+from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, safe
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import to_logreward
-from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, safe
 
 
 class QM9GapMOOTask(QM9GapTask):
@@ -197,9 +197,10 @@ class QM9GapMOOTask(QM9GapTask):
                     preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 else:
                     raise ValueError(f"MOO objective {obj} not known")
-                assert len(preds) == len(valid_graphs), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
+                assert len(preds) == len(
+                    valid_graphs
+                ), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
                 flat_r.append(preds)
-                
 
             flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
@@ -225,6 +226,7 @@ class QM9MOOTrainer(QM9GapTrainer):
             self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
         else:
             super().setup_algo()
+
     def setup_task(self):
         self.task = QM9GapMOOTask(
             dataset=self.training_data,
@@ -247,6 +249,7 @@ class QM9MOOTrainer(QM9GapTrainer):
             )
         else:
             super().setup_model()
+
     def setup(self):
         super().setup()
         self.sampling_hooks.append(
@@ -354,4 +357,3 @@ class QM9MOOTrainer(QM9GapTrainer):
         for hook in self.sampling_hooks:
             if hasattr(hook, "terminate"):
                 hook.terminate()
-

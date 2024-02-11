@@ -24,11 +24,13 @@ from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWe
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import to_logreward
 
+
 def safe(f, x, default):
     try:
         return f(x)
     except Exception:
         return default
+
 
 class SEHMOOTask(SEHTask):
     """Sets up a multiobjective task where the rewards are (functions of):
@@ -202,9 +204,11 @@ class SEHMOOTask(SEHTask):
                     preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
                 else:
                     raise ValueError(f"MOO objective {obj} not known")
-                assert len(preds) == len(valid_graphs), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
+                assert len(preds) == len(
+                    valid_graphs
+                ), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
                 flat_r.append(preds)
-                
+
             flat_rewards = torch.stack(flat_r, dim=1)
             return FlatRewards(flat_rewards), is_valid
 
