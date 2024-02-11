@@ -11,6 +11,7 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
+from torch_geometric.data import Data
 
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
@@ -72,7 +73,10 @@ class SEHTask(GFNTask):
         preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 0
         preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1, 1))
-        return FlatRewards(preds), is_valid
+        preds_full = torch.zeros(len(is_valid), 1)
+        preds_full[is_valid] = preds
+        assert preds_full.shape == (len(is_valid), 1)
+        return FlatRewards(preds_full), is_valid
 
 
 SOME_MOLS = [
