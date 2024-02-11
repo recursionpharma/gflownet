@@ -29,6 +29,8 @@ class TBConfig:
         Whether to correct for idempotent actions
     do_parameterize_p_b : bool
         Whether to parameterize the P_B distribution (otherwise it is uniform)
+    do_predict_n : bool
+        Whether to predict the number of paths in the graph
     do_length_normalize : bool
         Whether to normalize the loss by the length of the trajectory
     subtb_max_len : int
@@ -45,6 +47,7 @@ class TBConfig:
     variant: TBVariant = TBVariant.TB
     do_correct_idempotent: bool = False
     do_parameterize_p_b: bool = False
+    do_predict_n: bool = False
     do_sample_p_b: bool = False
     do_length_normalize: bool = False
     subtb_max_len: int = 128
