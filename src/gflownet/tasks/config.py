@@ -18,7 +18,7 @@ class SEHMOOTaskConfig:
     n_valid_repeats : int
         The number of times to repeat the valid cond_info tensors
     objectives : List[str]
-        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
+        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "mw"].
     """
 
     n_valid: int = 15
