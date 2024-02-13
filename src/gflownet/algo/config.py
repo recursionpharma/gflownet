@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 
 
-class TBVariant(Enum):
+class TBVariant(int, Enum):
     """See algo.trajectory_balance.TrajectoryBalance for details."""
 
     TB = 0
