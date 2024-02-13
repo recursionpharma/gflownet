@@ -92,15 +92,13 @@ class GFNTask:
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any]):
+    def __init__(self, config: Config):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
         ----------
-        hps: Dict[str, Any]
-            A dictionary of hyperparameters. These override default values obtained by the `set_default_hps` method.
-        device: torch.device
-            The torch device of the main worker.
+        config: Config
+            The hyperparameters for the trainer.
         """
         # self.setup should at least set these up:
         self.training_data: Dataset
@@ -120,11 +118,12 @@ class GFNTrainer:
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
         #   - The values passed in the constructor, typically what is called by the user
-        # The final config is obtained by merging the three sources
-        self.cfg: Config = OmegaConf.structured(Config())
-        self.set_default_hps(self.cfg)
+        # The final config is obtained by merging the three sources with the following precedence:
+        #   config classes < default_hps < constructor (i.e. the constructor overrides the default_hps, and so on)
+        self.default_cfg: Config = OmegaConf.structured(Config())
+        self.set_default_hps(self.default_cfg)
         # OmegaConf returns a fancy object but we can still pretend it's a Config instance
-        self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
+        self.cfg = OmegaConf.merge(self.default_cfg, config)
 
         self.device = torch.device(self.cfg.device)
         # Print the loss every `self.print_every` iterations
@@ -230,7 +229,7 @@ class GFNTrainer:
             illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
             ratio=self.cfg.algo.valid_offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
-            sample_cond_info=self.cfg.algo.valid_sample_cond_info,
+            sample_cond_info=self.cfg.cond.valid_sample_cond_info,
             stream=False,
             random_action_prob=self.cfg.algo.valid_random_action_prob,
         )

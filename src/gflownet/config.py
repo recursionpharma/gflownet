@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Optional
 
 from omegaconf import MISSING
@@ -95,7 +95,7 @@ class Config:
     hostname: Optional[str] = None
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
-    overwrite_existing_exp: bool = True
+    overwrite_existing_exp: bool = False
     use_wandb: bool = False
     algo: AlgoConfig = AlgoConfig()
     model: ModelConfig = ModelConfig()
@@ -103,3 +103,21 @@ class Config:
     replay: ReplayConfig = ReplayConfig()
     task: TasksConfig = TasksConfig()
     cond: ConditionalsConfig = ConditionalsConfig()
+
+
+def init_missing(cfg: Config) -> Config:
+    """
+    Initialize a dataclass instance with all fields set to MISSING,
+    including nested dataclasses.
+    
+    This is meant to be used on the user side (tasks) to provide
+    some configuration using the Config class while overwritting
+    only the fields that have been set by the user.
+    """
+    for f in fields(cfg):
+        if is_dataclass(f.type):
+            setattr(cfg, f.name, init_missing(f.type()))
+        else:
+            setattr(cfg, f.name, MISSING)
+    
+    return cfg

@@ -127,7 +127,6 @@ class AlgoConfig:
     valid_offline_ratio: float = 1
     train_random_action_prob: float = 0.0
     valid_random_action_prob: float = 0.0
-    valid_sample_cond_info: bool = True
     sampling_tau: float = 0.0
     tb: TBConfig = TBConfig()
     moql: MOQLConfig = MOQLConfig()

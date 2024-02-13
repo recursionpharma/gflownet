@@ -7,15 +7,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-import wandb
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
+import wandb
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.config import Config
+from gflownet.config import Config, init_missing
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
@@ -217,7 +217,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         cfg.algo.sampling_tau = 0.95
         # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
         # sampling and set the offline ratio to 1
-        cfg.algo.valid_sample_cond_info = False
+        cfg.cond.valid_sample_cond_info = False
         cfg.algo.valid_offline_ratio = 1
 
     def setup_algo(self):
@@ -371,78 +371,37 @@ class RepeatedCondInfoDataset:
 
 def main():
     """Example of how this model can be run."""
-    hps = {
-        "log_dir": "./logs/debug_run_sfm",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "pickle_mp_messages": True,
-        "overwrite_existing_exp": True,
-        "seed": 0,
-        "num_training_steps": 500,
-        "num_final_gen_steps": 50,
-        "validate_every": 100,
-        "num_workers": 0,
-        "use_wandb": True,
-        "algo": {
-            "global_batch_size": 64,
-            "method": "TB",
-            "sampling_tau": 0.95,
-            "train_random_action_prob": 0.01,
-            "tb": {
-                "Z_learning_rate": 1e-3,
-                "Z_lr_decay": 50000,
-            },
-        },
-        "model": {
-            "num_layers": 2,
-            "num_emb": 256,
-        },
-        "task": {
-            "seh_moo": {
-                "objectives": ["seh", "qed"],
-                "n_valid": 15,
-                "n_valid_repeats": 128,
-            },
-        },
-        "opt": {
-            "learning_rate": 1e-4,
-            "lr_decay": 20000,
-        },
-        "cond": {
-            "temperature": {
-                "sample_dist": "constant",
-                "dist_params": [60.0],
-                "num_thermometer_dim": 32,
-            },
-            "weighted_prefs": {
-                "preference_type": "dirichlet",
-            },
-            "focus_region": {
-                "focus_type": None,  # "learned-tabular",
-                "focus_cosim": 0.98,
-                "focus_limit_coef": 1e-1,
-                "focus_model_training_limits": (0.25, 0.75),
-                "focus_model_state_space_res": 30,
-                "max_train_it": 5_000,
-            },
-        },
-        "replay": {
-            "use": False,
-            "warmup": 1000,
-            "hindsight_ratio": 0.0,
-        },
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
+    config = init_missing(Config())
+    config.log_dir = "./logs/debug_run_sfm"
+    config.device = "cuda" if torch.cuda.is_available() else "cpu"
+    config.print_every = 1
+    config.validate_every = 1
+    config.num_final_gen_steps = 5
+    config.num_training_steps = 3
+    config.pickle_mp_messages = True
+    config.overwrite_existing_exp = True
+    config.use_wandb = False
+    config.algo.sampling_tau = 0.95
+    config.algo.train_random_action_prob = 0.01
+    config.algo.tb.Z_learning_rate = 1e-3
+    config.task.seh_moo.objectives = ["seh", "qed"]
+    config.cond.temperature.sample_dist = "constant"
+    config.cond.temperature.dist_params = [60.0]
+    config.cond.weighted_prefs.preference_type = "dirichlet"
+    config.cond.focus_region.focus_type = None
+    config.replay.use = False
+
+    if os.path.exists(config.log_dir):
+        if config.overwrite_existing_exp:
+            shutil.rmtree(config.log_dir)
         else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
+            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(config.log_dir)
 
-    if hps["use_wandb"]:
-        wandb.init(project="gflownet", config=hps)
+    if config.use_wandb:
+        wandb.init(project="gflownet", config=config)
 
-    trial = SEHMOOFragTrainer(hps)
-    trial.print_every = 1
+    trial = SEHMOOFragTrainer(config)
     trial.run()
 
 
