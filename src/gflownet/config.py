@@ -108,19 +108,19 @@ class Config:
     cond: ConditionalsConfig = ConditionalsConfig()
 
 
-def init_missing(cfg: Config) -> Config:
+def init_empty(cfg):
     """
     Initialize a dataclass instance with all fields set to MISSING,
     including nested dataclasses.
-    
+
     This is meant to be used on the user side (tasks) to provide
     some configuration using the Config class while overwritting
     only the fields that have been set by the user.
     """
     for f in fields(cfg):
         if is_dataclass(f.type):
-            setattr(cfg, f.name, init_missing(f.type()))
+            setattr(cfg, f.name, init_empty(f.type()))
         else:
             setattr(cfg, f.name, MISSING)
-    
+
     return cfg

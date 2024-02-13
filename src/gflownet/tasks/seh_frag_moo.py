@@ -7,15 +7,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+import wandb
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
-import wandb
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.config import Config, init_missing
+from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
@@ -371,7 +371,7 @@ class RepeatedCondInfoDataset:
 
 def main():
     """Example of how this model can be run."""
-    config = init_missing(Config())
+    config = init_empty(Config())
     config.desc = "debug_seh_frag_moo"
     config.log_dir = "./logs/debug_run_sfm"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
