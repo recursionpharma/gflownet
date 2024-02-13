@@ -50,6 +50,8 @@ class Config:
 
     Attributes
     ----------
+    desc : str
+        A description of the experiment
     log_dir : str
         The directory where to store logs, checkpoints, and samples.
     device : str
@@ -82,6 +84,7 @@ class Config:
         Whether to use Weights & Biases for logging
     """
 
+    desc: str = "noDesc"
     log_dir: str = MISSING
     device: str = "cuda"
     seed: int = 0

@@ -372,6 +372,7 @@ class RepeatedCondInfoDataset:
 def main():
     """Example of how this model can be run."""
     config = init_missing(Config())
+    config.desc = "debug_seh_frag_moo"
     config.log_dir = "./logs/debug_run_sfm"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.print_every = 1
@@ -380,7 +381,7 @@ def main():
     config.num_training_steps = 3
     config.pickle_mp_messages = True
     config.overwrite_existing_exp = True
-    config.use_wandb = False
+    config.use_wandb = True
     config.algo.sampling_tau = 0.95
     config.algo.train_random_action_prob = 0.01
     config.algo.tb.Z_learning_rate = 1e-3
@@ -399,7 +400,7 @@ def main():
     os.makedirs(config.log_dir)
 
     if config.use_wandb:
-        wandb.init(project="gflownet", config=config)
+        wandb.init(project="gflownet", config=config, name=config.desc)
 
     trial = SEHMOOFragTrainer(config)
     trial.run()
