@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
+import wandb
 from omegaconf import OmegaConf
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -368,6 +369,8 @@ class GFNTrainer:
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
+        if self.cfg.use_wandb:
+            wandb.log(info, step=index)
 
 
 def cycle(it):

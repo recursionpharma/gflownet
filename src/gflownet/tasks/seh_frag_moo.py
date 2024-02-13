@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
+import wandb
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
@@ -380,6 +381,7 @@ def main():
         "num_final_gen_steps": 50,
         "validate_every": 100,
         "num_workers": 0,
+        "use_wandb": True,
         "algo": {
             "global_batch_size": 64,
             "method": "TB",
@@ -435,6 +437,9 @@ def main():
         else:
             raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(hps["log_dir"])
+
+    if hps["use_wandb"]:
+        wandb.init(project="gflownet", config=hps)
 
     trial = SEHMOOFragTrainer(hps)
     trial.print_every = 1
