@@ -369,7 +369,7 @@ class GFNTrainer:
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
         if self.cfg.use_wandb:
-            wandb.log(info, step=index)
+            wandb.log({f"{key}_{k}": v for k, v in info.items()}, step=index)
 
 
 def cycle(it):
