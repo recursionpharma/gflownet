@@ -120,9 +120,9 @@ class GFNTrainer:
         #   - The values passed in the constructor, typically what is called by the user
         # The final config is obtained by merging the three sources with the following precedence:
         #   config classes < default_hps < constructor (i.e. the constructor overrides the default_hps, and so on)
-        self.default_cfg: Config = OmegaConf.structured(Config())
+        self.default_cfg: Config = Config()
         self.set_default_hps(self.default_cfg)
-        # OmegaConf returns a fancy object but we can still pretend it's a Config instance
+        assert isinstance(self.default_cfg, Config) and isinstance(config, Config) # make sure the config is a Config object, and not the Config class itself
         self.cfg = OmegaConf.merge(self.default_cfg, config)
 
         self.device = torch.device(self.cfg.device)
