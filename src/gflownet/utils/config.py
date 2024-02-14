@@ -29,7 +29,7 @@ class TempCondConfig:
 
 @dataclass
 class MultiObjectiveConfig:
-    num_objectives: int = 2
+    num_objectives: int = 2  # TODO: Change that as it can conflict with cfg.task.seh_moo.num_objectives
     num_thermometer_dim: int = 16
 
 
