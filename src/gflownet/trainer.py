@@ -122,7 +122,9 @@ class GFNTrainer:
         #   config classes < default_hps < constructor (i.e. the constructor overrides the default_hps, and so on)
         self.default_cfg: Config = Config()
         self.set_default_hps(self.default_cfg)
-        assert isinstance(self.default_cfg, Config) and isinstance(config, Config) # make sure the config is a Config object, and not the Config class itself
+        assert isinstance(self.default_cfg, Config) and isinstance(
+            config, Config
+        )  # make sure the config is a Config object, and not the Config class itself
         self.cfg = OmegaConf.merge(self.default_cfg, config)
 
         self.device = torch.device(self.cfg.device)

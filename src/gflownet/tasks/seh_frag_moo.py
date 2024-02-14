@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-import wandb
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
@@ -320,9 +319,11 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             valid_cond_vector = valid_preferences
 
-        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
         self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.seh_moo.n_valid_repeats)
-        self.valid_sampling_hooks.append(self._top_k_hook)
+
+        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
+        if self.cfg.task.seh_moo.log_topk:
+            self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
 
@@ -330,15 +331,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
         # dependency is required.
         parent = self
+        callback_dict = {}
 
-        class TopKMetricCB:
-            def on_validation_end(self, metrics: Dict[str, Any]):
-                top_k = parent._top_k_hook.finalize()
-                for i in range(len(top_k)):
-                    metrics[f"topk_rewards_{i}"] = top_k[i]
-                print("validation end", metrics)
+        if self.cfg.task.seh_moo.log_topk:
 
-        return {"topk": TopKMetricCB()}
+            class TopKMetricCB:
+                def on_validation_end(self, metrics: Dict[str, Any]):
+                    top_k = parent._top_k_hook.finalize()
+                    for i in range(len(top_k)):
+                        metrics[f"topk_rewards_{i}"] = top_k[i]
+                    print("validation end", metrics)
+
+            callback_dict["topk"] = TopKMetricCB()
+
+        return callback_dict
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         if self.task.focus_cond is not None:
