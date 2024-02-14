@@ -230,6 +230,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             super().setup_algo()
 
     def setup_task(self):
+        self.cfg.cond.moo.num_objectives = len(self.cfg.task.seh_moo.objectives)
         self.task = SEHMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
@@ -381,7 +382,6 @@ def main():
     config.num_training_steps = 3
     config.pickle_mp_messages = True
     config.overwrite_existing_exp = True
-    config.use_wandb = True
     config.algo.sampling_tau = 0.95
     config.algo.train_random_action_prob = 0.01
     config.algo.tb.Z_learning_rate = 1e-3
@@ -398,9 +398,6 @@ def main():
         else:
             raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
     os.makedirs(config.log_dir)
-
-    if config.use_wandb:
-        wandb.init(project="gflownet", config=config, name=config.desc)
 
     trial = SEHMOOFragTrainer(config)
     trial.run()

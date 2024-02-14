@@ -80,8 +80,6 @@ class Config:
         The git hash of the current commit
     overwrite_existing_exp : bool
         Whether to overwrite the contents of the log_dir if it already exists
-    use_wandb : bool
-        Whether to use Weights & Biases for logging
     """
 
     desc: str = "noDesc"
@@ -99,7 +97,6 @@ class Config:
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
     overwrite_existing_exp: bool = False
-    use_wandb: bool = False
     algo: AlgoConfig = AlgoConfig()
     model: ModelConfig = ModelConfig()
     opt: OptimizerConfig = OptimizerConfig()
