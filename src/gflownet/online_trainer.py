@@ -89,7 +89,7 @@ class StandardOnlineTrainer(GFNTrainer):
         print("\n\nHyperparameters:\n")
         yaml = OmegaConf.to_yaml(self.cfg)
         print(yaml)
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w") as f:
+        with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w") as f:
             f.write(yaml)
 
     def step(self, loss: Tensor):
