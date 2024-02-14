@@ -368,7 +368,7 @@ class GFNTrainer:
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
-        if wandb.run is None:
+        if wandb.run is not None:
             wandb.log({f"{key}_{k}": v for k, v in info.items()}, step=index)
 
 
