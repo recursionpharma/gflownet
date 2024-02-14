@@ -1,4 +1,5 @@
 import os
+import shutil
 from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -6,12 +7,11 @@ import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 from rdkit.Chem.rdchem import Mol as RDMol
-from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -145,11 +145,23 @@ class QM9GapTrainer(StandardOnlineTrainer):
 
 def main():
     """Example of how this model can be run."""
-    yaml = YAML(typ="safe", pure=True)
-    config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.yaml")
-    with open(config_file, "r") as f:
-        hps = yaml.load(f)
-    trial = QM9GapTrainer(hps)
+    config = init_empty(Config())
+    config.num_workers = 0
+    config.num_training_steps = 100000
+    config.validate_every = 100
+    config.log_dir = "./logs/debug_qm9"
+    config.opt.lr_decay = 10000
+    config.task.qm9.h5_path = "/rxrx/data/chem/qm9/qm9.h5"
+    config.task.qm9.model_path = "/rxrx/data/chem/qm9/mxmnet_gap_model.pt"
+
+    if os.path.exists(config.log_dir):
+        if config.overwrite_existing_exp:
+            shutil.rmtree(config.log_dir)
+        else:
+            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(config.log_dir)
+
+    trial = QM9GapTrainer(config)
     trial.run()
 
 

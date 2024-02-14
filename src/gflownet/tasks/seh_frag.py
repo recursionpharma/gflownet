@@ -12,7 +12,7 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -185,33 +185,28 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
 
 def main():
-    """Example of how this trainer can be run"""
-    hps = {
-        "log_dir": "./logs/debug_run_seh_frag_pb",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "overwrite_existing_exp": True,
-        "num_training_steps": 10_000,
-        "num_workers": 8,
-        "opt": {
-            "lr_decay": 20000,
-        },
-        "algo": {"sampling_tau": 0.99, "offline_ratio": 0.0},
-        "cond": {
-            "temperature": {
-                "sample_dist": "uniform",
-                "dist_params": [0, 64.0],
-            }
-        },
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
-        else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
+    """Example of how this model can be run."""
+    config = init_empty(Config())
+    config.print_every = 1
+    config.log_dir = "./logs/debug_run_seh_frag_pb"
+    config.device = "cuda" if torch.cuda.is_available() else "cpu"
+    config.overwrite_existing_exp = True
+    config.num_training_steps = 10_000
+    config.num_workers = 8
+    config.opt.lr_decay = 20_000
+    config.algo.sampling_tau = 0.99
+    config.algo.offline_ratio = 0.0
+    config.cond.temperature.sample_dist = "uniform"
+    config.cond.temperature.dist_params = [0, 64.0]
 
-    trial = SEHFragTrainer(hps)
-    trial.print_every = 1
+    if os.path.exists(config.log_dir):
+        if config.overwrite_existing_exp:
+            shutil.rmtree(config.log_dir)
+        else:
+            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(config.log_dir)
+
+    trial = SEHFragTrainer(config)
     trial.run()
 
 

@@ -1,4 +1,5 @@
 import os
+import shutil
 import socket
 from typing import Dict, List, Tuple, Union
 
@@ -8,7 +9,7 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
@@ -72,17 +73,23 @@ class MakeRingsTrainer(StandardOnlineTrainer):
 
 
 def main():
-    hps = {
-        "log_dir": "./logs/debug_run_mr4",
-        "device": "cuda",
-        "num_training_steps": 10_000,
-        "num_workers": 8,
-        "algo": {"tb": {"do_parameterize_p_b": True}},
-    }
-    os.makedirs(hps["log_dir"], exist_ok=True)
+    """Example of how this model can be run."""
+    config = init_empty(Config())
+    config.print_every = 1
+    config.log_dir = "./logs/debug_run_mr4"
+    config.device = "cuda"
+    config.num_training_steps = 10_000
+    config.num_workers = 8
+    config.algo.tb.do_parameterize_p_b = True
 
-    trial = MakeRingsTrainer(hps)
-    trial.print_every = 1
+    if os.path.exists(config.log_dir):
+        if config.overwrite_existing_exp:
+            shutil.rmtree(config.log_dir)
+        else:
+            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
+    os.makedirs(config.log_dir)
+
+    trial = MakeRingsTrainer(config)
     trial.run()
 
 
