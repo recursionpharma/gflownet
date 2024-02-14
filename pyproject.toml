@@ -73,6 +73,7 @@ dependencies = [
     "pyro-ppl",
     "gpytorch",
     "omegaconf>=2.3",
+    "wandb",
 ]
 
 [project.optional-dependencies]
