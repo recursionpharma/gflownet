@@ -60,7 +60,7 @@ class FocusRegionConfig:
         [None, "centered", "partitioned", "dirichlet", "hyperspherical", "learned-gfn", "learned-tabular"]
     """
 
-    focus_type: Optional[str] = "learned-tabular"
+    focus_type: Optional[str] = "centered"
     use_steer_thermomether: bool = False
     focus_cosim: float = 0.98
     focus_limit_coef: float = 0.1
