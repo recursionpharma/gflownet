@@ -8,6 +8,5 @@ pre-commit
 pytest
 pytest-cov
 ruff
-typeguard
 types-pkg_resources
 gitpython>=3.1.30
