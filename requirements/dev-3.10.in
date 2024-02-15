@@ -1,22 +1,4 @@
-torch==2.1.2
-torch-geometric==2.4.0
-torch-scatter==2.1.2
-torch-sparse==0.6.18
-torch-cluster==1.6.3
-rdkit
-tables
-scipy
-networkx
-tensorboard
-cvxopt
-pyarrow
-gitpython
-botorch
-pyro-ppl
-gpytorch
-omegaconf>=2.3
-wandb
-# dev ---------
+-r main-3.10.in
 bandit[toml]
 black
 isort
