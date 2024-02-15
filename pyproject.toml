@@ -46,7 +46,7 @@ line_length = 120
 
 [tool.black]
 line-length = 120
-target-version = ["py311"]
+target-version = ["py310"]
 
 [project]
 name = "gflownet"
@@ -73,6 +73,7 @@ dependencies = [
     "pyro-ppl",
     "gpytorch",
     "omegaconf>=2.3",
+    "wandb",
 ]
 
 [project.optional-dependencies]
