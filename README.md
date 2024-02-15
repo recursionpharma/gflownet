@@ -60,9 +60,14 @@ To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-
 pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.10 --find-links ...
 ```
 
-If package dependencies seem not to work, you may need to install the exact frozen versions listed `requirements/`, i.e. `pip install -r requirements/main_3.9.txt`.
+If package dependencies seem not to work, you may need to install the exact frozen versions listed `requirements/`, i.e. `pip install -r requirements/main-3.10.txt`.
 
 ## Developing & Contributing
 
 External contributions are welcome. We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
 To ensure that these checks pass, simply run `tox -e style` and `tox run` to run linters and tests, respectively.
+
+To install the developers dependencies
+```
+pip install -e .[dev] --find-links https://data.pyg.org/whl/torch-2.1.0+cu121.html
+```
