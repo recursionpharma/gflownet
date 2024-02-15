@@ -47,12 +47,12 @@ A good place to get started is with the [sEH fragment-based MOO task](src/gflown
 This package is installable as a PIP package, but since it depends on some torch-geometric package wheels, the `--find-links` arguments must be specified as well:
 
 ```bash
-pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.0+cu121.html
+pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
 ```
 Or for CPU use:
 
 ```bash
-pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.0+cpu.html
+pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.2+cpu.html
 ```
 
 To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.10`, use the following scheme:
@@ -69,5 +69,5 @@ To ensure that these checks pass, simply run `tox -e style` and `tox run` to run
 
 To install the developers dependencies
 ```
-pip install -e .[dev] --find-links https://data.pyg.org/whl/torch-2.1.0+cu121.html
+pip install -e .[dev] --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
 ```

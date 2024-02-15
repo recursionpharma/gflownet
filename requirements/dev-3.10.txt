@@ -1136,15 +1136,6 @@ tomli==2.0.1 ; python_full_version <= "3.11.0a6" and python_version >= "3.10" \
 toposort==1.10 ; python_version >= "3.10" and python_version < "4.0" \
     --hash=sha256:bfbb479c53d0a696ea7402601f4e693c97b0367837c8898bc6471adfca37a6bd \
     --hash=sha256:cbdbc0d0bee4d2695ab2ceec97fe0679e9c10eab4b2a87a9372b929e70563a87
-torch-cluster==1.6.3 ; python_version >= "3.10" and python_version < "4.0" \
-    --hash=sha256:78d5a930a5bbd0d8788df8c6d66addd68d6dd292fe3edb401e3dacba26308152
-torch-geometric==2.4.0 ; python_version >= "3.10" and python_version < "4.0" \
-    --hash=sha256:343c6906d0678f16553c2d02b7267d0ec77eafb5b44324070ebcf7da8a934557 \
-    --hash=sha256:9d8eb5eec44382f4072aa5e835450f144e9edb9d164627e532e311880b6bdad0
-torch-scatter==2.1.2 ; python_version >= "3.10" and python_version < "4.0" \
-    --hash=sha256:69b3aa435f2424ac6a1bfb6ff702da6eb73b33ca0db38fb26989c74159258e47
-torch-sparse==0.6.18 ; python_version >= "3.10" and python_version < "4.0" \
-    --hash=sha256:2f14c510a6e93f404c6ea357210615b3c15a71731f9dbd86f25434e34fb5a741
 torch==2.1.2 ; python_version >= "3.10" and python_version < "4.0" \
     --hash=sha256:05b18594f60a911a0c4f023f38a8bda77131fba5fd741bda626e97dcf5a3dd0a \
     --hash=sha256:0e13034fd5fb323cbbc29e56d0637a3791e50dd589616f40c79adfa36a5a35a1 \
@@ -1166,6 +1157,15 @@ torch==2.1.2 ; python_version >= "3.10" and python_version < "4.0" \
     --hash=sha256:e3225f47d50bb66f756fe9196a768055d1c26b02154eb1f770ce47a2578d3aa7 \
     --hash=sha256:f41fe0c7ecbf903a568c73486139a75cfab287a0f6c17ed0698fdea7a1e8641d \
     --hash=sha256:f9a55d55af02826ebfbadf4e9b682f0f27766bc33df8236b48d28d705587868f
+torch-cluster ; python_version >= "3.10" and python_version < "4.0" \
+    --hash=sha256:78d5a930a5bbd0d8788df8c6d66addd68d6dd292fe3edb401e3dacba26308152
+torch-geometric==2.4.0 ; python_version >= "3.10" and python_version < "4.0" \
+    --hash=sha256:343c6906d0678f16553c2d02b7267d0ec77eafb5b44324070ebcf7da8a934557 \
+    --hash=sha256:9d8eb5eec44382f4072aa5e835450f144e9edb9d164627e532e311880b6bdad0
+torch-scatter==2.1.2 ; python_version >= "3.10" and python_version < "4.0" \
+    --hash=sha256:69b3aa435f2424ac6a1bfb6ff702da6eb73b33ca0db38fb26989c74159258e47
+torch-sparse==0.6.18 ; python_version >= "3.10" and python_version < "4.0" \
+    --hash=sha256:2f14c510a6e93f404c6ea357210615b3c15a71731f9dbd86f25434e34fb5a741
 tqdm==4.66.2 ; python_version >= "3.10" and python_version < "4.0" \
     --hash=sha256:1ee4f8a893eb9bef51c6e35730cebf234d5d0b6bd112b0271e10ed7c24a02bd9 \
     --hash=sha256:6cd52cdf0fef0e0f543299cfc96fec90d7b8a7e88745f411ec33eb44d5ed3531
