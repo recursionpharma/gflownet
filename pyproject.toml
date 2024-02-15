@@ -87,6 +87,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
+    "tox",
     "typeguard",
     "types-pkg_resources",
     # Security pin
