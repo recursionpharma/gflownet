@@ -64,10 +64,12 @@ If package dependencies seem not to work, you may need to install the exact froz
 
 ## Developing & Contributing
 
-External contributions are welcome. We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
-To ensure that these checks pass, simply run `tox -e style` and `tox run` to run linters and tests, respectively.
+External contributions are welcome.
 
 To install the developers dependencies
 ```
-pip install -e .[dev] --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
+pip install -e '.[dev]' --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
 ```
+
+We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
+To ensure that these checks pass, simply run `tox -e style` and `tox run` to run linters and tests, respectively.
