@@ -82,7 +82,7 @@ dev = [
     "black",
     "isort",
     "mypy",
-    "pip-compile-multi",
+    "pip-compile-cross-platform",
     "pre-commit",
     "pytest",
     "pytest-cov",
