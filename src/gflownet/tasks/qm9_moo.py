@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -17,9 +16,9 @@ from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
-from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks, safe
+from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
 from gflownet.trainer import FlatRewards, RewardScalar
-from gflownet.utils import metrics, sascore
+from gflownet.utils import metrics
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import to_logreward
