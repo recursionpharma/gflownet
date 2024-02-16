@@ -66,7 +66,7 @@ class StandardOnlineTrainer(GFNTrainer):
                 eps=self.cfg.opt.adam_eps,
             )
 
-        raise NotImplementedError(f"{self.opt.opt} is not implemented")
+        raise NotImplementedError(f"{self.cfg.opt.opt} is not implemented")
 
     def setup(self):
         super().setup()
