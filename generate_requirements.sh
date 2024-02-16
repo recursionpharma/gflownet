@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Usage: ./generate_requirements.sh <ENV-NAME>  (e.g. ./generate_requirements.sh dev-3.10)
 
 # set env variable
