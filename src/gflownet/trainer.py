@@ -115,7 +115,7 @@ class GFNTrainer:
             The torch device of the main worker.
         """
         self.print_hps = print_hps
-        self.to_close: List[Closable] = []
+        self.to_terminate: List[Closable] = []
         # self.setup should at least set these up:
         self.training_data: Dataset
         self.test_data: Dataset
@@ -188,13 +188,13 @@ class GFNTrainer:
         if send_to_device:
             obj.to(self.device)
         if self.cfg.num_workers > 0 and obj is not None:
-            placeholder, keepalive = mp_object_wrapper(
+            placeholder = mp_object_wrapper(
                 obj,
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
             )
-            self.to_close.append(keepalive)
+            self.to_terminate.append(placeholder.terminate)
             return placeholder, torch.device("cpu")
         else:
             return obj, self.device
@@ -428,9 +428,9 @@ class GFNTrainer:
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
 
     def close(self):
-        while len(self.to_close) > 0:
+        while len(self.to_terminate) > 0:
             try:
-                i = self.to_close.pop()
+                i = self.to_terminate.pop()
                 i.close()
             except Exception as e:
                 print(e)

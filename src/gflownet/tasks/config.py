@@ -14,17 +14,19 @@ class SEHMOOTaskConfig:
     Attributes
     ----------
     n_valid : int
-        The number of valid cond_info tensors to sample
+        The number of valid cond_info tensors to sample.
     n_valid_repeats : int
-        The number of times to repeat the valid cond_info tensors
+        The number of times to repeat the valid cond_info tensors.
     objectives : List[str]
-        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "wt"].
+        The objectives to use for the multi-objective optimization. Should be a subset of ["seh", "qed", "sa", "mw"].
+    online_pareto_front : bool
+        Whether to calculate the pareto front online.
     """
 
     n_valid: int = 15
     n_valid_repeats: int = 128
     objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
-
+    online_pareto_front: bool = True
 
 @dataclass
 class QM9TaskConfig:
@@ -34,18 +36,24 @@ class QM9TaskConfig:
 
 @dataclass
 class QM9MOOTaskConfig:
-    use_steer_thermometer: bool = False
-    preference_type: Optional[str] = "dirichlet"
-    focus_type: Optional[str] = None
-    focus_dirs_listed: Optional[List[List[float]]] = None
-    focus_cosim: float = 0.0
-    focus_limit_coef: float = 1.0
-    focus_model_training_limits: Optional[Tuple[int, int]] = None
-    focus_model_state_space_res: Optional[int] = None
-    max_train_it: Optional[int] = None
+    """
+    Config for the QM9MooTask
+
+    Attributes
+    ----------
+    n_valid : int
+        The number of valid cond_info tensors to sample.
+    n_valid_repeats : int
+        The number of times to repeat the valid cond_info tensors.
+    objectives : List[str]
+        The objectives to use for the multi-objective optimization. Should be a subset of ["gap", "qed", "sa"].
+    online_pareto_front : bool
+        Whether to calculate the pareto front online.
+    """
     n_valid: int = 15
     n_valid_repeats: int = 128
     objectives: List[str] = field(default_factory=lambda: ["gap", "qed", "sa"])
+    online_pareto_front: bool = True
 
 
 @dataclass

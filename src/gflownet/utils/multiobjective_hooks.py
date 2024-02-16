@@ -11,7 +11,6 @@ import torch.multiprocessing as mp
 from torch import Tensor
 
 from gflownet.utils import metrics
-from gflownet.utils.multiprocessing_proxy import KeepAlive
 
 
 class MultiObjectiveStatsHook:
@@ -60,7 +59,6 @@ class MultiObjectiveStatsHook:
         self.log_path = pathlib.Path(log_dir) / "pareto.pt"
         self.pareto_thread = threading.Thread(target=self._run_pareto_accumulation, daemon=True)
         self.pareto_thread.start()
-        self.keep_alive = KeepAlive(self.stop)
 
     def _hsri(self, x):
         assert x.ndim == 2, "x should have shape (num points, num objectives)"

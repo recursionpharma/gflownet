@@ -62,16 +62,6 @@ class MPObjectPlaceholder:
         return self.out_queue.get()
 
 
-class KeepAlive:
-    def __init__(self, flag):
-        self.flag = flag
-
-    def close(self):
-        self.flag.set()
-
-    def __del__(self):
-        self.close()
-
 
 class MPObjectProxy:
     """This class maintains a reference to some object and
@@ -114,7 +104,6 @@ class MPObjectProxy:
             self.device = torch.device("cpu")
         self.cuda_types = (torch.Tensor,) + cast_types
         self.stop = threading.Event()
-        self.keepalive = KeepAlive(self.stop)
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -166,7 +155,8 @@ class MPObjectProxy:
                 else:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
-
+    def terminate(self):
+        self.stop.set()
 
 def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False):
     """Construct a multiprocessing object proxy for torch DataLoaders so
@@ -203,5 +193,4 @@ def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = Fals
         A placeholder object whose method calls route arguments to the main process
 
     """
-    x = MPObjectProxy(obj, num_workers, cast_types, pickle_messages)
-    return x.placeholder, x.keepalive
+    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages)

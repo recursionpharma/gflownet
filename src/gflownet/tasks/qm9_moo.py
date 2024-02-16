@@ -18,7 +18,7 @@ from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
-from gflownet.utils.multiobjective_hooks import TopKHook
+from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 
 
 def safe(f, x, default):
@@ -259,6 +259,18 @@ class QM9MOOTrainer(QM9GapTrainer):
 
     def setup(self):
         super().setup()
+        if self.cfg.task.seh_moo.online_pareto_front:
+            self.sampling_hooks.append(
+                MultiObjectiveStatsHook(
+                    256,
+                    self.cfg.log_dir,
+                    compute_igd=True,
+                    compute_pc_entropy=True,
+                    compute_focus_accuracy=True if self.cfg.cond.focus_region.focus_type is not None else False,
+                    focus_cosim=self.cfg.cond.focus_region.focus_cosim,
+                )
+            )
+            self.to_terminate.append(self.sampling_hooks[-1].terminate)
         # instantiate preference and focus conditioning vectors for validation
 
         tcfg = self.cfg.task.qm9_moo

@@ -261,17 +261,18 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
     def setup(self):
         super().setup()
-        self.sampling_hooks.append(
-            MultiObjectiveStatsHook(
-                256,
-                self.cfg.log_dir,
-                compute_igd=True,
-                compute_pc_entropy=True,
-                compute_focus_accuracy=True if self.cfg.cond.focus_region.focus_type is not None else False,
-                focus_cosim=self.cfg.cond.focus_region.focus_cosim,
+        if self.cfg.task.seh_moo.online_pareto_front:
+            self.sampling_hooks.append(
+                MultiObjectiveStatsHook(
+                    256,
+                    self.cfg.log_dir,
+                    compute_igd=True,
+                    compute_pc_entropy=True,
+                    compute_focus_accuracy=True if self.cfg.cond.focus_region.focus_type is not None else False,
+                    focus_cosim=self.cfg.cond.focus_region.focus_cosim,
+                )
             )
-        )
-        self.to_close.append(self.sampling_hooks[-1].keep_alive)
+            self.to_terminate.append(self.sampling_hooks[-1].terminate)
         # instantiate preference and focus conditioning vectors for validation
 
         n_obj = len(self.cfg.task.seh_moo.objectives)
@@ -360,9 +361,11 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def run(self):
         super().run()
         for hook in self.sampling_hooks:
-            if hasattr(hook, "terminate"):
+            if hasattr(hook, "terminate") and hook.terminate not in self.to_terminate:
                 hook.terminate()
-
+        
+        ;for terminate in self.to_terminate:
+            terminate()
 
 class RepeatedCondInfoDataset:
     def __init__(self, cond_info_vectors, repeat):
