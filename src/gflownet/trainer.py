@@ -398,11 +398,19 @@ class GFNTrainer:
             logger.info("Final generation steps completed - " + " ".join(f"{k}:{v:.2f}" for k, v in final_info.items()))
             self.log(final_info, num_training_steps, "final")
 
-        # for pypy and other GC havers
+        # for pypy and other GC having implementations, we need to manually clean up
         del train_dl
         del valid_dl
         if self.cfg.num_final_gen_steps:
             del final_dl
+
+    def terminate(self):
+        for hook in self.sampling_hooks:
+            if hasattr(hook, "terminate") and hook.terminate not in self.to_terminate:
+                hook.terminate()
+
+        for terminate in self.to_terminate:
+            terminate()
 
     def _save_state(self, it):
         state = {
@@ -427,16 +435,8 @@ class GFNTrainer:
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
 
-    def close(self):
-        while len(self.to_terminate) > 0:
-            try:
-                i = self.to_terminate.pop()
-                i.close()
-            except Exception as e:
-                print(e)
-
     def __del__(self):
-        self.close()
+        self.terminate()
 
 
 def cycle(it):

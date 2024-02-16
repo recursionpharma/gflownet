@@ -17,7 +17,7 @@ from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
-from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, safe
+from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks, safe
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
@@ -171,39 +171,21 @@ class QM9GapMOOTask(QM9GapTask):
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         assert len(graphs) == len(mols)
-        is_valid = torch.tensor([i is not None for i in graphs]).bool()
-        valid_graphs = [g for g in graphs if g is not None]
-        valid_mols = [m for m, g in zip(mols, graphs) if g is not None]
-        assert len(valid_mols) == len(valid_graphs)
-        if not is_valid.any():
-            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
+        is_valid = [i is not None for i in graphs]
+        is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
+        if not any(is_valid):
+            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
             for obj in self.objectives:
                 if obj == "gap":
-                    batch = gd.Batch.from_data_list(valid_graphs)
-                    batch.to(self.device)
-                    preds = self.models["mxmnet_gap"](batch)
-                    preds = preds.reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
-                    preds[preds.isnan()] = 1
-                    preds = super().flat_reward_transform(preds)
-                elif obj == "qed":
-                    preds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
-                elif obj == "sa":
-                    preds = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
-                    preds = (10 - preds) / 9  # Turn into a [0-1] reward
-                elif obj == "mw":
-                    preds = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
-                    preds = ((300 - preds) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
+                    flat_r.append(super().compute_reward_from_graph(graphs, is_valid_t))
                 else:
-                    raise ValueError(f"MOO objective {obj} not known")
-                assert len(preds) == len(
-                    valid_graphs
-                ), f"len of reward {obj} is {len(preds)} not the expected {len(valid_graphs)}"
-                flat_r.append(preds)
+                    flat_r.append(aux_tasks[obj](mols, is_valid))
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            return FlatRewards(flat_rewards), is_valid
+            assert flat_rewards.shape[0] == len(mols)
+            return FlatRewards(flat_rewards), is_valid_t
 
 
 class QM9MOOTrainer(QM9GapTrainer):
@@ -349,9 +331,3 @@ class QM9MOOTrainer(QM9GapTrainer):
         if self.task.focus_cond is not None and self.task.focus_cond.focus_model is not None:
             self.task.focus_cond.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
-
-    def run(self):
-        super().run()
-        for hook in self.sampling_hooks:
-            if hasattr(hook, "terminate"):
-                hook.terminate()

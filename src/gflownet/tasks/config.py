@@ -28,6 +28,7 @@ class SEHMOOTaskConfig:
     objectives: List[str] = field(default_factory=lambda: ["seh", "qed", "sa", "mw"])
     online_pareto_front: bool = True
 
+
 @dataclass
 class QM9TaskConfig:
     h5_path: str = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
@@ -51,6 +52,7 @@ class QM9MOOTaskConfig:
     online_pareto_front : bool
         Whether to calculate the pareto front online.
     """
+
     n_valid: int = 15
     n_valid_repeats: int = 128
     objectives: List[str] = field(default_factory=lambda: ["gap", "qed", "sa"])

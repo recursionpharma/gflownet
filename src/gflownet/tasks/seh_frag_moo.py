@@ -356,14 +356,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             self.task.focus_cond.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
 
-    def run(self):
-        super().run()
-        for hook in self.sampling_hooks:
-            if hasattr(hook, "terminate") and hook.terminate not in self.to_terminate:
-                hook.terminate()
-        
-        ;for terminate in self.to_terminate:
-            terminate()
 
 class RepeatedCondInfoDataset:
     def __init__(self, cond_info_vectors, repeat):

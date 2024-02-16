@@ -62,7 +62,6 @@ class MPObjectPlaceholder:
         return self.out_queue.get()
 
 
-
 class MPObjectProxy:
     """This class maintains a reference to some object and
     creates a `placeholder` attribute which can be safely passed to
@@ -155,8 +154,10 @@ class MPObjectProxy:
                 else:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
+
     def terminate(self):
         self.stop.set()
+
 
 def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False):
     """Construct a multiprocessing object proxy for torch DataLoaders so
