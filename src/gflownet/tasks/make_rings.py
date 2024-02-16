@@ -1,5 +1,3 @@
-import os
-import shutil
 import socket
 from typing import Dict, List, Tuple, Union
 
@@ -81,13 +79,6 @@ def main():
     config.num_training_steps = 10_000
     config.num_workers = 8
     config.algo.tb.do_parameterize_p_b = True
-
-    if os.path.exists(config.log_dir):
-        if config.overwrite_existing_exp:
-            shutil.rmtree(config.log_dir)
-        else:
-            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(config.log_dir)
 
     trial = MakeRingsTrainer(config)
     trial.run()

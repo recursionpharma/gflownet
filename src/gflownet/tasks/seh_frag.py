@@ -1,5 +1,3 @@
-import os
-import shutil
 import socket
 from typing import Callable, Dict, List, Tuple, Union
 
@@ -198,13 +196,6 @@ def main():
     config.algo.offline_ratio = 0.0
     config.cond.temperature.sample_dist = "uniform"
     config.cond.temperature.dist_params = [0, 64.0]
-
-    if os.path.exists(config.log_dir):
-        if config.overwrite_existing_exp:
-            shutil.rmtree(config.log_dir)
-        else:
-            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(config.log_dir)
 
     trial = SEHFragTrainer(config)
     trial.run()

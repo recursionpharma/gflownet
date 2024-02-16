@@ -1,6 +1,4 @@
-import os
 import pathlib
-import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -397,13 +395,6 @@ def main():
     config.cond.weighted_prefs.preference_type = "dirichlet"
     config.cond.focus_region.focus_type = None
     config.replay.use = False
-
-    if os.path.exists(config.log_dir):
-        if config.overwrite_existing_exp:
-            shutil.rmtree(config.log_dir)
-        else:
-            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(config.log_dir)
 
     trial = SEHMOOFragTrainer(config)
     trial.run()

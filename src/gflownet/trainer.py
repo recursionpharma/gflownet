@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple
 
 import numpy as np
@@ -160,6 +161,15 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def setup(self):
+        if os.path.exists(self.cfg.log_dir):
+            if self.cfg.overwrite_existing_exp:
+                shutil.rmtree(self.cfg.log_dir)
+            else:
+                raise ValueError(
+                    f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
+                )
+        os.makedirs(self.cfg.log_dir)
+
         RDLogger.DisableLog("rdApp.*")
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()

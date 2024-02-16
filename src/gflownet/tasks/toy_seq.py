@@ -1,5 +1,3 @@
-import os
-import shutil
 import socket
 from typing import Dict, List, Tuple
 
@@ -117,13 +115,6 @@ def main():
     config.cond.temperature.dist_params = [2.0]
     config.cond.temperature.num_thermometer_dim = 1
     config.algo.train_random_action_prob = 0.05
-
-    if os.path.exists(config.log_dir):
-        if config.overwrite_existing_exp:
-            shutil.rmtree(config.log_dir)
-        else:
-            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(config.log_dir)
 
     trial = ToySeqTrainer(config)
     trial.run()

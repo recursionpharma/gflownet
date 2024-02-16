@@ -1,5 +1,3 @@
-import os
-import shutil
 from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -153,13 +151,6 @@ def main():
     config.opt.lr_decay = 10000
     config.task.qm9.h5_path = "/rxrx/data/chem/qm9/qm9.h5"
     config.task.qm9.model_path = "/rxrx/data/chem/qm9/mxmnet_gap_model.pt"
-
-    if os.path.exists(config.log_dir):
-        if config.overwrite_existing_exp:
-            shutil.rmtree(config.log_dir)
-        else:
-            raise ValueError(f"Log dir {config.log_dir} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(config.log_dir)
 
     trial = QM9GapTrainer(config)
     trial.run()
