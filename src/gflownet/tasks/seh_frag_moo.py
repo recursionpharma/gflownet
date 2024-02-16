@@ -25,6 +25,34 @@ from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHoo
 from gflownet.utils.transforms import to_logreward
 
 
+def safe(f, x, default):
+    try:
+        return f(x)
+    except Exception:
+        return default
+
+
+def mol2mw(mols: list[RDMol], is_valid: list[bool], default=1000):
+    molwts = torch.tensor([safe(Descriptors.MolWt, i, default) if v else default for i, v in zip(mols, is_valid)])
+    molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
+    return molwts
+
+
+def mol2sas(mols: list[RDMol], is_valid: list[bool], default=10):
+    sas = torch.tensor(
+        [safe(sascore.calculateScore, i, default) if is_valid else default for i, v in zip(mols, is_valid)]
+    )
+    sas = (10 - sas) / 9  # Turn into a [0-1] reward
+    return sas
+
+
+def mol2qed(mols: list[RDMol], is_valid: list[bool], default=0):
+    return torch.tensor([safe(QED.qed, i, 0) if v else default for i, v in zip(mols, is_valid)])
+
+
+aux_tasks = {"qed": mol2qed, "sa": mol2sas, "mw": mol2mw}
+
+
 class SEHMOOTask(SEHTask):
     """Sets up a multiobjective task where the rewards are (functions of):
     - the binding energy of a molecule to Soluble Epoxide Hydrolases,
@@ -171,48 +199,21 @@ class SEHMOOTask(SEHTask):
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         assert len(graphs) == len(mols)
-        is_valid = torch.tensor([i is not None for i in graphs]).bool()
-        valid_graphs = [g for g in graphs if g is not None]
-        valid_mols = [m for m, g in zip(mols, graphs) if g is not None]
-        assert len(valid_mols) == len(valid_graphs)
-        if not is_valid.any():
-            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid
-
+        is_valid = [i is not None for i in graphs]
+        is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
+        if not any(is_valid):
+            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
-            if "seh" in self.objectives:
-                batch = gd.Batch.from_data_list(valid_graphs)
-                batch.to(self.device)
-                seh_preds = self.models["seh"](batch).reshape((-1,)).clip(1e-4, 100).data.cpu() / 8
-                seh_preds[seh_preds.isnan()] = 0
-                flat_r.append(seh_preds)
-                assert len(seh_preds) == len(valid_graphs), f"{len(seh_preds)} != {len(valid_graphs)}"
-
-            def safe(f, x, default):
-                try:
-                    return f(x)
-                except Exception:
-                    return default
-
-            if "qed" in self.objectives:
-                qeds = torch.tensor([safe(QED.qed, i, 0) for i in valid_mols])
-                flat_r.append(qeds)
-                assert len(qeds) == len(valid_graphs), f"{len(qeds)} != {len(valid_graphs)}"
-
-            if "sa" in self.objectives:
-                sas = torch.tensor([safe(sascore.calculateScore, i, 10) for i in valid_mols])
-                sas = (10 - sas) / 9  # Turn into a [0-1] reward
-                flat_r.append(sas)
-                assert len(sas) == len(valid_graphs), f"{len(sas)} != {len(valid_graphs)}"
-
-            if "mw" in self.objectives:
-                molwts = torch.tensor([safe(Descriptors.MolWt, i, 1000) for i in valid_mols])
-                molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-                flat_r.append(molwts)
-                assert len(molwts) == len(valid_graphs), f"{len(molwts)} != {len(valid_graphs)}"
+            for obj in self.objectives:
+                if obj == "seh":
+                    flat_r.append(super().compute_reward_from_graph(graphs, is_valid_t))
+                else:
+                    flat_r.append(aux_tasks[obj](mols, is_valid))
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            return FlatRewards(flat_rewards), is_valid
+            assert flat_rewards.shape[0] == len(mols)
+            return FlatRewards(flat_rewards), is_valid_t
 
 
 class SEHMOOFragTrainer(SEHFragTrainer):
@@ -243,9 +244,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
-
-    def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
 
     def setup_model(self):
         if self.cfg.algo.method == "MOQL":
@@ -307,7 +305,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         elif cond_cfg.weighted_prefs.preference_type == "seeded_many":
             valid_preferences = np.random.default_rng(142857 + int(self.cfg.seed)).dirichlet([1] * n_obj, n_valid)
         else:
-            raise NotImplementedError(f"Unknown preference type {self.cfg.task.seh_moo.preference_type}")
+            raise NotImplementedError(f"Unknown preference type {cond_cfg.weighted_prefs.preference_type}")
 
         # TODO: this was previously reported, would be nice to serialize it
         # hps["fixed_focus_dirs"] = (

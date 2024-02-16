@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-import yaml
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -150,16 +149,3 @@ class QM9GapTrainer(StandardOnlineTrainer):
         super().setup()
         self.training_data.setup(self.task, self.ctx)
         self.test_data.setup(self.task, self.ctx)
-
-
-def main():
-    """Example of how this model can be run."""
-    config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.yaml")
-    with open(config_file, "r") as f:
-        hps = yaml.safe_load(f)
-    trial = QM9GapTrainer(hps)
-    trial.run()
-
-
-if __name__ == "__main__":
-    main()

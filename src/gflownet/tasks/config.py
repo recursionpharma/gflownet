@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List
 
 
 @dataclass
@@ -46,7 +46,8 @@ class QM9MOOTaskConfig:
     n_valid_repeats : int
         The number of times to repeat the valid cond_info tensors.
     objectives : List[str]
-        The objectives to use for the multi-objective optimization. Should be a subset of ["gap", "qed", "sa"].
+        The objectives to use for the multi-objective optimization. Should be a subset of ["gap", "qed", "sa", "mw"].
+        While "mw" can be used, it is not recommended as the molecules are already small.
     online_pareto_front : bool
         Whether to calculate the pareto front online.
     """
