@@ -7,6 +7,8 @@
 
 # gflownet
 
+**/!\ This is an experimental branch with C code, run at your own risk /!\\**
+
 GFlowNet-related training and environment code on graphs.
 
 **Primer**
