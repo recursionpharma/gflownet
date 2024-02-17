@@ -39,9 +39,7 @@ def mol2mw(mols: list[RDMol], is_valid: list[bool], default=1000):
 
 
 def mol2sas(mols: list[RDMol], is_valid: list[bool], default=10):
-    sas = torch.tensor(
-        [safe(sascore.calculateScore, i, default) for i, v in zip(mols, is_valid) if v]
-    )
+    sas = torch.tensor([safe(sascore.calculateScore, i, default) for i, v in zip(mols, is_valid) if v])
     sas = (10 - sas) / 9  # Turn into a [0-1] reward
     return sas
 

@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -88,7 +88,13 @@ class QM9GapTask(GFNTask):
         batch.to(self.device)
         preds = self.models["mxmnet_gap"](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
         preds[preds.isnan()] = 1
-        preds = self.flat_reward_transform(preds).clip(1e-4, 2).reshape(-1,)
+        preds = (
+            self.flat_reward_transform(preds)
+            .clip(1e-4, 2)
+            .reshape(
+                -1,
+            )
+        )
         return preds
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:

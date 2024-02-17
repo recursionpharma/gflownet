@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -207,7 +207,7 @@ class TrajectoryBalance(GFNAlgorithm):
             return self.graph_sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
             )
-        trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
+        trajs: List[Dict[str, Any]] = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [
                 self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)

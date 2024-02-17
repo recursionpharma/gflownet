@@ -1,7 +1,7 @@
 import os
 import shutil
 import socket
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
