@@ -307,6 +307,8 @@ class QM9MOOTrainer(QM9GapTrainer):
     def setup_data(self):
         self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, targets=self.cfg.task.qm9_moo.objectives)
         self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, targets=self.cfg.task.qm9_moo.objectives)
+        self.to_terminate.append(self.training_data.terminate)
+        self.to_terminate.append(self.test_data.terminate)
 
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct

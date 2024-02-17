@@ -14,9 +14,13 @@ from gflownet.utils import sascore
 class QM9Dataset(Dataset):
     def __init__(self, h5_file=None, xyz_file=None, train=True, targets=["gap"], split_seed=142857, ratio=0.9):
         if h5_file is not None:
-            self.df = pd.HDFStore(h5_file, "r")["df"]
+
+            self.hdf = pd.HDFStore(h5_file, "r")
+            self.df = self.hdf["df"]
+            self.is_hdf = True
         elif xyz_file is not None:
             self.df = load_tar(xyz_file)
+            self.is_hdf = False
         else:
             raise ValueError("Either h5_file or xyz_file must be provided")
         rng = np.random.default_rng(split_seed)
@@ -46,6 +50,10 @@ class QM9Dataset(Dataset):
             self.mol_to_graph(Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]])),
             torch.tensor([self.df[t][self.idcs[idx]] for t in self.targets]).float(),
         )
+
+    def terminate(self):
+        if self.is_hdf:
+            self.hdf.close()
 
 
 def load_tar(xyz_file):

@@ -147,6 +147,8 @@ class QM9GapTrainer(StandardOnlineTrainer):
     def setup_data(self):
         self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, targets=["gap"])
         self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, targets=["gap"])
+        self.to_terminate.append(self.training_data.terminate)
+        self.to_terminate.append(self.test_data.terminate   )
 
     def setup_task(self):
         self.task = QM9GapTask(
