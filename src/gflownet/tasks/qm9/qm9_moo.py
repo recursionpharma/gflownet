@@ -172,18 +172,19 @@ class QM9GapMOOTask(QM9GapTask):
         assert len(graphs) == len(mols)
         is_valid = [i is not None for i in graphs]
         is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
+
         if not any(is_valid):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
             for obj in self.objectives:
                 if obj == "gap":
-                    flat_r.append(super().compute_reward_from_graph(graphs, is_valid_t))
+                    flat_r.append(super().compute_reward_from_graph(graphs))
                 else:
                     flat_r.append(aux_tasks[obj](mols, is_valid))
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            assert flat_rewards.shape[0] == len(mols)
+            assert flat_rewards.shape[0] == is_valid_t.sum()
             return FlatRewards(flat_rewards), is_valid_t
 
 

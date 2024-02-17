@@ -188,14 +188,14 @@ class GFNTrainer:
         if send_to_device:
             obj.to(self.device)
         if self.cfg.num_workers > 0 and obj is not None:
-            placeholder = mp_object_wrapper(
+            wapper = mp_object_wrapper(
                 obj,
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
             )
-            self.to_terminate.append(placeholder.terminate)
-            return placeholder, torch.device("cpu")
+            self.to_terminate.append(wapper.terminate)
+            return wapper.placeholder, torch.device("cpu")
         else:
             return obj, self.device
 

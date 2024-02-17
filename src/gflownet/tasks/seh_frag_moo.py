@@ -33,21 +33,21 @@ def safe(f, x, default):
 
 
 def mol2mw(mols: list[RDMol], is_valid: list[bool], default=1000):
-    molwts = torch.tensor([safe(Descriptors.MolWt, i, default) if v else default for i, v in zip(mols, is_valid)])
+    molwts = torch.tensor([safe(Descriptors.MolWt, i, default) for i, v in zip(mols, is_valid) if v])
     molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
     return molwts
 
 
 def mol2sas(mols: list[RDMol], is_valid: list[bool], default=10):
     sas = torch.tensor(
-        [safe(sascore.calculateScore, i, default) if is_valid else default for i, v in zip(mols, is_valid)]
+        [safe(sascore.calculateScore, i, default) for i, v in zip(mols, is_valid) if v]
     )
     sas = (10 - sas) / 9  # Turn into a [0-1] reward
     return sas
 
 
 def mol2qed(mols: list[RDMol], is_valid: list[bool], default=0):
-    return torch.tensor([safe(QED.qed, i, 0) if v else default for i, v in zip(mols, is_valid)])
+    return torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v])
 
 
 aux_tasks = {"qed": mol2qed, "sa": mol2sas, "mw": mol2mw}
@@ -207,7 +207,7 @@ class SEHMOOTask(SEHTask):
             flat_r: List[Tensor] = []
             for obj in self.objectives:
                 if obj == "seh":
-                    flat_r.append(super().compute_reward_from_graph(graphs, is_valid_t))
+                    flat_r.append(super().compute_reward_from_graph(graphs))
                 else:
                     flat_r.append(aux_tasks[obj](mols, is_valid))
 
