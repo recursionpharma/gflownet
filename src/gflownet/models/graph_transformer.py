@@ -169,7 +169,7 @@ class GraphTransformerGFN(nn.Module):
         self,
         env_ctx,
         cfg: Config,
-        num_graph_out=2,
+        num_graph_out=1,
         do_bck=False,
     ):
         """See `GraphTransformer` for argument values"""
