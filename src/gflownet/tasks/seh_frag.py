@@ -141,7 +141,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.opt.lr_decay = 20_000
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
-        cfg.algo.global_batch_size = 64
+        cfg.algo.global_batch_size = 128
         cfg.algo.offline_ratio = 0
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
@@ -190,8 +190,9 @@ def main():
         "log_dir": "./logs/debug_run_seh_frag_pb",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "overwrite_existing_exp": True,
-        "num_training_steps": 10_000,
-        "num_workers": 8,
+        "num_training_steps": 5,
+        "num_workers": 1,
+        "pickle_mp_messages": True,
         "opt": {
             "lr_decay": 20000,
         },
