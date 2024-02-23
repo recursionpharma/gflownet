@@ -216,7 +216,7 @@ def main():
     config.algo.sampling_tau = 0.99
     config.cond.temperature.sample_dist = "uniform"
     config.cond.temperature.dist_params = [0, 64.0]
-    config.mp_buffer_size = None # 32 * 1024 ** 2,
+    config.mp_buffer_size = 32 * 1024 ** 2
 
     trial = SEHFragTrainer(config)
     trial.run()
