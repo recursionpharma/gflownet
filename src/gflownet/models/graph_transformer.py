@@ -245,6 +245,8 @@ class GraphTransformerGFN(nn.Module):
         )
 
     def forward(self, g: gd.Batch, cond: torch.Tensor):
+        if cond is None:
+            cond = g.cond_info
         node_embeddings, graph_embeddings = self.transf(g, cond)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):

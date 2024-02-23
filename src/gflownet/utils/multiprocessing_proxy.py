@@ -2,9 +2,169 @@ import pickle
 import queue
 import threading
 import traceback
+from itertools import chain
 
+import numpy as np
 import torch
 import torch.multiprocessing as mp
+from torch_geometric.data import Batch
+
+from gflownet.envs.graph_building_env import GraphActionCategorical
+
+
+class SharedPinnedBuffer:
+    def __init__(self, size):
+        self.size = size
+        self.buffer = torch.empty(size, dtype=torch.uint8)
+        self.buffer.share_memory_()
+        self.lock = mp.Lock()
+
+        cudart = torch.cuda.cudart()
+        r = cudart.cudaHostRegister(self.buffer.data_ptr(), self.buffer.numel() * self.buffer.element_size(), 0)
+        assert r == 0
+        assert self.buffer.is_shared()
+        assert self.buffer.is_pinned()
+
+
+class BatchDescriptor:
+    def __init__(self, names, types, shapes, size, other):
+        self.names = names
+        self.types = types
+        self.shapes = shapes
+        self.size = size
+        self.other = other
+
+
+class ResultDescriptor:
+    def __init__(self, names, types, shapes, size, gac_attrs):
+        self.names = names
+        self.types = types
+        self.shapes = shapes
+        self.size = size
+        self.gac_attrs = gac_attrs
+
+
+def prod(l):
+    p = 1
+    for i in l:
+        p *= i
+    return p
+
+
+def put_into_batch_buffer(batch, buffer):
+    names = []
+    types = []
+    shapes = []
+    offset = 0
+    others = {}
+    for k, v in chain(batch._store.items(), (("_slice_dict_" + k, v) for k, v in batch._slice_dict.items())):
+        if not isinstance(v, torch.Tensor):
+            try:
+                v = torch.as_tensor(v)
+            except Exception as e:
+                others[k] = v
+                continue
+        names.append(k)
+        types.append(v.dtype)
+        shapes.append(tuple(v.shape))
+        numel = v.numel() * v.element_size()
+        # print('putting', k, v.shape, numel, offset)
+        buffer[offset : offset + numel] = v.view(-1).view(torch.uint8)
+        offset += numel
+        offset += (8 - offset % 8) % 8  # align to 8 bytes
+        if offset > buffer.shape[0]:
+            raise ValueError(f"Offset {offset} exceeds buffer size {buffer.shape[0]}")
+    # print(f'total size: {offset / 1024**2:.3f}M')
+    # print(batch.batch)
+    return BatchDescriptor(names, types, shapes, offset, others)
+
+
+def resolve_batch_buffer(descriptor, buffer, device):
+    offset = 0
+    batch = Batch()
+    batch._slice_dict = {}
+    cuda_buffer = buffer[: descriptor.size].to(device)  # TODO: check if only sending `size` is faster?
+    for name, dtype, shape in zip(descriptor.names, descriptor.types, descriptor.shapes):
+        numel = prod(shape) * dtype.itemsize
+        # print('restoring', name, shape, numel, offset)
+        if name.startswith("_slice_dict_"):
+            batch._slice_dict[name[12:]] = cuda_buffer[offset : offset + numel].view(dtype).view(shape)
+        else:
+            setattr(batch, name, cuda_buffer[offset : offset + numel].view(dtype).view(shape))
+        offset += numel
+        offset += (8 - offset % 8) % 8  # align to 8 bytes
+    # print(batch.batch)
+    # print(f'total size: {offset / 1024**2:.3f}M')
+    for k, v in descriptor.other.items():
+        setattr(batch, k, v)
+    return batch
+
+
+def put_into_result_buffer(result, buffer):
+    gac_names = ["logits", "batch", "slice", "masks"]
+    gac, tensor = result
+    buffer[: tensor.numel() * tensor.element_size()] = tensor.view(-1).view(torch.uint8)
+    offset = tensor.numel() * tensor.element_size()
+    offset += (8 - offset % 8) % 8  # align to 8 bytes
+    names = ["@per_graph_out"]
+    types = [tensor.dtype]
+    shapes = [tensor.shape]
+    for name in gac_names:
+        tensors = getattr(gac, name)
+        for i, x in enumerate(tensors):
+            # print(f"putting {name}@{i} with shape {x.shape}")
+            numel = x.numel() * x.element_size()
+            if numel > 0:
+                # We need this for a funny reason
+                # torch.zeros(0)[::2] has a stride of (2,), and is contiguous according to torch
+                # so, flattening it and then reshaping it will not change the stride, which will
+                # make view(uint8) complain that the strides are not compatible.
+                # The batch[::2] happens when creating the categorical and deduplicate_edge_index is True
+                buffer[offset : offset + numel] = x.flatten().view(torch.uint8)
+                offset += numel
+                offset += (8 - offset % 8) % 8  # align to 8 bytes
+                if offset > buffer.shape[0]:
+                    raise ValueError(f"Offset {offset} exceeds buffer size {buffer.shape[0]}")
+            names.append(f"{name}@{i}")
+            types.append(x.dtype)
+            shapes.append(tuple(x.shape))
+    return ResultDescriptor(names, types, shapes, offset, (gac.num_graphs, gac.keys, gac.types))
+
+
+def resolve_result_buffer(descriptor, buffer, device):
+    # TODO: models can return multiple GraphActionCategoricals, but we only support one for now
+    # Would be nice to have something generic (and recursive?)
+    offset = 0
+    tensor = buffer[: descriptor.size].to(device)
+    if tensor.device == device:  # CPU to CPU
+        # I think we need this? Otherwise when we release the lock, the memory might be overwritten
+        tensor = tensor.clone()
+    # Maybe make this a static method, or just overload __new__?
+    gac = GraphActionCategorical.__new__(GraphActionCategorical)
+    gac.num_graphs, gac.keys, gac.types = descriptor.gac_attrs
+    gac.dev = device
+    gac.logprobs = None
+    gac._epsilon = 1e-38
+
+    gac_names = ["logits", "batch", "slice", "masks"]
+    for i in gac_names:
+        setattr(gac, i, [None] * len(gac.types))
+
+    for name, dtype, shape in zip(descriptor.names, descriptor.types, descriptor.shapes):
+        numel = prod(shape) * dtype.itemsize
+        if name == "@per_graph_out":
+            per_graph_out = tensor[offset : offset + numel].view(dtype).view(shape)
+        else:
+            name, index = name.split("@")
+            index = int(index)
+            if name in gac_names:
+                getattr(gac, name)[index] = tensor[offset : offset + numel].view(dtype).view(shape)
+            else:
+                raise ValueError(f"Unknown result descriptor name: {name}")
+        offset += numel
+        offset += (8 - offset % 8) % 8  # align to 8 bytes
+        # print(f"restored {name} with shape {shape}")
+    return gac, per_graph_out
 
 
 class MPObjectPlaceholder:
@@ -12,11 +172,15 @@ class MPObjectPlaceholder:
     in a worker process, and translates calls to the object-placeholder into
     queries for the main process to execute on the real object."""
 
-    def __init__(self, in_queues, out_queues, pickle_messages=False):
+    def __init__(self, in_queues, out_queues, pickle_messages=False, batch_buffer_size=None):
         self.qs = in_queues, out_queues
         self.device = torch.device("cpu")
         self.pickle_messages = pickle_messages
         self._is_init = False
+        self.batch_buffer_size = batch_buffer_size
+        if batch_buffer_size is not None:
+            self._batch_buffer = SharedPinnedBuffer(batch_buffer_size)
+            self._result_buffer = SharedPinnedBuffer(batch_buffer_size)
 
     def _check_init(self):
         if self._is_init:
@@ -41,6 +205,9 @@ class MPObjectPlaceholder:
         if isinstance(m, Exception):
             print("Received exception from main process, reraising.")
             raise m
+        if isinstance(m, ResultDescriptor):
+            m = resolve_result_buffer(m, self._result_buffer.buffer, self.device)
+            self._result_buffer.lock.release()
         return m
 
     def __getattr__(self, name):
@@ -53,6 +220,11 @@ class MPObjectPlaceholder:
 
     def __call__(self, *a, **kw):
         self._check_init()
+        if self.batch_buffer_size and len(a) and isinstance(a[0], Batch):
+            # The lock will be released by the consumer of this buffer once the memory has been transferred to CUDA
+            self._batch_buffer.lock.acquire()
+            batch_descriptor = put_into_batch_buffer(a[0], self._batch_buffer.buffer)
+            a = (batch_descriptor,) + a[1:]
         self.in_queue.put(self.encode(("__call__", a, kw)))
         return self.decode(self.out_queue.get())
 
@@ -75,7 +247,7 @@ class MPObjectProxy:
     Always passes CPU tensors between processes.
     """
 
-    def __init__(self, obj, num_workers: int, cast_types: tuple, pickle_messages: bool = False):
+    def __init__(self, obj, num_workers: int, cast_types: tuple, pickle_messages: bool = False, bb_size=None):
         """Construct a multiprocessing object proxy.
 
         Parameters
@@ -91,11 +263,13 @@ class MPObjectProxy:
             If True, pickle messages sent between processes. This reduces load on shared
             memory, but increases load on CPU. It is recommended to activate this flag if
             encountering "Too many open files"-type errors.
+        bb_size: Optional[int]
+            batch buffer size
         """
         self.in_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
         self.pickle_messages = pickle_messages
-        self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages)
+        self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages, bb_size)
         self.obj = obj
         if hasattr(obj, "parameters"):
             self.device = next(obj.parameters()).device
@@ -109,6 +283,15 @@ class MPObjectProxy:
     def encode(self, m):
         if self.pickle_messages:
             return pickle.dumps(m)
+        if (
+            self.placeholder.batch_buffer_size
+            and isinstance(m, (list, tuple))
+            and len(m) == 2
+            and isinstance(m[0], GraphActionCategorical)
+            and isinstance(m[1], torch.Tensor)
+        ):
+            self.placeholder._result_buffer.lock.acquire()
+            return put_into_result_buffer(m, self.placeholder._result_buffer.buffer)
         return m
 
     def decode(self, m):
@@ -133,6 +316,12 @@ class MPObjectProxy:
                     break
                 timeouts = 0
                 attr, args, kwargs = r
+                if self.placeholder.batch_buffer_size and len(args) and isinstance(args[0], BatchDescriptor):
+                    batch = resolve_batch_buffer(args[0], self.placeholder._batch_buffer.buffer, self.device)
+                    args = (batch,) + args[1:]
+                    # Should this release happen after the call to f()? Are we at risk of overwriting memory that
+                    # is still being used by CUDA?
+                    self.placeholder._batch_buffer.lock.release()
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
@@ -143,6 +332,7 @@ class MPObjectProxy:
                 except Exception as e:
                     result = e
                     exc_str = traceback.format_exc()
+                    print(exc_str)
                     try:
                         pickle.dumps(e)
                     except Exception:
@@ -159,7 +349,7 @@ class MPObjectProxy:
         self.stop.set()
 
 
-def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False):
+def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False, bb_size=None):
     """Construct a multiprocessing object proxy for torch DataLoaders so
     that it does not need to be copied in every worker's memory. For example,
     this can be used to wrap a model such that only the main process makes

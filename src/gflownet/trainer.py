@@ -22,8 +22,8 @@ from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger, set_main_process_device
-from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
+from gflownet.utils.multiprocessing_proxy import mp_object_wrapper, resolve_batch_buffer, BatchDescriptor
 
 from .config import Config
 
@@ -131,6 +131,7 @@ class GFNTrainer:
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
+                bb_size=self.cfg.mp_buffer_size,
             )
             self.to_terminate.append(wrapper.terminate)
             return wrapper.placeholder
@@ -140,7 +141,32 @@ class GFNTrainer:
     def build_callbacks(self):
         return {}
 
+<<<<<<< HEAD
     def _make_data_loader(self, src):
+=======
+    def build_training_data_loader(self) -> DataLoader:
+        model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
+        replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
+        iterator = SamplingIterator(
+            self.training_data,
+            model,
+            self.ctx,
+            self.algo,
+            self.task,
+            dev,
+            batch_size=self.cfg.algo.global_batch_size,
+            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
+            replay_buffer=replay_buffer,
+            ratio=self.cfg.algo.offline_ratio,
+            log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
+            random_action_prob=self.cfg.algo.train_random_action_prob,
+            hindsight_ratio=self.cfg.replay.hindsight_ratio,
+            buffer_size=self.cfg.mp_buffer_size,
+            num_workers=self.cfg.num_workers,
+        )
+        for hook in self.sampling_hooks:
+            iterator.add_log_hook(hook)
+>>>>>>> proof of concept of using shared pinned buffers
         return torch.utils.data.DataLoader(
             src,
             batch_size=None,
@@ -266,6 +292,7 @@ class GFNTrainer:
         start = self.cfg.start_at_step + 1
         num_training_steps = self.cfg.num_training_steps
         logger.info("Starting training")
+<<<<<<< HEAD
         start_time = time.time()
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
             # the memory fragmentation or allocation keeps growing, how often should we clean up?
@@ -274,6 +301,27 @@ class GFNTrainer:
             if it % 1024 == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
+=======
+        import time
+        t0 = time.time()
+        times = []
+        for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
+            if isinstance(batch, BatchDescriptor):
+                print(f"buffer size was {batch.size / 1024**2:.2f}M")
+                if train_dl.dataset.do_multiple_buffers:
+                    wid = batch.wid
+                    batch = resolve_batch_buffer(batch, train_dl.dataset.result_buffer[wid].buffer, self.device)
+                    train_dl.dataset.result_buffer[wid].lock.release()
+                else:
+                    batch = resolve_batch_buffer(batch, train_dl.dataset.result_buffer.buffer, self.device)
+                    train_dl.dataset.result_buffer.lock.release()
+            else:
+                batch = batch.to(self.device)
+            t1 = time.time()
+            times.append(t1 - t0)
+            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s")
+            t0 = t1
+>>>>>>> proof of concept of using shared pinned buffers
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
@@ -281,9 +329,13 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
+<<<<<<< HEAD
             info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
             info["time_spent"] = time.time() - start_time
             start_time = time.time()
+=======
+            info = self.train_batch(batch, epoch_idx, batch_idx, it)
+>>>>>>> proof of concept of using shared pinned buffers
             self.log(info, it, "train")
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))

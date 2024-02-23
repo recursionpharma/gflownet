@@ -101,6 +101,7 @@ class Config:
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
     overwrite_existing_exp: bool = False
+    mp_buffer_size: Optional[int] = None
     algo: AlgoConfig = field(default_factory=AlgoConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     opt: OptimizerConfig = field(default_factory=OptimizerConfig)
