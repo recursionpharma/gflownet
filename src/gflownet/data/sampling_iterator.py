@@ -1,7 +1,6 @@
 import os
 import sqlite3
 from collections.abc import Iterable
-from copy import deepcopy
 from typing import Callable, List
 
 import numpy as np
@@ -99,7 +98,6 @@ class SamplingIterator(IterableDataset):
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
         self.do_validate_batch = False  # Turn this on for debugging
-        self._past_trajs = []
 
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
         # then "offline" now refers to cond info and online to x, so no duplication and we don't end
@@ -248,8 +246,8 @@ class SamplingIterator(IterableDataset):
             #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
             rewards = torch.exp(log_rewards / cond_info["beta"])
             if num_online > 0 and self.log_dir is not None:
-                # There used to be a very expensive deepcopy here, but it should not be necessary. Hopefully nothing 
-                # breaks because of this change.
+                # There used to be a very expensive deepcopy here, and below, but it should not be necessary. Hopefully 
+                # nothing breaks because of this change.
                 self.log_generated(
                     trajs[num_offline:],
                     rewards[num_offline:],
@@ -261,10 +259,10 @@ class SamplingIterator(IterableDataset):
                 for hook in self.log_hooks:
                     extra_info.update(
                         hook(
-                            deepcopy(trajs[num_offline:]), 
-                            deepcopy(rewards[num_offline:]),
-                            deepcopy(flat_rewards[num_offline:]),
-                            {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
+                            trajs[num_offline:],
+                            rewards[num_offline:],
+                            flat_rewards[num_offline:],
+                            {k: v[num_offline:] for k, v in cond_info.items()},
                         )
                     )
 
@@ -279,11 +277,11 @@ class SamplingIterator(IterableDataset):
                 # push the online trajectories in the replay buffer and sample a new 'online' batch
                 for i in range(num_offline, len(trajs)):
                     self.replay_buffer.push(
-                        deepcopy(trajs[i]),
-                        deepcopy(log_rewards[i]),
-                        deepcopy(flat_rewards[i]),
-                        deepcopy(cond_info[i]),
-                        deepcopy(is_valid[i]),
+                        trajs[i],
+                        log_rewards[i],
+                        flat_rewards[i],
+                        cond_info[i],
+                        is_valid[i],
                     )
                 replay_trajs, replay_logr, replay_fr, replay_condinfo, replay_valid = self.replay_buffer.sample(
                     num_online
@@ -321,11 +319,6 @@ class SamplingIterator(IterableDataset):
             batch.extra_info = extra_info
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
-            self._past_trajs.append(trajs)
-            import pickle
-            if len(self._past_trajs) == 5:
-                with open("past_trajs.pkl", "wb") as f:
-                    pickle.dump(self._past_trajs, f)
 
             # Only activate for debugging your environment or dataset (e.g. the dataset could be
             # generating trajectories with illegal actions)

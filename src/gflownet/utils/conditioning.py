@@ -226,6 +226,7 @@ class FocusRegionConditional(Conditional):
         focus_coef, in_focus_mask = metrics.compute_focus_coef(
             flat_rewards, cond_info["focus_dir"], self.cfg.focus_cosim, self.cfg.focus_limit_coef
         )
+        scalar_logreward = scalar_logreward.clone()  # Avoid modifying the original tensor
         scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
         scalar_logreward[~in_focus_mask] = self.ocfg.algo.illegal_action_logreward
 
