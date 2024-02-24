@@ -246,8 +246,6 @@ class SamplingIterator(IterableDataset):
             #  TODO: implement that per-task (in case they don't apply the same beta and log transformations)
             rewards = torch.exp(log_rewards / cond_info["beta"])
             if num_online > 0 and self.log_dir is not None:
-                # There used to be a very expensive deepcopy here, and below, but it should not be necessary. Hopefully
-                # nothing breaks because of this change.
                 self.log_generated(
                     trajs[num_offline:],
                     rewards[num_offline:],
