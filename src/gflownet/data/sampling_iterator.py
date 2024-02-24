@@ -288,11 +288,11 @@ class SamplingIterator(IterableDataset):
                 )
 
                 # append the online trajectories to the offline ones
-                trajs[num_offline:] = replay_trajs
-                log_rewards[num_offline:] = replay_logr
-                flat_rewards[num_offline:] = replay_fr
-                cond_info[num_offline:] = replay_condinfo
-                is_valid[num_offline:] = replay_valid
+                trajs = trajs[:num_offline] + replay_trajs
+                log_rewards = torch.cat([log_rewards[:num_offline], replay_logr], dim=0)
+                flat_rewards = torch.cat([flat_rewards[:num_offline], replay_fr], dim=0)
+                cond_info = cond_info[:num_offline] + replay_condinfo  # list of dicts
+                is_valid = torch.cat([is_valid[:num_offline], replay_valid], dim=0)
 
                 # convert cond_info back to a dict
                 cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}
