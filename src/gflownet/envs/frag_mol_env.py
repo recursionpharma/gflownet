@@ -187,7 +187,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         data:  gd.Data
             The corresponding torch_geometric object.
         """
-        if hasattr(g, '_Data_cache') and g._Data_cache is not None:
+        if hasattr(g, "_Data_cache") and g._Data_cache is not None:
             return g._Data_cache
         zeros = lambda x: np.zeros(x, dtype=np.float32)  # noqa: E731
         x = zeros((max(1, len(g.nodes)), self.num_node_dim))
@@ -235,7 +235,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             else:
                 has_unfilled_attach = True
 
-        
         # The node must be connected to at most 1 other node and in the case where it is
         # connected to exactly one other node, the edge connecting them must not have any
         # attributes.
