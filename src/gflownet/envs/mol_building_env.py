@@ -257,17 +257,17 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
-        x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat))
+        x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat), dtype=np.float32)
         x[0, -1] = len(g.nodes) == 0
-        add_node_mask = np.ones((x.shape[0], self.num_new_node_values))
+        add_node_mask = np.ones((x.shape[0], self.num_new_node_values), dtype=np.float32)
         if self.max_nodes is not None and len(g.nodes) >= self.max_nodes:
             add_node_mask *= 0
-        remove_node_mask = np.zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
-        remove_node_attr_mask = np.zeros((x.shape[0], len(self.settable_atom_attrs)))
+        remove_node_mask = np.zeros((x.shape[0], 1), dtype=np.float32) + (1 if len(g) == 0 else 0)
+        remove_node_attr_mask = np.zeros((x.shape[0], len(self.settable_atom_attrs)), dtype=np.float32)
 
         explicit_valence = {}
         max_valence = {}
-        set_node_attr_mask = np.ones((x.shape[0], self.num_node_attr_logits))
+        set_node_attr_mask = np.ones((x.shape[0], self.num_node_attr_logits), dtype=np.float32)
         bridges = set(nx.bridges(g))
         if not len(g.nodes):
             set_node_attr_mask *= 0
@@ -326,14 +326,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                 s, e = self.atom_attr_logit_slice["expl_H"]
                 set_node_attr_mask[i, s:e] = 0
 
-        remove_edge_mask = np.zeros((len(g.edges), 1))
+        remove_edge_mask = np.zeros((len(g.edges), 1), dtype=np.float32)
         for i, e in enumerate(g.edges):
             if e not in bridges:
                 remove_edge_mask[i] = 1
 
-        edge_attr = np.zeros((len(g.edges) * 2, self.num_edge_dim))
-        set_edge_attr_mask = np.zeros((len(g.edges), self.num_edge_attr_logits))
-        remove_edge_attr_mask = np.zeros((len(g.edges), len(self.bond_attrs)))
+        edge_attr = np.zeros((len(g.edges) * 2, self.num_edge_dim), dtype=np.float32)
+        set_edge_attr_mask = np.zeros((len(g.edges), self.num_edge_attr_logits), dtype=np.float32)
+        remove_edge_attr_mask = np.zeros((len(g.edges), len(self.bond_attrs)), dtype=np.float32)
         for i, e in enumerate(g.edges):
             ad = g.edges[e]
             for k, sl in zip(self.bond_attrs, self.bond_attr_slice):
@@ -368,17 +368,21 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
                         and explicit_valence[u] + 1 <= max_valence[u]
                         and explicit_valence[v] + 1 <= max_valence[v]
                     )
-                ]
+                ],
+                dtype=np.float32,
             )
         data = dict(
             x=x,
             edge_index=edge_index,
             edge_attr=edge_attr,
             non_edge_index=non_edge_index.astype(np.int64).reshape((-1, 2)).T,
-            stop_mask=np.ones((1, 1)) * (len(g.nodes) > 0),  # Can only stop if there's at least a node
+            stop_mask=np.ones((1, 1), dtype=np.float32)
+            * (len(g.nodes) > 0),  # Can only stop if there's at least a node
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
-            add_edge_mask=np.ones((non_edge_index.shape[0], 1)),  # Already filtered by checking for valence
+            add_edge_mask=np.ones(
+                (non_edge_index.shape[0], 1), dtype=np.float32
+            ),  # Already filtered by checking for valence
             set_edge_attr_mask=set_edge_attr_mask,
             remove_node_mask=remove_node_mask,
             remove_node_attr_mask=remove_node_attr_mask,

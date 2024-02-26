@@ -1,59 +1,32 @@
-import os
 import pathlib
-import shutil
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
-from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
 
+import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.models import bengio2021flow
-from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
+from gflownet.data.qm9 import QM9Dataset
+from gflownet.envs.mol_building_env import MolBuildingEnvContext
+from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
+from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
 from gflownet.trainer import FlatRewards, RewardScalar
-from gflownet.utils import metrics, sascore
+from gflownet.utils import metrics
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
 from gflownet.utils.transforms import to_logreward
 
 
-def safe(f, x, default):
-    try:
-        return f(x)
-    except Exception:
-        return default
-
-
-def mol2mw(mols: list[RDMol], is_valid: list[bool], default=1000):
-    molwts = torch.tensor([safe(Descriptors.MolWt, i, default) for i, v in zip(mols, is_valid) if v])
-    molwts = ((300 - molwts) / 700 + 1).clip(0, 1)  # 1 until 300 then linear decay to 0 until 1000
-    return molwts
-
-
-def mol2sas(mols: list[RDMol], is_valid: list[bool], default=10):
-    sas = torch.tensor([safe(sascore.calculateScore, i, default) for i, v in zip(mols, is_valid) if v])
-    sas = (10 - sas) / 9  # Turn into a [0-1] reward
-    return sas
-
-
-def mol2qed(mols: list[RDMol], is_valid: list[bool], default=0):
-    return torch.tensor([safe(QED.qed, i, 0) for i, v in zip(mols, is_valid) if v])
-
-
-aux_tasks = {"qed": mol2qed, "sa": mol2sas, "mw": mol2mw}
-
-
-class SEHMOOTask(SEHTask):
+class QM9GapMOOTask(QM9GapTask):
     """Sets up a multiobjective task where the rewards are (functions of):
-    - the binding energy of a molecule to Soluble Epoxide Hydrolases,
+    - the homo-lumo gap,
     - its QED,
     - its synthetic accessibility,
     - and its molecular weight.
@@ -70,8 +43,8 @@ class SEHMOOTask(SEHTask):
     ):
         super().__init__(dataset, cfg, rng, wrap_model)
         self.cfg = cfg
-        mcfg = self.cfg.task.seh_moo
-        self.objectives = cfg.task.seh_moo.objectives
+        mcfg = self.cfg.task.qm9_moo
+        self.objectives = cfg.task.qm9_moo.objectives
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
@@ -86,7 +59,7 @@ class SEHMOOTask(SEHTask):
             + self.pref_cond.encoding_size()
             + (self.focus_cond.encoding_size() if self.focus_cond is not None else 0)
         )
-        assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
+        assert set(self.objectives) <= {"gap", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y))
@@ -195,28 +168,29 @@ class SEHMOOTask(SEHTask):
         return RewardScalar(clamped_logreward)
 
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        graphs = [bengio2021flow.mol2graph(i) for i in mols]
+        graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         assert len(graphs) == len(mols)
         is_valid = [i is not None for i in graphs]
         is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
+
         if not any(is_valid):
             return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
             for obj in self.objectives:
-                if obj == "seh":
+                if obj == "gap":
                     flat_r.append(super().compute_reward_from_graph(graphs))
                 else:
                     flat_r.append(aux_tasks[obj](mols, is_valid))
 
             flat_rewards = torch.stack(flat_r, dim=1)
-            assert flat_rewards.shape[0] == len(mols)
+            assert flat_rewards.shape[0] == is_valid_t.sum()
             return FlatRewards(flat_rewards), is_valid_t
 
 
-class SEHMOOFragTrainer(SEHFragTrainer):
-    task: SEHMOOTask
-    ctx: FragMolBuildingEnvContext
+class QM9MOOTrainer(QM9GapTrainer):
+    task: QM9GapMOOTask
+    ctx: MolBuildingEnvContext
 
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
@@ -236,7 +210,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             super().setup_algo()
 
     def setup_task(self):
-        self.task = SEHMOOTask(
+        self.task = QM9GapMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
             rng=self.rng,
@@ -330,6 +304,12 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         self.algo.task = self.task
 
+    def setup_data(self):
+        self.training_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=True, targets=self.cfg.task.qm9_moo.objectives)
+        self.test_data = QM9Dataset(self.cfg.task.qm9.h5_path, train=False, targets=self.cfg.task.qm9_moo.objectives)
+        self.to_terminate.append(self.training_data.terminate)
+        self.to_terminate.append(self.test_data.terminate)
+
     def build_callbacks(self):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
         # dependency is required.
@@ -353,93 +333,3 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         if self.task.focus_cond is not None and self.task.focus_cond.focus_model is not None:
             self.task.focus_cond.focus_model.save(pathlib.Path(self.cfg.log_dir))
         return super()._save_state(it)
-
-
-class RepeatedCondInfoDataset:
-    def __init__(self, cond_info_vectors, repeat):
-        self.cond_info_vectors = cond_info_vectors
-        self.repeat = repeat
-
-    def __len__(self):
-        return len(self.cond_info_vectors) * self.repeat
-
-    def __getitem__(self, idx):
-        assert 0 <= idx < len(self)
-        return torch.tensor(self.cond_info_vectors[int(idx // self.repeat)])
-
-
-def main():
-    """Example of how this model can be run."""
-    hps = {
-        "log_dir": "./logs/debug_run_sfm",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "pickle_mp_messages": True,
-        "overwrite_existing_exp": True,
-        "seed": 0,
-        "num_training_steps": 500,
-        "num_final_gen_steps": 50,
-        "validate_every": 100,
-        "num_workers": 0,
-        "algo": {
-            "global_batch_size": 64,
-            "method": "TB",
-            "sampling_tau": 0.95,
-            "train_random_action_prob": 0.01,
-            "tb": {
-                "Z_learning_rate": 1e-3,
-                "Z_lr_decay": 50000,
-            },
-        },
-        "model": {
-            "num_layers": 2,
-            "num_emb": 256,
-        },
-        "task": {
-            "seh_moo": {
-                "objectives": ["seh", "qed"],
-                "n_valid": 15,
-                "n_valid_repeats": 128,
-            },
-        },
-        "opt": {
-            "learning_rate": 1e-4,
-            "lr_decay": 20000,
-        },
-        "cond": {
-            "temperature": {
-                "sample_dist": "constant",
-                "dist_params": [60.0],
-                "num_thermometer_dim": 32,
-            },
-            "weighted_prefs": {
-                "preference_type": "dirichlet",
-            },
-            "focus_region": {
-                "focus_type": None,  # "learned-tabular",
-                "focus_cosim": 0.98,
-                "focus_limit_coef": 1e-1,
-                "focus_model_training_limits": (0.25, 0.75),
-                "focus_model_state_space_res": 30,
-                "max_train_it": 5_000,
-            },
-        },
-        "replay": {
-            "use": False,
-            "warmup": 1000,
-            "hindsight_ratio": 0.0,
-        },
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
-        else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
-
-    trial = SEHMOOFragTrainer(hps)
-    trial.print_every = 1
-    trial.run()
-
-
-if __name__ == "__main__":
-    main()

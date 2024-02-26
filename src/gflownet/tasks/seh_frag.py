@@ -11,6 +11,7 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import Dataset
+from torch_geometric.data import Data
 
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
@@ -62,16 +63,21 @@ class SEHTask(GFNTask):
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
         return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
+    def compute_reward_from_graph(self, graphs: List[Data]) -> Tensor:
+        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
+        batch.to(self.device)
+        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
+        preds[preds.isnan()] = 0
+        return self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1,))
+
     def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
             return FlatRewards(torch.zeros((0, 1))), is_valid
-        batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
-        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
-        preds[preds.isnan()] = 0
-        preds = self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1, 1))
+
+        preds = self.compute_reward_from_graph(graphs).reshape((-1, 1))
+        assert len(preds) == is_valid.sum()
         return FlatRewards(preds), is_valid
 
 
@@ -109,10 +115,11 @@ class LittleSEHDataset(Dataset):
 
     To turn on, self `cfg.algo.offline_ratio > 0`"""
 
-    def __init__(self) -> None:
+    def __init__(self, smis) -> None:
         super().__init__()
         self.props: List[Tensor] = []
         self.mols: List[Graph] = []
+        self.smis = smis
 
     def setup(self, task, ctx):
         rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
@@ -174,10 +181,18 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
     def setup_data(self):
         super().setup_data()
-        self.training_data = LittleSEHDataset()
+        if self.cfg.task.seh.reduced_frag:
+            # The examples don't work with the 18 frags
+            self.training_data = LittleSEHDataset([])
+        else:
+            self.training_data = LittleSEHDataset(SOME_MOLS)
 
     def setup_env_context(self):
-        self.ctx = FragMolBuildingEnvContext(max_frags=self.cfg.algo.max_nodes, num_cond_dim=self.task.num_cond_dim)
+        self.ctx = FragMolBuildingEnvContext(
+            max_frags=self.cfg.algo.max_nodes,
+            num_cond_dim=self.task.num_cond_dim,
+            fragments=bengio2021flow.FRAGMENTS_18 if self.cfg.task.seh.reduced_frag else bengio2021flow.FRAGMENTS,
+        )
 
     def setup(self):
         super().setup()
