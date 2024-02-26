@@ -190,6 +190,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         if hasattr(g, "_Data_cache") and g._Data_cache is not None:
             return g._Data_cache
         zeros = lambda x: np.zeros(x, dtype=np.float32)  # noqa: E731
+        ones = lambda x: np.ones(x, dtype=np.float32)  # noqa: E731
         x = zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
         edge_attr = zeros((len(g.edges) * 2, self.num_edge_dim))
@@ -197,7 +198,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # TODO: This is a bit silly but we have to do +1 when the graph is empty because the default
         # padding action is a [0, 0, 0], which needs to be legal for the empty state. Should be
         # fixable with a bit of smarts & refactoring.
-        remove_node_mask = zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
+        remove_node_mask = ones((x.shape[0], 1)) if len(g) == 0 else zeros((x.shape[0], 1))
         remove_edge_attr_mask = zeros((len(g.edges), self.num_edge_attrs))
         if len(g):
             degrees = np.array(list(g.degree), dtype=np.int32)[:, 1]  # type: ignore
@@ -266,7 +267,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 else np.ones((1, 1), np.float32)
             )
             add_node_mask = add_node_mask * np.ones((x.shape[0], self.num_new_node_values), np.float32)
-        stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else np.ones((1, 1), np.float32)
+        stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else ones((1, 1))
 
         data = gd.Data(
             **{
