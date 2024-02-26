@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from collections.abc import Iterable
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import numpy as np
 import torch
@@ -39,6 +39,7 @@ class SamplingIterator(IterableDataset):
         log_dir: str = None,
         sample_cond_info: bool = True,
         random_action_prob: float = 0.0,
+        det_after: Optional[int] = None,
         hindsight_ratio: float = 0.0,
         init_train_iter: int = 0,
     ):
@@ -98,7 +99,8 @@ class SamplingIterator(IterableDataset):
         self.hindsight_ratio = hindsight_ratio
         self.train_it = init_train_iter
         self.do_validate_batch = False  # Turn this on for debugging
-
+        self.iter = 0
+        self.det_after = det_after
         # Slightly weird semantics, but if we're sampling x given some fixed cond info (data)
         # then "offline" now refers to cond info and online to x, so no duplication and we don't end
         # up with 2*batch_size accidentally
@@ -121,7 +123,10 @@ class SamplingIterator(IterableDataset):
         if self.stream:
             # If we're streaming data, just sample `offline_batch_size` indices
             while True:
-                yield self.rng.integers(0, len(self.data), self.offline_batch_size)
+                if self.offline_batch_size == 0 or len(self.data) == 0:
+                    yield np.arange(0, 0)
+                else:
+                    yield self.rng.integers(0, len(self.data), self.offline_batch_size)
         else:
             # Otherwise, figure out which indices correspond to this worker
             worker_info = torch.utils.data.get_worker_info()
@@ -155,6 +160,9 @@ class SamplingIterator(IterableDataset):
         return len(self.data)
 
     def __iter__(self):
+        self.iter += 1
+        if self.det_after is not None and self.iter > self.det_after:
+            self.random_action_prob = 0
         worker_info = torch.utils.data.get_worker_info()
         self._wid = worker_info.id if worker_info is not None else 0
         # Now that we know we are in a worker instance, we can initialize per-worker things
@@ -180,6 +188,7 @@ class SamplingIterator(IterableDataset):
                 flat_rewards = (
                     list(self.task.flat_reward_transform(torch.stack(flat_rewards))) if len(flat_rewards) else []
                 )
+
                 trajs = self.algo.create_training_data_from_graphs(
                     graphs, self.model, cond_info["encoding"][:num_offline], 0
                 )
@@ -235,8 +244,13 @@ class SamplingIterator(IterableDataset):
             log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
             log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
 
+            assert len(trajs) == num_online + num_offline
             # Computes some metrics
-            extra_info = {}
+            extra_info = {"random_action_prob": self.random_action_prob}
+            if num_online > 0:
+                H = sum(i["fwd_logprob"] for i in trajs[num_offline:])
+                extra_info["entropy"] = -H / num_online
+                extra_info["length"] = np.mean([len(i["traj"]) for i in trajs[num_offline:]])
             if not self.sample_cond_info:
                 # If we're using a dataset of preferences, the user may want to know the id of the preference
                 for i, j in zip(trajs, idcs):
@@ -315,6 +329,10 @@ class SamplingIterator(IterableDataset):
             batch.preferences = cond_info.get("preferences", None)
             batch.focus_dir = cond_info.get("focus_dir", None)
             batch.extra_info = extra_info
+            if self.ctx.has_n():
+                log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
+                batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
+                batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
             # TODO: we could very well just pass the cond_info dict to construct_batch above,
             # and the algo can decide what it wants to put in the batch object
 

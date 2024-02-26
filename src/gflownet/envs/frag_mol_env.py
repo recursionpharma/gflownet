@@ -1,10 +1,13 @@
 from collections import defaultdict
+from math import log
 from typing import List, Tuple
 
+import networkx as nx
 import numpy as np
 import rdkit.Chem as Chem
 import torch
 import torch_geometric.data as gd
+from scipy import special
 
 from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.models import bengio2021flow
@@ -85,6 +88,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveEdgeAttr,
         ]
         self.device = torch.device("cpu")
+        self.n_counter = NCounter()
         self.sorted_frags = sorted(list(enumerate(self.frags_mol)), key=lambda x: -x[1].GetNumAtoms())
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
@@ -368,6 +372,86 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     def object_to_log_repr(self, g: Graph):
         """Convert a Graph to a string representation"""
         return Chem.MolToSmiles(self.graph_to_mol(g))
+
+    def has_n(self) -> bool:
+        return True
+
+    def log_n(self, g: Graph) -> int:
+        return self.n_counter(g)
+
+
+class NCounter:
+    """
+    Dynamic program to calculate the number of trajectories to a state.
+    See Appendix D of "Maximum entropy GFlowNets with soft Q-learning"
+    by Mohammadpour et al 2024 (https://arxiv.org/abs/2312.14331) for a proof.
+    """
+
+    def __init__(self):
+        # Hold the log factorial
+        self.cache = [0.0, 0.0]
+
+    def lfac(self, arg: int):
+        while arg >= len(self.cache):
+            self.cache.append(log(len(self.cache)) + self.cache[-1])
+        return self.cache[arg]
+
+    def lcomb(self, x, y):
+        # log c(x, y) = log (x! / (y! (x - y)!))
+        assert x >= y
+        return self.lfac(x) - self.lfac(y) - self.lfac(x - y)
+
+    @staticmethod
+    def root_tree(og: nx.Graph, x):
+        g = nx.DiGraph(nx.create_empty_copy(og))
+        visited = np.zeros(len(g), bool)
+        visited[x] = True
+        q = [x]
+        while len(q) > 0:  # print(i, x)
+            x = q.pop()
+            for i in nx.neighbors(og, x):
+                if not visited[i]:
+                    visited[i] = True
+                    g.add_edge(x, i, **(og.get_edge_data(x, i) | og.get_edge_data(i, x)))
+                    q.append(i)
+
+        return g
+
+    def f(self, g, x):
+        elem = np.full((len(g),), -1, int)
+        ways = np.full((len(g),), -1, float)
+
+        def _f(x):
+            if elem[x] < 0:
+                e, w = 0, 0
+                for i in nx.neighbors(g, x):
+                    e1, w1 = _f(i)
+                    # edge feature
+                    f = len(g.get_edge_data(x, i))
+                    for i in range(f):
+                        w1 += np.log(e1 + i)
+                    e1 += f
+
+                    w = w + w1 + self.lcomb(e + e1, e)
+                    e = e + e1
+
+                elem[x] = e + 1
+                ways[x] = w
+            return elem[x], ways[x]
+
+        return _f(x)[1]
+
+    def __call__(self, g):
+        if len(g) == 0:
+            return 0
+
+        acc = []
+        for i in nx.nodes(g):
+            rg = self.root_tree(g, i)
+            x = self.f(rg, i)
+            acc.append(x)
+
+        return special.logsumexp(acc)
 
 
 def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, numiters=None):

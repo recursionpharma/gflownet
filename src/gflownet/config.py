@@ -60,6 +60,8 @@ class Config:
         The number of training steps after which to validate the model
     checkpoint_every : Optional[int]
         The number of training steps after which to checkpoint the model
+    store_all_checkpoints : bool
+        Whether to store all checkpoints or only the last one
     print_every : int
         The number of training steps after which to print the training loss
     start_at_step : int
@@ -85,6 +87,7 @@ class Config:
     seed: int = 0
     validate_every: int = 1000
     checkpoint_every: Optional[int] = None
+    store_all_checkpoints: bool = False
     print_every: int = 100
     start_at_step: int = 0
     num_final_gen_steps: Optional[int] = None

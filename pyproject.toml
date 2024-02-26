@@ -73,6 +73,7 @@ dependencies = [
     "pyro-ppl",
     "gpytorch",
     "omegaconf>=2.3",
+    "pandas", # needed for QM9 and HDF5 support.
 ]
 
 [project.optional-dependencies]

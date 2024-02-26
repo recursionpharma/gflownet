@@ -554,6 +554,7 @@ class GraphActionCategorical:
             slice_dict[k].to(dev) if k is not None else torch.arange(graphs.num_graphs + 1, device=dev) for k in keys
         ]
         self.logprobs = None
+        self.log_n = None
 
         if deduplicate_edge_index and "edge_index" in keys:
             for idx, k in enumerate(keys):
@@ -567,6 +568,8 @@ class GraphActionCategorical:
         new.logits = [i.detach() for i in new.logits]
         if new.logprobs is not None:
             new.logprobs = [i.detach() for i in new.logprobs]
+        if new.log_n is not None:
+            new.log_n = new.log_n.detach()
         return new
 
     def to(self, device):
@@ -576,9 +579,27 @@ class GraphActionCategorical:
         self.slice = [i.to(device) for i in self.slice]
         if self.logprobs is not None:
             self.logprobs = [i.to(device) for i in self.logprobs]
+        if self.log_n is not None:
+            self.log_n = self.log_n.to(device)
         if self.masks is not None:
             self.masks = [i.to(device) for i in self.masks]
         return self
+
+    def log_n_actions(self):
+        if self.log_n is None:
+            self.log_n = (
+                sum(
+                    [
+                        scatter(m.broadcast_to(i.shape).int().sum(1), b, dim=0, dim_size=self.num_graphs, reduce="sum")
+                        for m, i, b in zip(self.masks, self.logits, self.batch)
+                    ]
+                )
+                .clamp(1)
+                .float()
+                .log()
+                .clamp(1)
+            )
+        return self.log_n
 
     def _compute_batchwise_max(
         self,
@@ -678,8 +699,25 @@ class GraphActionCategorical:
         u = [torch.rand(i.shape, device=self.dev) for i in self.logits]
         # Gumbel noise
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
+
+        if self.masks is not None:
+            gumbel_safe = [
+                torch.where(
+                    mask == 1,
+                    torch.maximum(
+                        x,
+                        torch.nextafter(
+                            torch.tensor(torch.finfo(x.dtype).min, dtype=x.dtype), torch.tensor(0.0, dtype=x.dtype)
+                        ).to(x.device),
+                    ),
+                    torch.finfo(x.dtype).min,
+                )
+                for x, mask in zip(gumbel, self.masks)
+            ]
+        else:
+            gumbel_safe = gumbel
         # Take the argmax
-        return self.argmax(x=gumbel)
+        return self.argmax(x=gumbel_safe)
 
     def argmax(
         self,
@@ -926,3 +964,12 @@ class GraphBuildingEnvContext:
         return json.dumps(
             [[(i, g.nodes[i]) for i in g.nodes], [(e, g.edges[e]) for e in g.edges]], separators=(",", ":")
         )
+
+    def has_n(self) -> bool:
+        return False
+
+    def log_n(self, g) -> float:
+        return 0.0
+
+    def traj_log_n(self, traj):
+        return [self.log_n(g) for g, _ in traj]
