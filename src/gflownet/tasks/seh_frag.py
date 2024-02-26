@@ -192,6 +192,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
             max_frags=self.cfg.algo.max_nodes,
             num_cond_dim=self.task.num_cond_dim,
             fragments=bengio2021flow.FRAGMENTS_18 if self.cfg.task.seh.reduced_frag else bengio2021flow.FRAGMENTS,
+            min_len=self.cfg.algo.min_len,
         )
 
     def setup(self):

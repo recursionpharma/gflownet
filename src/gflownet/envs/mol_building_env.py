@@ -32,6 +32,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         num_rw_feat=0,
         max_nodes=None,
         max_edges=None,
+        min_time=0,
     ):
         """An env context for building molecules atom-by-atom and bond-by-bond.
 
@@ -71,6 +72,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_rw_feat = num_rw_feat
         self.max_nodes = max_nodes
         self.max_edges = max_edges
+        self.min_time = 0
 
         self.default_wildcard_replacement = "C"
         self.negative_attrs = ["fill_wildcard"]
@@ -255,7 +257,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             raise ValueError(f"Unknown action type {action.action}")
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, t: int = 0) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
         x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat), dtype=np.float32)
         x[0, -1] = len(g.nodes) == 0
@@ -376,8 +378,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             edge_index=edge_index,
             edge_attr=edge_attr,
             non_edge_index=non_edge_index.astype(np.int64).reshape((-1, 2)).T,
-            stop_mask=np.ones((1, 1), dtype=np.float32)
-            * (len(g.nodes) > 0),  # Can only stop if there's at least a node
+            stop_mask=np.ones((1, 1)) * (len(g.nodes) > 0) * (t >= self.min_time),  # Only stop if there's 1+ nodes
             add_node_mask=add_node_mask,
             set_node_attr_mask=set_node_attr_mask,
             add_edge_mask=np.ones(

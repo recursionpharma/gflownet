@@ -68,15 +68,17 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         """
         if not self.correct_idempotent:
             # For every s' (i.e. every state except the first of each trajectory), enumerate parents
-            parents = [[relabel(*i) for i in self.env.parents(i[0])] for tj in trajs for i in tj["traj"][1:]]
+            parents = [
+                ([relabel(*i) for i in self.env.parents(i[0])], t) for tj in trajs for t, i in enumerate(tj["traj"][1:])
+            ]
             # convert parents to Data
-            parent_graphs = [self.ctx.graph_to_Data(pstate) for parent in parents for pact, pstate in parent]
+            parent_graphs = [self.ctx.graph_to_Data(pstate, t) for parent, t in parents for pact, pstate in parent]
         else:
             # Here we again enumerate parents
-            states = [i[0] for tj in trajs for i in tj["traj"][1:]]
-            base_parents = [[relabel(*i) for i in self.env.parents(i)] for i in states]
+            states = [(i[0], t) for tj in trajs for t, i in enumerate(tj["traj"][1:])]
+            base_parents = [([relabel(*i) for i in self.env.parents(i)], t) for i, t in states]
             base_parent_graphs = [
-                [self.ctx.graph_to_Data(pstate) for pact, pstate in parent_set] for parent_set in base_parents
+                [self.ctx.graph_to_Data(pstate, t) for pact, pstate in parent_set] for parent_set, t in base_parents
             ]
             parents = []
             parent_graphs = []
@@ -103,9 +105,12 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         parent_actions = [pact for parent in parents for pact, pstate in parent]
         parent_actionidcs = [self.ctx.GraphAction_to_aidx(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)]
         # convert state to Data
-        state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"][1:]]
+        state_graphs = [self.ctx.graph_to_Data(i[0], t) for tj in trajs for t, i in enumerate(tj["traj"][1:])]
         terminal_actions = [
-            self.ctx.GraphAction_to_aidx(self.ctx.graph_to_Data(tj["traj"][-1][0]), tj["traj"][-1][1]) for tj in trajs
+            self.ctx.GraphAction_to_aidx(
+                self.ctx.graph_to_Data(tj["traj"][-1][0], len(tj["traj"]) - 1), tj["traj"][-1][1]
+            )
+            for tj in trajs
         ]
 
         # Create a batch from [*parents, *states]. This order will make it easier when computing the loss

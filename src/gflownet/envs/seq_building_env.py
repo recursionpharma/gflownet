@@ -22,6 +22,9 @@ class Seq(Graph):
     def __repr__(self):
         return "".join(map(str, self.seq))
 
+    def __len__(self) -> int:
+        return len(self.seq)
+
     @property
     def nodes(self):
         return self.seq
@@ -84,7 +87,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
     This context gets an agent to generate sequences of tokens from left to right, i.e. in an autoregressive fashion.
     """
 
-    def __init__(self, alphabet: Sequence[str], num_cond_dim=0):
+    def __init__(self, alphabet: Sequence[str], num_cond_dim=0, min_len=0):
         self.alphabet = alphabet
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode]
 
@@ -93,6 +96,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
         self.pad_token = len(alphabet) + 1
         self.num_actions = len(alphabet) + 1  # Alphabet + Stop
         self.num_cond_dim = num_cond_dim
+        self.min_len = min_len
 
     def aidx_to_GraphAction(self, g: Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
         # Since there's only one "object" per timestep to act upon (in graph parlance), the row is always == 0
@@ -115,7 +119,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
             raise ValueError(action)
         return (type_idx, 0, int(col))
 
-    def graph_to_Data(self, g: Graph):
+    def graph_to_Data(self, g: Graph, t: int):
         s: Seq = g  # type: ignore
         return torch.tensor([self.bos_token] + s.seq, dtype=torch.long)
 

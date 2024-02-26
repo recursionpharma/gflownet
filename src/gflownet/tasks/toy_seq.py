@@ -63,6 +63,7 @@ class ToySeqTrainer(StandardOnlineTrainer):
 
         cfg.algo.method = "TB"
         cfg.algo.max_nodes = 10
+        cfg.algo.min_len = 10
         cfg.algo.max_len = 10
         cfg.algo.sampling_tau = 0.9
         cfg.algo.illegal_action_logreward = -75
@@ -79,6 +80,7 @@ class ToySeqTrainer(StandardOnlineTrainer):
         self.model = SeqTransformerGFN(
             self.ctx,
             self.cfg,
+            min_len=self.cfg.algo.min_len,
         )
 
     def setup_task(self):
@@ -93,6 +95,7 @@ class ToySeqTrainer(StandardOnlineTrainer):
         self.ctx = AutoregressiveSeqBuildingContext(
             "abc",
             self.task.num_cond_dim,
+            self.cfg.algo.min_len,
         )
 
     def setup_algo(self):

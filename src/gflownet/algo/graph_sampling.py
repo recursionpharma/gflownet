@@ -30,7 +30,16 @@ class GraphSampler:
     """A helper class to sample from GraphActionCategorical-producing models"""
 
     def __init__(
-        self, ctx, env, max_len, max_nodes, rng, sample_temp=1, correct_idempotent=False, pad_with_terminal_state=False
+        self,
+        ctx,
+        env,
+        max_len,
+        max_nodes,
+        rng,
+        sample_temp=1,
+        correct_idempotent=False,
+        pad_with_terminal_state=False,
+        # min_len=0,
     ):
         """
         Parameters
@@ -62,6 +71,7 @@ class GraphSampler:
         self.sanitize_samples = True
         self.correct_idempotent = correct_idempotent
         self.pad_with_terminal_state = pad_with_terminal_state
+        self.consider_masks_complete = ctx.consider_masks_complete if hasattr(ctx, "consider_masks_complete") else False
 
     def sample_from_model(
         self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.0
@@ -108,7 +118,7 @@ class GraphSampler:
 
         for t in range(self.max_len):
             # Construct graphs for the trajectories that aren't yet done
-            torch_graphs = [self.ctx.graph_to_Data(i) for i in not_done(graphs)]
+            torch_graphs = [self.ctx.graph_to_Data(i, t) for i in not_done(graphs)]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             # Forward pass to get GraphActionCategorical
             # Note about `*_`, the model may be outputting its own bck_cat, but we ignore it if it does.
@@ -153,7 +163,11 @@ class GraphSampler:
                         # self.env.step can raise AssertionError if the action is illegal
                         gp = self.env.step(graphs[i], graph_actions[j])
                         assert len(gp.nodes) <= self.max_nodes
-                    except AssertionError:
+                    except AssertionError as e:
+                        if self.consider_masks_complete:
+                            # If masks are considered complete, then we can safely say that we've encountered a bug
+                            # since the agent should only be able to take legal actions (that would not raise an error)
+                            raise e
                         done[i] = True
                         data[i]["is_valid"] = False
                         bck_logprob[i].append(torch.tensor([1.0], device=dev).log())

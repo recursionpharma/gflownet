@@ -97,6 +97,9 @@ class AlgoConfig:
         The name of the algorithm to use (e.g. "TB")
     global_batch_size : int
         The batch size for training
+    min_len: int
+        If >0, prevents the agent from using the Stop action before min_len steps (trajectories may still end for
+        other reasons, but generally setting min_len==max_len should produce fixed length trajectories).
     max_len : int
         The maximum length of a trajectory
     max_nodes : int
@@ -124,6 +127,7 @@ class AlgoConfig:
 
     method: str = "TB"
     global_batch_size: int = 64
+    min_len: int = 0
     max_len: int = 128
     max_nodes: int = 128
     max_edges: int = 128
