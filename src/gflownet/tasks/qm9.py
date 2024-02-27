@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -162,3 +162,22 @@ class QM9GapTrainer(StandardOnlineTrainer):
         super().setup()
         self.training_data.setup(self.task, self.ctx)
         self.test_data.setup(self.task, self.ctx)
+
+
+def main():
+    """Example of how this model can be run."""
+    config = init_empty(Config())
+    config.num_workers = 0
+    config.num_training_steps = 100000
+    config.validate_every = 100
+    config.log_dir = "./logs/debug_qm9"
+    config.opt.lr_decay = 10000
+    config.task.qm9.h5_path = "/rxrx/data/chem/qm9/qm9.h5"
+    config.task.qm9.model_path = "/rxrx/data/chem/qm9/mxmnet_gap_model.pt"
+
+    trial = QM9GapTrainer(config)
+    trial.run()
+
+
+if __name__ == "__main__":
+    main()

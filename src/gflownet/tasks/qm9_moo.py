@@ -15,7 +15,7 @@ from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
-from gflownet.tasks.qm9.qm9 import QM9GapTask, QM9GapTrainer
+from gflownet.tasks.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
 from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics
@@ -197,7 +197,7 @@ class QM9MOOTrainer(QM9GapTrainer):
         cfg.algo.sampling_tau = 0.95
         # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
         # sampling and set the offline ratio to 1
-        cfg.algo.valid_sample_cond_info = False
+        cfg.cond.valid_sample_cond_info = False
         cfg.algo.valid_offline_ratio = 1
 
     def setup_algo(self):

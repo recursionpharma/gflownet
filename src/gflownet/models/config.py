@@ -9,7 +9,7 @@ class GraphTransformerConfig:
     num_mlp_layers: int = 0
 
 
-class SeqPosEnc(Enum):
+class SeqPosEnc(int, Enum):
     Pos = 0
     Rotary = 1
 

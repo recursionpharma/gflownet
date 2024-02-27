@@ -29,7 +29,7 @@ class TempCondConfig:
 
 @dataclass
 class MultiObjectiveConfig:
-    num_objectives: int = 2
+    num_objectives: int = 2  # TODO: Change that as it can conflict with cfg.task.seh_moo.num_objectives
     num_thermometer_dim: int = 16
 
 
@@ -61,7 +61,7 @@ class FocusRegionConfig:
         [None, "centered", "partitioned", "dirichlet", "hyperspherical", "learned-gfn", "learned-tabular"]
     """
 
-    focus_type: Optional[str] = "learned-tabular"
+    focus_type: Optional[str] = "centered"
     use_steer_thermomether: bool = False
     focus_cosim: float = 0.98
     focus_limit_coef: float = 0.1
@@ -72,6 +72,7 @@ class FocusRegionConfig:
 
 @dataclass
 class ConditionalsConfig:
+    valid_sample_cond_info: bool = True
     temperature: TempCondConfig = TempCondConfig()
     moo: MultiObjectiveConfig = MultiObjectiveConfig()
     weighted_prefs: WeightedPreferencesConfig = WeightedPreferencesConfig()
