@@ -4,8 +4,8 @@ import time
 
 import wandb
 
-from gflownet.tasks.seh_frag_moo import SEHMOOFragTrainer
 from gflownet.config import Config, init_empty
+from gflownet.tasks.seh_frag_moo import SEHMOOFragTrainer
 
 TIME = time.strftime("%m-%d-%H-%M")
 ENTITY = "valencelabs"
