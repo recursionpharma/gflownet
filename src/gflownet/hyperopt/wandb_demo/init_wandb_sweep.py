@@ -1,13 +1,22 @@
-from pathlib import Path
+import os
+import time
 
 import wandb
 
-import gflownet
+import gflownet.tasks.seh_frag_moo as seh_frag_moo
 from gflownet.config import Config, init_empty
 
+TIME = time.strftime("%m-%d-%H-%M")
+ENTITY = "valencelabs"
+PROJECT = "syngfn"
+SWEEP_NAME = f"{TIME}-sehFragMoo-Zlr-Zlrdecay"
+STORAGE_DIR = f"~/storage/wandb_sweeps/{SWEEP_NAME}"
+
+
+# Define the search space of the sweep
 sweep_config = {
-    "name": "sehFragMoo-Zlr-Zlrdecay",
-    "program": "wandb_agent_main.py",
+    "name": SWEEP_NAME,
+    "program": "init_wandb_sweep.py",
     "controller": {
         "type": "cloud",
     },
@@ -24,7 +33,7 @@ def wandb_config_merger():
     wandb_config = wandb.config
 
     # Set desired config values
-    config.log_dir = str(Path(gflownet.__file__).parent / "sweeps" / sweep_config["name"] / "run_logs" / wandb.run.name)
+    config.log_dir = (f"{STORAGE_DIR}/{wandb.run.name}-id-{wandb.run.id}",)
     config.print_every = 100
     config.validate_every = 1000
     config.num_final_gen_steps = 1000
@@ -49,4 +58,16 @@ def wandb_config_merger():
 
 
 if __name__ == "__main__":
-    wandb.sweep(sweep_config, entity="valencelabs", project="gflownet")
+    # if there are arguments, this is a wandb agent
+    if len(sweep_config["parameters"]) > 0:
+        wandb.init(entity="valencelabs", project="gflownet")
+        config = wandb_config_merger()
+        trial = seh_frag_moo.SEHMOOFragTrainer(config)
+        trial.run()
+
+    # otherwise, initialize the sweep
+    else:
+        if os.path.exists(STORAGE_DIR):
+            raise ValueError(f"Sweep storage directory {STORAGE_DIR} already exists.")
+
+        wandb.sweep(sweep_config, entity=ENTITY, project=PROJECT)
