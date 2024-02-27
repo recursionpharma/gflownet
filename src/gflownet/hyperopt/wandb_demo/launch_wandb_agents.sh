@@ -4,7 +4,7 @@
 # Usage: sbatch launch_wandb_agent.sh <SWEEP_ID>
 
 #SBATCH --job-name=wandb_sweep_agent
-#SBATCH --array=1-20
+#SBATCH --array=1-6
 #SBATCH --time=23:59:00
 #SBATCH --output=slurm_output_files/%x_%N_%A_%a.out
 #SBATCH --gpus=1

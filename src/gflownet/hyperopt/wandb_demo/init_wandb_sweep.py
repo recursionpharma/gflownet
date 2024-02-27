@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 import wandb
@@ -8,7 +9,7 @@ from gflownet.config import Config, init_empty
 
 TIME = time.strftime("%m-%d-%H-%M")
 ENTITY = "valencelabs"
-PROJECT = "syngfn"
+PROJECT = "gflownet"
 SWEEP_NAME = f"{TIME}-sehFragMoo-Zlr-Zlrdecay"
 STORAGE_DIR = f"~/storage/wandb_sweeps/{SWEEP_NAME}"
 
@@ -22,8 +23,8 @@ sweep_config = {
     },
     "method": "grid",
     "parameters": {
-        "config.algo.tb.Z_learning_rate": {"values": [1e-4, 3e-4, 1e-3, 3e-3, 1e-2]},
-        "config.algo.tb.Z_lr_decay": {"values": [2_000, 10_000, 50_000, 250_000]},
+        "config.algo.tb.Z_learning_rate": {"values": [1e-4, 1e-3, 1e-2]},
+        "config.algo.tb.Z_lr_decay": {"values": [2_000, 50_000]},
     },
 }
 
@@ -58,16 +59,15 @@ def wandb_config_merger():
 
 
 if __name__ == "__main__":
-    # if there are arguments, this is a wandb agent
-    if len(sweep_config["parameters"]) > 0:
-        wandb.init(entity="valencelabs", project="gflownet")
-        config = wandb_config_merger()
-        trial = seh_frag_moo.SEHMOOFragTrainer(config)
-        trial.run()
-
-    # otherwise, initialize the sweep
-    else:
+    # if there no arguments, initialize the sweep, otherwise this is a wandb agent
+    if len(sys.argv) == 1:
         if os.path.exists(STORAGE_DIR):
             raise ValueError(f"Sweep storage directory {STORAGE_DIR} already exists.")
 
         wandb.sweep(sweep_config, entity=ENTITY, project=PROJECT)
+
+    else:
+        wandb.init(entity=ENTITY, project=PROJECT)
+        config = wandb_config_merger()
+        trial = seh_frag_moo.SEHMOOFragTrainer(config)
+        trial.run()
