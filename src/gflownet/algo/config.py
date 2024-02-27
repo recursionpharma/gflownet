@@ -116,8 +116,6 @@ class AlgoConfig:
         Do not take random actions after this number of steps
     valid_random_action_prob : float
         The probability of taking a random action during validation
-    valid_sample_cond_info : bool
-        Whether to sample conditioning information during validation (if False, expects a validation set of cond_info)
     sampling_tau : float
         The EMA factor for the sampling model (theta_sampler = tau * theta_sampler + (1-tau) * theta)
     """

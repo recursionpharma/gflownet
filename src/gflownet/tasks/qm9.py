@@ -163,6 +163,7 @@ class QM9GapTrainer(StandardOnlineTrainer):
         self.training_data.setup(self.task, self.ctx)
         self.test_data.setup(self.task, self.ctx)
 
+
 def main():
     """Example of how this model can be run."""
     config = init_empty(Config())
@@ -180,4 +181,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
