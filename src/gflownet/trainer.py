@@ -228,9 +228,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            # The 2 here is an odd quirk of torch 1.10, it is fixed and
-            # replaced by None in torch 2.
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def build_validation_data_loader(self) -> DataLoader:
@@ -257,7 +255,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def build_final_data_loader(self) -> DataLoader:
@@ -285,7 +283,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
