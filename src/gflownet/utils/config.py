@@ -47,6 +47,7 @@ class WeightedPreferencesConfig:
         - None: All rewards equally weighted"""
 
     preference_type: Optional[str] = "dirichlet"
+    preference_param: Optional[float] = 1.5
 
 
 @dataclass

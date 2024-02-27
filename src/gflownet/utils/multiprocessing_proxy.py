@@ -106,9 +106,6 @@ class MPObjectProxy:
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
-    def __del__(self):
-        self.stop.set()
-
     def encode(self, m):
         if self.pickle_messages:
             return pickle.dumps(m)
@@ -123,14 +120,18 @@ class MPObjectProxy:
         return i.detach().to(torch.device("cpu")) if isinstance(i, self.cuda_types) else i
 
     def run(self):
-        while not self.stop.is_set():
+        timeouts = 0
+
+        while not self.stop.is_set() or timeouts < 500:
             for qi, q in enumerate(self.in_queues):
                 try:
                     r = self.decode(q.get(True, 1e-5))
                 except queue.Empty:
+                    timeouts += 1
                     continue
                 except ConnectionError:
                     break
+                timeouts = 0
                 attr, args, kwargs = r
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
@@ -153,6 +154,9 @@ class MPObjectProxy:
                 else:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
+
+    def terminate(self):
+        self.stop.set()
 
 
 def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = False):
@@ -190,4 +194,4 @@ def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = Fals
         A placeholder object whose method calls route arguments to the main process
 
     """
-    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages).placeholder
+    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages)

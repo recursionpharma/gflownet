@@ -106,6 +106,30 @@ FRAGMENTS = [
     ["c1ncc2nc[nH]c2n1", [2, 6]],
 ]
 
+# 18 fragments from "Towards Understanding and Improving GFlowNet Training"
+# by Shen et al. (https://arxiv.org/abs/2305.07170)
+
+FRAGMENTS_18 = [
+    ["CO", [1, 0]],
+    ["O=c1[nH]cnc2[nH]cnc12", [3, 6]],
+    ["S", [0, 0]],
+    ["C1CNCCN1", [2, 5]],
+    ["c1cc[nH+]cc1", [3, 1]],
+    ["c1ccccc1", [0, 2]],
+    ["C1CCCCC1", [0, 2]],
+    ["CC(C)C", [1, 2]],
+    ["C1CCOCC1", [0, 2]],
+    ["c1cn[nH]c1", [4, 0]],
+    ["C1CCNC1", [2, 0]],
+    ["c1cncnc1", [0, 1]],
+    ["O=c1nc2[nH]c3ccccc3nc-2c(=O)[nH]1", [8, 4]],
+    ["c1ccncc1", [1, 0]],
+    ["O=c1nccc[nH]1", [6, 3]],
+    ["O=c1cc[nH]c(=O)[nH]1", [2, 4]],
+    ["C1CCOC1", [2, 4]],
+    ["C1CCNCC1", [1, 0]],
+]
+
 
 class MPNNet(nn.Module):
     def __init__(

@@ -522,6 +522,22 @@ class Normalizer(object):
         return self.scale * arr + self.loc
 
 
+def all_are_tanimoto_different(thresh, fp, mode_fps, delta=16):
+    """
+    Equivalent to `all(DataStructs.BulkTanimotoSimilarity(fp, mode_fps) < thresh)` but much faster.
+    """
+    assert delta > 0
+    s = 0
+    n = len(mode_fps)
+    while s < n:
+        e = min(s + delta, n)
+        for i in DataStructs.BulkTanimotoSimilarity(fp, mode_fps[s:e]):
+            if i >= thresh:
+                return False
+        s = e
+    return True
+
+
 # Should be calculated per preference
 def compute_diverse_top_k(smiles, rewards, k, thresh=0.7):
     # mols is a list of (reward, mol)
@@ -551,7 +567,7 @@ def get_topk(rewards, k):
         Rewards obtained after taking the convex combination.
         Shape: number_of_preferences x number_of_samples
     k : int
-        Tok k value
+        Top k value
 
     Returns
     ----------
@@ -563,6 +579,19 @@ def get_topk(rewards, k):
     topk_rewards = sorted_rewards[range(rewards.shape[0]), :k]
     mean_topk = torch.mean(topk_rewards.mean(-1))
     return mean_topk
+
+
+def top_k_diversity(fps, r, K):
+    x = []
+    for i in np.argsort(r)[::-1]:
+        y = fps[i]
+        if y is None:
+            continue
+        x.append(y)
+        if len(x) >= K:
+            break
+    s = np.array([DataStructs.BulkTanimotoSimilarity(i, x) for i in x])
+    return (np.sum(s) - len(x)) / (len(x) * len(x) - len(x))  # substract the diagonal
 
 
 if __name__ == "__main__":

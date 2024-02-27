@@ -1,4 +1,5 @@
-from typing import Optional, Tuple
+from copy import deepcopy
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -206,7 +207,7 @@ class TrajectoryBalance(GFNAlgorithm):
             return self.graph_sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
             )
-        trajs = [{"traj": generate_forward_trajectory(i)} for i in graphs]
+        trajs: List[Dict[str, Any]] = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [
                 self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)
@@ -214,6 +215,15 @@ class TrajectoryBalance(GFNAlgorithm):
             ] + [1]
             traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(self.ctx.device)
             traj["result"] = traj["traj"][-1][0]
+            if self.cfg.do_parameterize_p_b:
+                traj["bck_a"] = [GraphAction(GraphActionType.Stop)] + [self.env.reverse(g, a) for g, a in traj["traj"]]
+                # There needs to be an additonal node when we're parameterizing P_B,
+                # See sampling with parametrized P_B
+                traj["traj"].append(deepcopy(traj["traj"][-1]))
+                traj["is_sink"] = [0 for _ in traj["traj"]]
+                traj["is_sink"][-1] = 1
+                traj["is_sink"][-2] = 1
+                assert len(traj["bck_a"]) == len(traj["traj"]) == len(traj["is_sink"])
         return trajs
 
     def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction, return_aidx: bool = True):

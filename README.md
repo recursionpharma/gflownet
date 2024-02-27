@@ -47,12 +47,12 @@ A good place to get started is with the [sEH fragment-based MOO task](src/gflown
 This package is installable as a PIP package, but since it depends on some torch-geometric package wheels, the `--find-links` arguments must be specified as well:
 
 ```bash
-pip install -e . --find-links https://data.pyg.org/whl/torch-1.13.1+cu117.html
+pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
 ```
 Or for CPU use:
 
 ```bash
-pip install -e . --find-links https://data.pyg.org/whl/torch-1.13.1+cpu.html
+pip install -e . --find-links https://data.pyg.org/whl/torch-2.1.2+cpu.html
 ```
 
 To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-pip-dependency/) a specific tag, for example here `v0.0.10`, use the following scheme:
@@ -60,9 +60,16 @@ To install or [depend on](https://matiascodesal.com/blog/how-use-git-repository-
 pip install git+https://github.com/recursionpharma/gflownet.git@v0.0.10 --find-links ...
 ```
 
-If package dependencies seem not to work, you may need to install the exact frozen versions listed `requirements/`, i.e. `pip install -r requirements/main_3.9.txt`.
+If package dependencies seem not to work, you may need to install the exact frozen versions listed `requirements/`, i.e. `pip install -r requirements/main-3.10.txt`.
 
 ## Developing & Contributing
 
-External contributions are welcome. We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
+External contributions are welcome.
+
+To install the developers dependencies
+```
+pip install -e '.[dev]' --find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
+```
+
+We use `tox` to run tests and linting, and `pre-commit` to run checks before committing.
 To ensure that these checks pass, simply run `tox -e style` and `tox run` to run linters and tests, respectively.
