@@ -88,9 +88,6 @@ class SEHMOOTask(SEHTask):
         )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y))
-
     def inverse_flat_reward_transform(self, rp):
         return rp
 
