@@ -395,6 +395,8 @@ def main():
     config.cond.weighted_prefs.preference_type = "dirichlet"
     config.cond.focus_region.focus_type = None
     config.replay.use = False
+    config.task.seh_moo.n_valid = 15
+    config.task.seh_moo.n_valid_repeats = 2
 
     trial = SEHMOOFragTrainer(config)
     trial.run()

@@ -4,7 +4,7 @@ import time
 
 import wandb
 
-import gflownet.tasks.seh_frag_moo as seh_frag_moo
+from gflownet.tasks.seh_frag_moo import SEHMOOFragTrainer
 from gflownet.config import Config, init_empty
 
 TIME = time.strftime("%m-%d-%H-%M")
@@ -34,7 +34,7 @@ def wandb_config_merger():
     wandb_config = wandb.config
 
     # Set desired config values
-    config.log_dir = (f"{STORAGE_DIR}/{wandb.run.name}-id-{wandb.run.id}",)
+    config.log_dir = f"{STORAGE_DIR}/{wandb.run.name}-id-{wandb.run.id}"
     config.print_every = 100
     config.validate_every = 1000
     config.num_final_gen_steps = 1000
@@ -69,5 +69,5 @@ if __name__ == "__main__":
     else:
         wandb.init(entity=ENTITY, project=PROJECT)
         config = wandb_config_merger()
-        trial = seh_frag_moo.SEHMOOFragTrainer(config)
+        trial = SEHMOOFragTrainer(config)
         trial.run()
