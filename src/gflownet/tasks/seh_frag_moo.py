@@ -1,4 +1,3 @@
-import os
 import pathlib
 import shutil
 from typing import Any, Callable, Dict, List, Tuple
@@ -14,7 +13,7 @@ from torch.utils.data import Dataset
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
@@ -220,7 +219,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         cfg.algo.sampling_tau = 0.95
         # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
         # sampling and set the offline ratio to 1
-        cfg.algo.valid_sample_cond_info = False
+        cfg.cond.valid_sample_cond_info = False
         cfg.algo.valid_offline_ratio = 1
 
     def setup_algo(self):
@@ -233,6 +232,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
             super().setup_algo()
 
     def setup_task(self):
+        self.cfg.cond.moo.num_objectives = len(self.cfg.task.seh_moo.objectives)
         self.task = SEHMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
@@ -321,9 +321,11 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         else:
             valid_cond_vector = valid_preferences
 
-        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
         self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.seh_moo.n_valid_repeats)
-        self.valid_sampling_hooks.append(self._top_k_hook)
+
+        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
+        if self.cfg.task.seh_moo.log_topk:
+            self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
 
@@ -331,15 +333,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         # We use this class-based setup to be compatible with the DeterminedAI API, but no direct
         # dependency is required.
         parent = self
+        callback_dict = {}
 
-        class TopKMetricCB:
-            def on_validation_end(self, metrics: Dict[str, Any]):
-                top_k = parent._top_k_hook.finalize()
-                for i in range(len(top_k)):
-                    metrics[f"topk_rewards_{i}"] = top_k[i]
-                print("validation end", metrics)
+        if self.cfg.task.seh_moo.log_topk:
 
-        return {"topk": TopKMetricCB()}
+            class TopKMetricCB:
+                def on_validation_end(self, metrics: Dict[str, Any]):
+                    top_k = parent._top_k_hook.finalize()
+                    for i in range(len(top_k)):
+                        metrics[f"topk_rewards_{i}"] = top_k[i]
+                    print("validation end", metrics)
+
+            callback_dict["topk"] = TopKMetricCB()
+
+        return callback_dict
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         if self.task.focus_cond is not None:
@@ -367,74 +374,29 @@ class RepeatedCondInfoDataset:
 
 def main():
     """Example of how this model can be run."""
-    hps = {
-        "log_dir": "./logs/debug_run_sfm",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "pickle_mp_messages": True,
-        "overwrite_existing_exp": True,
-        "seed": 0,
-        "num_training_steps": 500,
-        "num_final_gen_steps": 50,
-        "validate_every": 100,
-        "num_workers": 0,
-        "algo": {
-            "global_batch_size": 64,
-            "method": "TB",
-            "sampling_tau": 0.95,
-            "train_random_action_prob": 0.01,
-            "tb": {
-                "Z_learning_rate": 1e-3,
-                "Z_lr_decay": 50000,
-            },
-        },
-        "model": {
-            "num_layers": 2,
-            "num_emb": 256,
-        },
-        "task": {
-            "seh_moo": {
-                "objectives": ["seh", "qed"],
-                "n_valid": 15,
-                "n_valid_repeats": 128,
-            },
-        },
-        "opt": {
-            "learning_rate": 1e-4,
-            "lr_decay": 20000,
-        },
-        "cond": {
-            "temperature": {
-                "sample_dist": "constant",
-                "dist_params": [60.0],
-                "num_thermometer_dim": 32,
-            },
-            "weighted_prefs": {
-                "preference_type": "dirichlet",
-            },
-            "focus_region": {
-                "focus_type": None,  # "learned-tabular",
-                "focus_cosim": 0.98,
-                "focus_limit_coef": 1e-1,
-                "focus_model_training_limits": (0.25, 0.75),
-                "focus_model_state_space_res": 30,
-                "max_train_it": 5_000,
-            },
-        },
-        "replay": {
-            "use": False,
-            "warmup": 1000,
-            "hindsight_ratio": 0.0,
-        },
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
-        else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
+    config = init_empty(Config())
+    config.desc = "debug_seh_frag_moo"
+    config.log_dir = "./logs/debug_run_sfm"
+    config.device = "cuda" if torch.cuda.is_available() else "cpu"
+    config.print_every = 1
+    config.validate_every = 1
+    config.num_final_gen_steps = 5
+    config.num_training_steps = 3
+    config.pickle_mp_messages = True
+    config.overwrite_existing_exp = True
+    config.algo.sampling_tau = 0.95
+    config.algo.train_random_action_prob = 0.01
+    config.algo.tb.Z_learning_rate = 1e-3
+    config.task.seh_moo.objectives = ["seh", "qed"]
+    config.cond.temperature.sample_dist = "constant"
+    config.cond.temperature.dist_params = [60.0]
+    config.cond.weighted_prefs.preference_type = "dirichlet"
+    config.cond.focus_region.focus_type = None
+    config.replay.use = False
+    config.task.seh_moo.n_valid = 15
+    config.task.seh_moo.n_valid_repeats = 2
 
-    trial = SEHMOOFragTrainer(hps)
-    trial.print_every = 1
+    trial = SEHMOOFragTrainer(config)
     trial.run()
 
 

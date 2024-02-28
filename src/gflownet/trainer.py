@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
+import wandb
 from omegaconf import OmegaConf
 from rdkit import RDLogger
 from rdkit.Chem.rdchem import Mol as RDMol
@@ -104,17 +105,15 @@ class Closable(Protocol):
 
 
 class GFNTrainer:
-    def __init__(self, hps: Dict[str, Any], print_hps=True):
+    def __init__(self, config: Config, print_config=True):
         """A GFlowNet trainer. Contains the main training loop in `run` and should be subclassed.
 
         Parameters
         ----------
-        hps: Dict[str, Any]
-            A dictionary of hyperparameters. These override default values obtained by the `set_default_hps` method.
-        device: torch.device
-            The torch device of the main worker.
+        config: Config
+            The hyperparameters for the trainer.
         """
-        self.print_hps = print_hps
+        self.print_config = print_config
         self.to_terminate: List[Closable] = []
         # self.setup should at least set these up:
         self.training_data: Dataset
@@ -134,11 +133,14 @@ class GFNTrainer:
         #   - The default values specified in individual config classes
         #   - The default values specified in the `default_hps` method, typically what is defined by a task
         #   - The values passed in the constructor, typically what is called by the user
-        # The final config is obtained by merging the three sources
-        self.cfg: Config = OmegaConf.structured(Config())
-        self.set_default_hps(self.cfg)
-        # OmegaConf returns a fancy object but we can still pretend it's a Config instance
-        self.cfg = OmegaConf.merge(self.cfg, hps)  # type: ignore
+        # The final config is obtained by merging the three sources with the following precedence:
+        #   config classes < default_hps < constructor (i.e. the constructor overrides the default_hps, and so on)
+        self.default_cfg: Config = Config()
+        self.set_default_hps(self.default_cfg)
+        assert isinstance(self.default_cfg, Config) and isinstance(
+            config, Config
+        )  # make sure the config is a Config object, and not the Config class itself
+        self.cfg = OmegaConf.merge(self.default_cfg, config)
 
         self.device = torch.device(self.cfg.device)
         # Print the loss every `self.print_every` iterations
@@ -173,6 +175,15 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def setup(self):
+        if os.path.exists(self.cfg.log_dir):
+            if self.cfg.overwrite_existing_exp:
+                shutil.rmtree(self.cfg.log_dir)
+            else:
+                raise ValueError(
+                    f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
+                )
+        os.makedirs(self.cfg.log_dir)
+
         RDLogger.DisableLog("rdApp.*")
         self.rng = np.random.default_rng(142857)
         self.env = GraphBuildingEnv()
@@ -228,9 +239,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            # The 2 here is an odd quirk of torch 1.10, it is fixed and
-            # replaced by None in torch 2.
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def build_validation_data_loader(self) -> DataLoader:
@@ -246,7 +255,7 @@ class GFNTrainer:
             illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
             ratio=self.cfg.algo.valid_offline_ratio,
             log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
-            sample_cond_info=self.cfg.algo.valid_sample_cond_info,
+            sample_cond_info=self.cfg.cond.valid_sample_cond_info,
             stream=False,
             random_action_prob=self.cfg.algo.valid_random_action_prob,
         )
@@ -257,7 +266,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def build_final_data_loader(self) -> DataLoader:
@@ -285,7 +294,7 @@ class GFNTrainer:
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else 2,
+            prefetch_factor=1 if self.cfg.num_workers else None,
         )
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
@@ -434,6 +443,8 @@ class GFNTrainer:
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():
             self._summary_writer.add_scalar(f"{key}_{k}", v, index)
+        if wandb.run is not None:
+            wandb.log({f"{key}_{k}": v for k, v in info.items()}, step=index)
 
     def __del__(self):
         self.terminate()
