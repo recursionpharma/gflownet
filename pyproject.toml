@@ -46,21 +46,21 @@ line_length = 120
 
 [tool.black]
 line-length = 120
-target-version = ["py311"]
+target-version = ["py310"]
 
 [project]
 name = "gflownet"
 readme = "README.md"
 classifiers = ["Operating System :: OS Independent", "Programming Language :: Python", "Programming Language :: Python :: 3"]
 keywords = ["gflownet"]
-requires-python = ">=3.8,<3.10"
+requires-python = ">=3.10,<3.11"
 dynamic = ["version"]
 dependencies = [
-    "torch==1.13.1",
-    "torch-geometric==2.3.1",  # Pinning until we adapt the code to newer versions
-    "torch-scatter==2.1.1",
-    "torch-sparse==0.6.17",
-    "torch-cluster==1.6.1",
+    "torch==2.1.2",
+    "torch-geometric==2.4.0",
+    "torch-scatter==2.1.2",
+    "torch-sparse==0.6.18",
+    "torch-cluster==1.6.3",
     "rdkit",
     "tables",
     "scipy",
@@ -73,6 +73,7 @@ dependencies = [
     "pyro-ppl",
     "gpytorch",
     "omegaconf>=2.3",
+    "wandb",
     "pandas", # needed for QM9 and HDF5 support.
 ]
 
@@ -82,11 +83,12 @@ dev = [
     "black",
     "isort",
     "mypy",
-    "pip-compile-multi",
+    "pip-compile-cross-platform",
     "pre-commit",
     "pytest",
     "pytest-cov",
     "ruff",
+    "tox",
     "typeguard",
     "types-pkg_resources",
     # Security pin

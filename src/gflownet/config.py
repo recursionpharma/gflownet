@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Optional
 
 from omegaconf import MISSING
@@ -50,6 +50,8 @@ class Config:
 
     Attributes
     ----------
+    desc : str
+        A description of the experiment
     log_dir : str
         The directory where to store logs, checkpoints, and samples.
     device : str
@@ -82,6 +84,7 @@ class Config:
         Whether to overwrite the contents of the log_dir if it already exists
     """
 
+    desc: str = "noDesc"
     log_dir: str = MISSING
     device: str = "cuda"
     seed: int = 0
@@ -96,10 +99,28 @@ class Config:
     hostname: Optional[str] = None
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
-    overwrite_existing_exp: bool = True
+    overwrite_existing_exp: bool = False
     algo: AlgoConfig = AlgoConfig()
     model: ModelConfig = ModelConfig()
     opt: OptimizerConfig = OptimizerConfig()
     replay: ReplayConfig = ReplayConfig()
     task: TasksConfig = TasksConfig()
     cond: ConditionalsConfig = ConditionalsConfig()
+
+
+def init_empty(cfg):
+    """
+    Initialize a dataclass instance with all fields set to MISSING,
+    including nested dataclasses.
+
+    This is meant to be used on the user side (tasks) to provide
+    some configuration using the Config class while overwritting
+    only the fields that have been set by the user.
+    """
+    for f in fields(cfg):
+        if is_dataclass(f.type):
+            setattr(cfg, f.name, init_empty(f.type()))
+        else:
+            setattr(cfg, f.name, MISSING)
+
+    return cfg

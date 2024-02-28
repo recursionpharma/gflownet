@@ -1,5 +1,3 @@
-import os
-import shutil
 import socket
 from typing import Dict, List, Tuple
 
@@ -7,7 +5,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from gflownet.config import Config
+from gflownet.config import Config, init_empty
 from gflownet.envs.seq_building_env import AutoregressiveSeqBuildingContext, SeqBuildingEnv
 from gflownet.models.seq_transformer import SeqTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -104,32 +102,21 @@ class ToySeqTrainer(StandardOnlineTrainer):
 
 
 def main():
-    """Example of how this model can be run outside of Determined"""
-    hps = {
-        "log_dir": "./logs/debug_run_toy_seq",
-        "device": "cuda",
-        "overwrite_existing_exp": True,
-        "num_training_steps": 2_000,
-        "checkpoint_every": 200,
-        "num_workers": 4,
-        "cond": {
-            "temperature": {
-                "sample_dist": "constant",
-                "dist_params": [2.0],
-                "num_thermometer_dim": 1,
-            }
-        },
-        "algo": {"train_random_action_prob": 0.05},
-    }
-    if os.path.exists(hps["log_dir"]):
-        if hps["overwrite_existing_exp"]:
-            shutil.rmtree(hps["log_dir"])
-        else:
-            raise ValueError(f"Log dir {hps['log_dir']} already exists. Set overwrite_existing_exp=True to delete it.")
-    os.makedirs(hps["log_dir"])
+    """Example of how this model can be run."""
+    config = init_empty(Config())
+    config.log_dir = "./logs/debug_run_toy_seq"
+    config.device = "cuda"
+    config.overwrite_existing_exp = True
+    config.num_training_steps = 2_000
+    config.checkpoint_every = 200
+    config.num_workers = 4
+    config.print_every = 1
+    config.cond.temperature.sample_dist = "constant"
+    config.cond.temperature.dist_params = [2.0]
+    config.cond.temperature.num_thermometer_dim = 1
+    config.algo.train_random_action_prob = 0.05
 
-    trial = ToySeqTrainer(hps)
-    trial.print_every = 1
+    trial = ToySeqTrainer(config)
     trial.run()
 
 

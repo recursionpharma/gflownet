@@ -105,13 +105,13 @@ class StandardOnlineTrainer(GFNTrainer):
         git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
         self.cfg.git_hash = git_hash
 
-        yaml = OmegaConf.to_yaml(self.cfg)
-        os.makedirs(self.cfg.log_dir, exist_ok=True)
-        if self.print_hps:
+        yaml_cfg = OmegaConf.to_yaml(self.cfg)
+        if self.print_config:
             print("\n\nHyperparameters:\n")
-            print(yaml)
-        with open(pathlib.Path(self.cfg.log_dir) / "hps.yaml", "w", encoding="utf8") as f:
-            f.write(yaml)
+            print(yaml_cfg)
+        os.makedirs(self.cfg.log_dir, exist_ok=True)
+        with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
+            f.write(yaml_cfg)
 
     def step(self, loss: Tensor):
         loss.backward()
