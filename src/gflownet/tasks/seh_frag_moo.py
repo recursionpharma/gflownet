@@ -1,7 +1,7 @@
 import os
 import pathlib
 import shutil
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
