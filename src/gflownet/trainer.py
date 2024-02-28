@@ -16,8 +16,9 @@ from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from gflownet.data.data_source import DataSource
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.data.sampling_iterator import SamplingIterator
+from gflownet.data.sampling_iterator import SamplingIterator, SQLiteLogHook
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger
@@ -35,9 +36,11 @@ RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
 
 class GFNAlgorithm:
     updates: int = 0
+    global_cfg: Config
+    is_eval: bool = False
 
     def step(self):
-        self.updates += 1
+        self.updates += 1  # This isn't used anywhere?
 
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
@@ -61,6 +64,13 @@ class GFNAlgorithm:
             Logged information about model predictions.
         """
         raise NotImplementedError()
+
+    def get_random_action_prob(self, it: int):
+        if self.is_eval:
+            return self.global_cfg.algo.valid_random_action_prob
+        if it < self.global_cfg.algo.train_det_after or self.global_cfg.algo.train_det_after is None:
+            return self.global_cfg.algo.train_random_action_prob
+        return 0
 
 
 class GFNTask:
@@ -188,14 +198,14 @@ class GFNTrainer:
         if send_to_device:
             obj.to(self.device)
         if self.cfg.num_workers > 0 and obj is not None:
-            wapper = mp_object_wrapper(
+            wrapper = mp_object_wrapper(
                 obj,
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
             )
-            self.to_terminate.append(wapper.terminate)
-            return wapper.placeholder, torch.device("cpu")
+            self.to_terminate.append(wrapper.terminate)
+            return wrapper.placeholder, torch.device("cpu")
         else:
             return obj, self.device
 
@@ -203,28 +213,36 @@ class GFNTrainer:
         return {}
 
     def build_training_data_loader(self) -> DataLoader:
+        # Since the model may be used by a worker in a different process, we need to wrap it.
+        # The device `dev` returned here is the device that the worker will use to interact with the model;
+        # normally, if the main process has the model on 'cuda', this will simply be 'cpu' (since workers
+        # don't have CUDA access).
+        # See implementation_nodes.md for more details.
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
-        iterator = SamplingIterator(
-            self.training_data,
-            model,
-            self.ctx,
-            self.algo,
-            self.task,
-            dev,
-            batch_size=self.cfg.algo.global_batch_size,
-            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
-            replay_buffer=replay_buffer,
-            ratio=self.cfg.algo.offline_ratio,
-            log_dir=str(pathlib.Path(self.cfg.log_dir) / "train"),
-            random_action_prob=self.cfg.algo.train_random_action_prob,
-            det_after=self.cfg.algo.train_det_after,
-            hindsight_ratio=self.cfg.replay.hindsight_ratio,
-        )
+
+        n_drawn = int(self.cfg.algo.global_batch_size * (1 - self.cfg.algo.offline_ratio))
+        n_replayed = n_drawn if self.cfg.replay.batch_size is None else self.cfg.replay.batch_size
+        n_from_dataset = self.cfg.algo.global_batch_size - n_drawn
+
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, dev, replay_buffer=replay_buffer)
+        if n_from_dataset:
+            src.do_dataset_in_order(self.training_data, n_from_dataset, backwards_model=model)
+        if n_drawn:
+            # If we are using a replay buffer, we can choose to keep the new samples in the minibatch, or just
+            # send them to the replay and train only on replay samples.
+            keep_samples_in_batch = not self.cfg.replay.use or not self.cfg.replay.replaces_online_data
+            src.do_sample_model(model, n_drawn, keep_samples_in_batch)
+        if n_replayed and replay_buffer is not None:
+            src.do_sample_replay(n_replayed)
+        if self.cfg.log_dir:
+            src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "train"), self.ctx))
         for hook in self.sampling_hooks:
-            iterator.add_log_hook(hook)
+            src.add_sampling_hook(hook)
+        # TODO: We could just have a build_training_data_source method that returns a DataSource
+        # All the other build_* methods do the same DataLoader setup
         return torch.utils.data.DataLoader(
-            iterator,
+            src,
             batch_size=None,
             num_workers=self.cfg.num_workers,
             persistent_workers=self.cfg.num_workers > 0,
@@ -296,7 +314,7 @@ class GFNTrainer:
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
             step_info = self.step(loss)
-            self.algo.step()
+            self.algo.step()  # This also isn't used anywhere?
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
         except ValueError as e:

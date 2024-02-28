@@ -125,6 +125,7 @@ class TrajectoryBalance(GFNAlgorithm):
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
         # like a transformer with causal self-attention.
         self.model_is_autoregressive = False
+        self.random_action_prob = [cfg.algo.train_random_action_prob, cfg.algo.valid_random_action_prob]
 
         self.graph_sampler = GraphSampler(
             ctx,
@@ -139,6 +140,9 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
+
+    def set_is_eval(self, is_eval: bool):
+        self.is_eval = is_eval
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
