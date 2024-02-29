@@ -8,12 +8,14 @@ import torch_geometric.data as gd
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
+from gflownet.data.data_source import DataSource
+from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.trainer import FlatRewards, RewardScalar
@@ -70,6 +72,7 @@ class SEHMOOTask(SEHTask):
         self.cfg = cfg
         mcfg = self.cfg.task.seh_moo
         self.objectives = cfg.task.seh_moo.objectives
+        cfg.cond.moo.num_objectives = len(self.objectives)  # This value is used by the focus_cond and pref_cond
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
@@ -350,6 +353,20 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
         return callback_dict
 
+    def build_validation_data_loader(self) -> DataLoader:
+        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+
+        n_from_dataset = self.cfg.algo.global_batch_size
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        src.do_conditionals_dataset_in_order(self.test_data, n_from_dataset, model)
+
+        if self.cfg.log_dir:
+            src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))
+        for hook in self.valid_sampling_hooks:
+            src.add_sampling_hook(hook)
+
+        return self._make_data_loader(src)
+
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         if self.task.focus_cond is not None:
             self.task.focus_cond.step_focus_model(batch, train_it)
@@ -363,7 +380,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
 
 class RepeatedCondInfoDataset:
     def __init__(self, cond_info_vectors, repeat):
-        self.cond_info_vectors = cond_info_vectors
+        self.cond_info_vectors = torch.as_tensor(cond_info_vectors).float()
         self.repeat = repeat
 
     def __len__(self):
@@ -371,7 +388,7 @@ class RepeatedCondInfoDataset:
 
     def __getitem__(self, idx):
         assert 0 <= idx < len(self)
-        return torch.tensor(self.cond_info_vectors[int(idx // self.repeat)])
+        return self.cond_info_vectors[int(idx // self.repeat)]
 
 
 def main():

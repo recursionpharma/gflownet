@@ -248,7 +248,7 @@ class GFNTrainer:
 
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, replay_buffer=replay_buffer)
         if n_from_dataset:
-            src.do_dataset_in_order(self.training_data, n_from_dataset, backwards_model=model)
+            src.do_sample_dataset(self.training_data, n_from_dataset, backwards_model=model)
         if n_drawn:
             # If we are using a replay buffer, we can choose to keep the new samples in the minibatch, or just
             # send them to the replay and train only on replay samples.

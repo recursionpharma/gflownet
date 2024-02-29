@@ -134,7 +134,7 @@ class DataSource(IterableDataset):
     def do_sample_replay(self, num_samples):
         def iterator():
             while self.active:
-                trajs = self.replay_buffer.sample(num_samples)
+                trajs, *_ = self.replay_buffer.sample(num_samples)
                 self.relabel_in_hindsight(trajs)  # This is a no-op if the hindsight ratio is 0
                 yield trajs, {}
 
@@ -143,7 +143,7 @@ class DataSource(IterableDataset):
 
     def do_dataset_in_order(self, data, num_samples, backwards_model):
         def iterator():
-            for idcs in self.iterate_indices(num_samples):
+            for idcs in self.iterate_indices(len(data), num_samples):
                 t = self.current_iter
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
@@ -162,11 +162,18 @@ class DataSource(IterableDataset):
             for idcs in self.iterate_indices(len(data), num_samples):
                 t = self.current_iter
                 p = self.algo.get_random_action_prob(t)
-                cond_info = torch.stack([data[i] for i in idcs])
+                # TODO: when we refactor cond_info, data[i] will probably be a dict? (or CondInfo objects)
+                # I'm also not a fan of encode_conditional_information, it assumes lots of things about what's passed to
+                # it and the state of the program (e.g. validation mode)
+                cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
                 trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info["encoding"], p)
+                self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
                 self.send_to_replay(trajs)  # This is a no-op if there is no replay buffer
+                # If we're using a dataset of preferences, the user/hooks may want to know the id of the preference
+                for i, j in zip(trajs, idcs):
+                    i["data_idx"] = j
                 batch_info = self.call_sampling_hooks(trajs)
                 yield trajs, batch_info
 
@@ -197,15 +204,16 @@ class DataSource(IterableDataset):
         # convert cond_info back to a dict
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
+        rewards = torch.exp(log_rewards / (cond_info.get("beta", 1)))
         for hook in self.sampling_hooks:
-            batch_info.update(hook(trajs, log_rewards, flat_rewards, cond_info))
+            batch_info.update(hook(trajs, rewards, flat_rewards, cond_info))
         return batch_info
 
     def create_batch(self, trajs, batch_info):
         ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
-        batch.num_online = sum(t["is_online"] for t in trajs)
+        batch.num_online = sum(t.get("is_online", 0) for t in trajs)
         batch.num_offline = len(trajs) - batch.num_online
         batch.extra_info = batch_info
         if "preferences" in trajs[0]:
@@ -247,8 +255,11 @@ class DataSource(IterableDataset):
         flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
+        min_r = torch.as_tensor(self.cfg.algo.illegal_action_logreward).float()
         for i in range(len(trajs)):
-            trajs[i]["log_reward"] = log_rewards[i] if trajs[i]["is_valid"] else self.cfg.algo.illegal_action_logreward
+            trajs[i]["log_reward"] = (
+                log_rewards[i] if trajs[i].get("is_valid", True) else min_r
+            )
 
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
