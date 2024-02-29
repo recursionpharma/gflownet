@@ -158,6 +158,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
         cfg.algo.valid_offline_ratio = 0
+        cfg.num_validation_gen_steps = 10
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
         cfg.algo.tb.Z_learning_rate = 1e-3
@@ -199,13 +200,17 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
 def main():
     """Example of how this model can be run."""
+    import datetime
+
     config = init_empty(Config())
     config.print_every = 1
-    config.log_dir = "./logs/debug_run_seh_frag_pb"
+    config.log_dir = f"./logs/debug_run_seh_frag_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.overwrite_existing_exp = True
-    config.num_training_steps = 10_000
-    config.num_workers = 0
+    config.num_training_steps = 1_00
+    config.validate_every = 20
+    config.num_final_gen_steps = 10
+    config.num_workers = 8
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99
     config.algo.offline_ratio = 0.0

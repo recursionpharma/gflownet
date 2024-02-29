@@ -19,10 +19,10 @@ from torch.utils.data import DataLoader, Dataset
 
 from gflownet.data.data_source import DataSource
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.data.sampling_iterator import SamplingIterator, SQLiteLogHook
+from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
-from gflownet.utils.misc import create_logger
+from gflownet.utils.misc import create_logger, set_main_process_device
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 
 from .config import Config
@@ -69,7 +69,7 @@ class GFNAlgorithm:
     def get_random_action_prob(self, it: int):
         if self.is_eval:
             return self.global_cfg.algo.valid_random_action_prob
-        if it < self.global_cfg.algo.train_det_after or self.global_cfg.algo.train_det_after is None:
+        if self.global_cfg.algo.train_det_after is None or it < self.global_cfg.algo.train_det_after:
             return self.global_cfg.algo.train_random_action_prob
         return 0
 
@@ -150,9 +150,10 @@ class GFNTrainer:
         assert isinstance(self.default_cfg, Config) and isinstance(
             config, Config
         )  # make sure the config is a Config object, and not the Config class itself
-        self.cfg = OmegaConf.merge(self.default_cfg, config)
+        self.cfg: Config = OmegaConf.merge(self.default_cfg, config)
 
         self.device = torch.device(self.cfg.device)
+        set_main_process_device(self.device)
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
         # These hooks allow us to compute extra quantities when sampling data
@@ -223,6 +224,15 @@ class GFNTrainer:
     def build_callbacks(self):
         return {}
 
+    def _make_data_loader(self, src):
+        return torch.utils.data.DataLoader(
+            src,
+            batch_size=None,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=self.cfg.num_workers > 0,
+            prefetch_factor=1 if self.cfg.num_workers else None,
+        )
+
     def build_training_data_loader(self) -> DataLoader:
         # Since the model may be used by a worker in a different process, we need to wrap it.
         # The device `dev` returned here is the device that the worker will use to interact with the model;
@@ -236,7 +246,7 @@ class GFNTrainer:
         n_replayed = n_drawn if self.cfg.replay.batch_size is None else self.cfg.replay.batch_size
         n_from_dataset = self.cfg.algo.global_batch_size - n_drawn
 
-        src = DataSource(self.cfg, self.ctx, self.algo, self.task, dev, replay_buffer=replay_buffer)
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, replay_buffer=replay_buffer)
         if n_from_dataset:
             src.do_dataset_in_order(self.training_data, n_from_dataset, backwards_model=model)
         if n_drawn:
@@ -250,70 +260,45 @@ class GFNTrainer:
             src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "train"), self.ctx))
         for hook in self.sampling_hooks:
             src.add_sampling_hook(hook)
-        # TODO: We could just have a build_training_data_source method that returns a DataSource
-        # All the other build_* methods do the same DataLoader setup
-        return torch.utils.data.DataLoader(
-            src,
-            batch_size=None,
-            num_workers=self.cfg.num_workers,
-            persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else None,
-        )
+        return self._make_data_loader(src)
 
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
-        iterator = SamplingIterator(
-            self.test_data,
-            model,
-            self.ctx,
-            self.algo,
-            self.task,
-            dev,
-            batch_size=self.cfg.algo.global_batch_size,
-            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
-            ratio=self.cfg.algo.valid_offline_ratio,
-            log_dir=str(pathlib.Path(self.cfg.log_dir) / "valid"),
-            sample_cond_info=self.cfg.cond.valid_sample_cond_info,
-            stream=False,
-            random_action_prob=self.cfg.algo.valid_random_action_prob,
-        )
+        # TODO: we're changing the default, make sure anything that is using test data is adjusted
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        n_drawn = int(self.cfg.algo.global_batch_size * (1 - self.cfg.algo.valid_offline_ratio))
+        n_from_dataset = self.cfg.algo.global_batch_size - n_drawn
+
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        if n_from_dataset:
+            src.do_dataset_in_order(self.test_data, n_from_dataset, backwards_model=model)
+        if n_drawn:
+            assert self.cfg.num_validation_gen_steps is not None
+            # TODO: might be better to change total steps to total trajectories drawn
+            src.do_sample_model_n_times(model, n_drawn, num_total=self.cfg.num_validation_gen_steps * n_drawn)
+
+        if self.cfg.log_dir:
+            src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))
         for hook in self.valid_sampling_hooks:
-            iterator.add_log_hook(hook)
-        return torch.utils.data.DataLoader(
-            iterator,
-            batch_size=None,
-            num_workers=self.cfg.num_workers,
-            persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else None,
-        )
+            src.add_sampling_hook(hook)
+        return self._make_data_loader(src)
 
     def build_final_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
-        iterator = SamplingIterator(
-            self.training_data,
-            model,
-            self.ctx,
-            self.algo,
-            self.task,
-            dev,
-            batch_size=self.cfg.algo.global_batch_size,
-            illegal_action_logreward=self.cfg.algo.illegal_action_logreward,
-            replay_buffer=None,
-            ratio=0.0,
-            log_dir=os.path.join(self.cfg.log_dir, "final"),
-            random_action_prob=0.0,
-            hindsight_ratio=0.0,
-            init_train_iter=self.cfg.num_training_steps,
-        )
+        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        # TODO: we're changing the default, make sure anything that is using test data is adjusted
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        n_drawn = int(self.cfg.algo.global_batch_size)
+
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        assert self.cfg.num_final_gen_steps is not None
+        # TODO: might be better to change total steps to total trajectories drawn
+        src.do_sample_model_n_times(model, n_drawn, num_total=self.cfg.num_final_gen_steps * n_drawn)
+
+        if self.cfg.log_dir:
+            src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "final"), self.ctx))
         for hook in self.sampling_hooks:
-            iterator.add_log_hook(hook)
-        return torch.utils.data.DataLoader(
-            iterator,
-            batch_size=None,
-            num_workers=self.cfg.num_workers,
-            persistent_workers=self.cfg.num_workers > 0,
-            prefetch_factor=1 if self.cfg.num_workers else None,
-        )
+            src.add_sampling_hook(hook)
+        return self._make_data_loader(src)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         tick = time.time()

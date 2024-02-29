@@ -157,7 +157,6 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveEdge,
             GraphActionType.RemoveEdgeAttr,
         ]
-        self.device = torch.device("cpu")
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""

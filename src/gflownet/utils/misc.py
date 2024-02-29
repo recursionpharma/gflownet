@@ -8,6 +8,8 @@ import torch
 def create_logger(name="logger", loglevel=logging.INFO, logfile=None, streamHandle=True):
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
+    while len([logger.removeHandler(i) for i in logger.handlers]):
+        pass  # Remove all handlers (only useful when debugging)
     formatter = logging.Formatter(
         fmt="%(asctime)s - %(levelname)s - {} - %(message)s".format(name),
         datefmt="%d/%m/%Y %H:%M:%S",
@@ -28,6 +30,7 @@ def create_logger(name="logger", loglevel=logging.INFO, logfile=None, streamHand
 
 _worker_rngs = {}
 _worker_rng_seed = [142857]
+_main_process_device = [torch.device("cpu")]
 
 
 def get_worker_rng():
@@ -42,3 +45,12 @@ def set_worker_rng_seed(seed):
     _worker_rng_seed[0] = seed
     for wid in _worker_rngs:
         _worker_rngs[wid].seed(seed + wid)
+
+
+def set_main_process_device(device):
+    _main_process_device[0] = device
+
+
+def get_worker_device():
+    worker_info = torch.utils.data.get_worker_info()
+    return _main_process_device[0] if worker_info is None else torch.device("cpu")

@@ -445,6 +445,7 @@ class SQLiteLogHook:
             )
 
         self.log.insert_many(data, self.data_labels)
+        return {}
 
 
 class SQLiteLog:
