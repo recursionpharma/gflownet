@@ -257,9 +257,7 @@ class DataSource(IterableDataset):
         log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
         min_r = torch.as_tensor(self.cfg.algo.illegal_action_logreward).float()
         for i in range(len(trajs)):
-            trajs[i]["log_reward"] = (
-                log_rewards[i] if trajs[i].get("is_valid", True) else min_r
-            )
+            trajs[i]["log_reward"] = log_rewards[i] if trajs[i].get("is_valid", True) else min_r
 
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:

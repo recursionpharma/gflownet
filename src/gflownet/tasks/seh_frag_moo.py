@@ -8,14 +8,14 @@ import torch_geometric.data as gd
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config, init_empty
-from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.data.data_source import DataSource
 from gflownet.data.sampling_iterator import SQLiteLogHook
+from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.trainer import FlatRewards, RewardScalar

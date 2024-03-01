@@ -7,6 +7,7 @@ from torch import Tensor
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 from gflownet.utils.misc import get_worker_device
+
 from .graph_sampling import GraphSampler
 
 

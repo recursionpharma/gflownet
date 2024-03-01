@@ -7,14 +7,14 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 import gflownet.models.mxmnet as mxmnet
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
-from gflownet.data.qm9 import QM9Dataset
 from gflownet.data.data_source import DataSource
+from gflownet.data.qm9 import QM9Dataset
 from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9 import QM9GapTask, QM9GapTrainer

@@ -6,7 +6,6 @@ import git
 import torch
 from omegaconf import OmegaConf
 from torch import Tensor
-from torch.utils.data import DataLoader
 
 from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.flow_matching import FlowMatching
