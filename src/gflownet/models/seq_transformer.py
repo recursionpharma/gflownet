@@ -36,9 +36,11 @@ class SeqTransformerGFN(nn.Module):
         env_ctx,
         cfg: Config,
         num_state_out=1,
+        min_len=0,
     ):
         super().__init__()
         self.ctx = env_ctx
+        self.min_len = min_len
         self.num_state_out = num_state_out
         num_hid = cfg.model.num_emb
         num_outs = env_ctx.num_actions + num_state_out
@@ -58,6 +60,8 @@ class SeqTransformerGFN(nn.Module):
         else:
             self.output = MLPWithDropout(num_hid, num_outs, [2 * num_hid, 2 * num_hid], mc.dropout)
         self.num_hid = num_hid
+        # TODO: Merge non-autoregressive implementations of sequence generation
+        assert not cfg.model.do_separate_pb, "Not implemented for SeqTransformerGFN (since P_B=1 when autoregressive)."
 
     def forward(self, xs: SeqBatch, cond, batched=False):
         """Returns a GraphActionCategorical and a tensor of state predictions.
@@ -96,6 +100,12 @@ class SeqTransformerGFN(nn.Module):
             add_node_logits = out[xs.logit_idx, ns + 1 :]  # (proper_time, nout - 1)
             # `time` above is really max_time, whereas proper_time = sum(len(traj) for traj in xs))
             # which is what we need to give to GraphActionCategorical
+            stop_mask = torch.ones_like(stop_logits)
+            if self.min_len > 0:
+                # The +1 accounts for the BOS token
+                stop_mask = torch.cat([torch.arange(1, i + 1) >= self.min_len for i in xs.lens])
+                stop_mask = stop_mask.to(stop_logits.device).float().unsqueeze(-1)
+                stop_logits = stop_logits * stop_mask - 1000 * (1 - stop_mask)
         else:
             # The default num_graphs is computed for the batched case, so we need to fix it here so that
             # GraphActionCategorical knows how many "graphs" (sequence inputs) there are
@@ -104,6 +114,11 @@ class SeqTransformerGFN(nn.Module):
             state_preds = out[:, 0:ns]
             stop_logits = out[:, ns : ns + 1]
             add_node_logits = out[:, ns + 1 :]
+            stop_mask = torch.ones_like(stop_logits)
+            if self.min_len > 0:
+                # The +1 accounts for the BOS token
+                stop_mask = stop_mask * (xs.lens >= self.min_len + 1).unsqueeze(-1).float()
+                stop_logits = stop_logits * stop_mask - 1000 * (1 - stop_mask)
 
         return (
             GraphActionCategorical(
@@ -111,6 +126,7 @@ class SeqTransformerGFN(nn.Module):
                 logits=[stop_logits, add_node_logits],
                 keys=[None, None],
                 types=self.ctx.action_type_order,
+                masks=[stop_mask, torch.ones_like(add_node_logits)],
                 slice_dict={},
             ),
             state_preds,

@@ -892,12 +892,14 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, t: int) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters
         ----------
         g: Graph
             A graph instance.
+        t:
+            The current timestep (may be ignored by some contexts)
 
         Returns
         -------

@@ -30,10 +30,16 @@ class ModelConfig:
         The number of layers in the model
     num_emb : int
         The number of dimensions of the embedding
+    dropout : float
+        The dropout probability in intermediate layers
+    separate_pB : bool
+        If true, constructs the backward policy using a separate model (this effectively ~doubles the number of
+        parameters, all other things being equal)
     """
 
     num_layers: int = 3
     num_emb: int = 128
     dropout: float = 0
+    do_separate_p_b: bool = False
     graph_transformer: GraphTransformerConfig = GraphTransformerConfig()
     seq_transformer: SeqTransformerConfig = SeqTransformerConfig()

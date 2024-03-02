@@ -34,3 +34,15 @@ The code contains a specific categorical distribution type for graph actions, `G
 Consider for example the `AddNode` and `SetEdgeAttr` actions, one applies to nodes and one to edges. An efficient way to produce logits for these actions would be to take the node/edge embeddings and project them (e.g. via an MLP) to a `(n_nodes, n_node_actions)` and `(n_edges, n_edge_actions)` tensor respectively. We thus obtain a list of tensors representing the logits of different actions, but logits are mixed between graphs in the minibatch, so one cannot simply apply a `softmax` operator on the tensor. 
 
 The `GraphActionCategorical` class handles this and can be used to compute various other things, such as entropy, log probabilities, and so on; it can also be used to sample from the distribution.
+
+### Min/max trajectory length
+
+The current way min/max trajectory lengths are handled is somewhat contrived (contributions welcome!) for historical reasons.
+
+- min length: a `GraphBuildingEnvContext`'s `graph_to_Data(g, t)` receives the timestep as its second argument. The responsibility of masking the stop action is left to the context to enforce _minimum_ trajectory lengths.
+- max length: the `GraphSampler` class enforces maximum length and maximum number of nodes by terminating the trajectory if either condition is met.
+- max size: both `MolBuildingEnvContext` and `FragMolBuildingEnvContext` implement a `max_nodes`/`max_frags` property that is used to mask the `AddNode` action. 
+
+Sequence environments differ somewhat, it's left to the `SeqTransformer` class to mask the stop action using the `min_len` parameter.
+
+To output fixed-length trajectories it should be sufficient to set `cfg.algo.min_len` and `cfg.algo.max_len` to the same value. Note that in some cases, e.g. when building fragment graphs, the agent may still output trajectories that are shorter than `min_len` by combining two fragments of degree one (leaving no valid action but to stop).

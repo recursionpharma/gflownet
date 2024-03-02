@@ -172,17 +172,24 @@ class GraphTransformerGFN(nn.Module):
         num_graph_out=1,
         do_bck=False,
     ):
-        """See `GraphTransformer` for argument values"""
+        """See `GraphTransformer` and its config for argument values
+
+        Parameters
+        ----------
+        env_ctx: GraphBuildingEnvContext
+            The environment context. This is used to determine the number of actions, and input and output shapes.
+        cfg: Config
+            A Config object containing a model configuration.
+        num_graph_out: int
+            The number of outputs of the final MLP applied to the graph embeddings.
+        do_bck: bool
+            If true, also outputs a backward action distribution.
+        """
         super().__init__()
-        self.transf = GraphTransformer(
-            x_dim=env_ctx.num_node_dim,
-            e_dim=env_ctx.num_edge_dim,
-            g_dim=env_ctx.num_cond_dim,
-            num_emb=cfg.model.num_emb,
-            num_layers=cfg.model.num_layers,
-            num_heads=cfg.model.graph_transformer.num_heads,
-            ln_type=cfg.model.graph_transformer.ln_type,
-        )
+        self.trunk = self._make_trunk(env_ctx, cfg)
+        self.do_separate_p_b = cfg.model.do_separate_p_b
+        if cfg.model.do_separate_p_b:
+            self.bck_trunk = self._make_trunk(env_ctx, cfg)
         num_emb = cfg.model.num_emb
         num_final = num_emb
         num_glob_final = num_emb * 2
@@ -223,6 +230,17 @@ class GraphTransformerGFN(nn.Module):
         # TODO: flag for this
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
 
+    def _make_trunk(self, env_ctx, cfg):
+        return GraphTransformer(
+            x_dim=env_ctx.num_node_dim,
+            e_dim=env_ctx.num_edge_dim,
+            g_dim=env_ctx.num_cond_dim,
+            num_emb=cfg.model.num_emb,
+            num_layers=cfg.model.num_layers,
+            num_heads=cfg.model.graph_transformer.num_heads,
+            ln_type=cfg.model.graph_transformer.ln_type,
+        )
+
     def _action_type_to_mask(self, t, g):
         return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)
 
@@ -244,8 +262,8 @@ class GraphTransformerGFN(nn.Module):
             types=action_types,
         )
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
-        node_embeddings, graph_embeddings = self.transf(g, cond)
+    def _compute_embs(self, model, g, cond):
+        node_embeddings, graph_embeddings = model(g, cond)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):
             ne_row, ne_col = g.non_edge_index
@@ -267,16 +285,23 @@ class GraphTransformerGFN(nn.Module):
         else:
             edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
 
-        emb = {
+        return {
             "graph": graph_embeddings,
             "node": node_embeddings,
             "edge": edge_embeddings,
             "non_edge": non_edge_embeddings,
         }
 
-        graph_out = self.emb2graph_out(graph_embeddings)
-        fwd_cat = self._make_cat(g, emb, self.action_type_order)
+    def forward(self, g: gd.Batch, cond: torch.Tensor):
+        embs = self._compute_embs(self.trunk, g, cond)
+        if self.do_separate_p_b:
+            bck_embs = self._compute_embs(self.bck_trunk, g, cond)
+        else:
+            bck_embs = embs
+
+        graph_out = self.emb2graph_out(embs["graph"])
+        fwd_cat = self._make_cat(g, embs, self.action_type_order)
         if self.do_bck:
-            bck_cat = self._make_cat(g, emb, self.bck_action_type_order)
+            bck_cat = self._make_cat(g, bck_embs, self.bck_action_type_order)
             return fwd_cat, bck_cat, graph_out
         return fwd_cat, graph_out

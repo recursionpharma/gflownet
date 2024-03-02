@@ -49,7 +49,7 @@ def build_two_node_states(ctx):
 
     def expand(s, idx):
         # Recursively expand all children of s
-        gd = ctx.graph_to_Data(s)
+        gd = ctx.graph_to_Data(s, t=0)
         masks = [getattr(gd, gat.mask_name) for gat in ctx.action_type_order]
         for at, mask in enumerate(masks):
             if at == 0:  # Ignore Stop action
@@ -116,7 +116,7 @@ def _test_backwards_mask_equivalence(two_node_states, ctx):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=False)
         nm = 0
-        gd = ctx.graph_to_Data(g)
+        gd = ctx.graph_to_Data(g, t=0)
         for u, k in enumerate(ctx.bck_action_type_order):
             m = getattr(gd, k.mask_name)
             nm += m.sum()
@@ -138,7 +138,7 @@ def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
     for i in range(1, len(two_node_states)):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=True)
-        gd = ctx.graph_to_Data(g)
+        gd = ctx.graph_to_Data(g, t=0)
         # To check that we're computing masks correctly, we need to check that there is the same
         # number of idempotent action classes, i.e. groups of actions that lead to the same parent.
         equivalence_classes = []

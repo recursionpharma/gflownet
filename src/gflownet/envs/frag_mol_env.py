@@ -1,6 +1,6 @@
 from collections import defaultdict
 from math import log
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -24,7 +24,14 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     fragments. Masks ensure that the agent can only perform chemically valid attachments.
     """
 
-    def __init__(self, max_frags: int = 9, num_cond_dim: int = 0, fragments: List[Tuple[str, List[int]]] = None):
+    def __init__(
+        self,
+        max_frags: int = 9,
+        num_cond_dim: int = 0,
+        fragments: Optional[List[Tuple[str, List[int]]]] = None,
+        min_len: int = 0,
+        max_len: Optional[int] = None,
+    ):
         """Construct a fragment environment
         Parameters
         ----------
@@ -37,6 +44,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             the fragments of Bengio et al., 2021.
         """
         self.max_frags = max_frags
+        self.min_len = min_len
+        self.max_len = max_len
         if fragments is None:
             smi, stems = zip(*bengio2021flow.FRAGMENTS)
         else:
@@ -79,6 +88,12 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.num_cond_dim = num_cond_dim
         self.edges_are_duplicated = True
         self.edges_are_unordered = False
+        # This flags says that we should be able to trust the masks encoded by graph_to_Data as a ground truth when
+        # determining if an action is valid or not. In other words,
+        # - actions produced by this context should always be valid
+        # - masks produced by this context have the same shape as the logit tensors (e.g. we should be able to use them
+        #   to compute a uniform policy)
+        self.consider_masks_complete = True
         self.fail_on_missing_attr = True
 
         # Order in which models have to output logits
@@ -179,7 +194,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 col = 1
         return (type_idx, int(row), int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, t: int = 0) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters
         ----------
@@ -260,6 +275,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             )
             add_node_mask = add_node_mask * np.ones((x.shape[0], self.num_new_node_values), np.float32)
         stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else np.ones((1, 1), np.float32)
+        stop_mask = stop_mask * ((t >= self.min_len) + (add_node_mask.sum() == 0)).clip(max=1)
 
         return gd.Data(
             **{
