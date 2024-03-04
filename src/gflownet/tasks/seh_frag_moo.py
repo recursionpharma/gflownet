@@ -1,5 +1,4 @@
 import pathlib
-import shutil
 from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
