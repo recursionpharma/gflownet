@@ -1,7 +1,6 @@
 import os
 import sqlite3
 from collections.abc import Iterable
-from copy import deepcopy
 from typing import Callable, List, Optional
 
 import numpy as np
@@ -262,20 +261,20 @@ class SamplingIterator(IterableDataset):
             rewards = torch.exp(log_rewards / cond_info["beta"])
             if num_online > 0 and self.log_dir is not None:
                 self.log_generated(
-                    deepcopy(trajs[num_offline:]),
-                    deepcopy(rewards[num_offline:]),
-                    deepcopy(flat_rewards[num_offline:]),
-                    {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
+                    trajs[num_offline:],
+                    rewards[num_offline:],
+                    flat_rewards[num_offline:],
+                    {k: v[num_offline:] for k, v in cond_info.items()},
                 )
             if num_online > 0:
                 extra_info["sampled_reward_avg"] = rewards[num_offline:].mean().item()
                 for hook in self.log_hooks:
                     extra_info.update(
                         hook(
-                            deepcopy(trajs[num_offline:]),
-                            deepcopy(rewards[num_offline:]),
-                            deepcopy(flat_rewards[num_offline:]),
-                            {k: v[num_offline:] for k, v in deepcopy(cond_info).items()},
+                            trajs[num_offline:],
+                            rewards[num_offline:],
+                            flat_rewards[num_offline:],
+                            {k: v[num_offline:] for k, v in cond_info.items()},
                         )
                     )
 
@@ -290,22 +289,22 @@ class SamplingIterator(IterableDataset):
                 # push the online trajectories in the replay buffer and sample a new 'online' batch
                 for i in range(num_offline, len(trajs)):
                     self.replay_buffer.push(
-                        deepcopy(trajs[i]),
-                        deepcopy(log_rewards[i]),
-                        deepcopy(flat_rewards[i]),
-                        deepcopy(cond_info[i]),
-                        deepcopy(is_valid[i]),
+                        trajs[i],
+                        log_rewards[i],
+                        flat_rewards[i],
+                        cond_info[i],
+                        is_valid[i],
                     )
                 replay_trajs, replay_logr, replay_fr, replay_condinfo, replay_valid = self.replay_buffer.sample(
                     num_online
                 )
 
                 # append the online trajectories to the offline ones
-                trajs[num_offline:] = replay_trajs
-                log_rewards[num_offline:] = replay_logr
-                flat_rewards[num_offline:] = replay_fr
-                cond_info[num_offline:] = replay_condinfo
-                is_valid[num_offline:] = replay_valid
+                trajs = trajs[:num_offline] + replay_trajs
+                log_rewards = torch.cat([log_rewards[:num_offline], replay_logr], dim=0)
+                flat_rewards = torch.cat([flat_rewards[:num_offline], replay_fr], dim=0)
+                cond_info = cond_info[:num_offline] + replay_condinfo  # list of dicts
+                is_valid = torch.cat([is_valid[:num_offline], replay_valid], dim=0)
 
                 # convert cond_info back to a dict
                 cond_info = {k: torch.stack([d[k] for d in cond_info]) for k in cond_info[0]}

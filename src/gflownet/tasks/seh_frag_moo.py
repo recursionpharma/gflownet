@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -85,9 +85,6 @@ class SEHMOOTask(SEHTask):
             + (self.focus_cond.encoding_size() if self.focus_cond is not None else 0)
         )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
-
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y))
 
     def inverse_flat_reward_transform(self, rp):
         return rp
