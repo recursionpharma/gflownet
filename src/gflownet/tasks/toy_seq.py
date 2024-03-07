@@ -5,11 +5,11 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.envs.seq_building_env import AutoregressiveSeqBuildingContext, SeqBuildingEnv
 from gflownet.models.seq_transformer import SeqTransformerGFN
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
 from gflownet.utils.transforms import to_logreward
 

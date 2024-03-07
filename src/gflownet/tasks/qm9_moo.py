@@ -10,6 +10,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 import gflownet.models.mxmnet as mxmnet
+from gflownet import FlatRewards, RewardScalar
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
@@ -19,7 +20,6 @@ from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
-from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook

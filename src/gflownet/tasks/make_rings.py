@@ -7,10 +7,10 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 
 
 class MakeRingsTask(GFNTask):

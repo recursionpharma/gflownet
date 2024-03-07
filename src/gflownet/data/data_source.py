@@ -5,12 +5,11 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
+from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import get_worker_rng
-
-# from gflownet.trainer import GFNAlgorithm, GFNTask
 
 
 def cycle_call(it):
@@ -24,8 +23,8 @@ class DataSource(IterableDataset):
         self,
         cfg: Config,
         ctx: GraphBuildingEnvContext,
-        algo,  #: GFNAlgorithm,
-        task,  #: GFNTask,  # TODO: this will cause a circular import
+        algo: GFNAlgorithm,
+        task: GFNTask,
         replay_buffer: Optional[ReplayBuffer] = None,
         is_algo_eval: bool = False,
         start_at_step: int = 0,
@@ -230,7 +229,7 @@ class DataSource(IterableDataset):
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
-        # TODO: find code that depends on batch.flat_rewards and deprecate it
+        batch.flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
         return batch
 
     def compute_properties(self, trajs, mark_as_online=False):
@@ -291,8 +290,9 @@ class DataSource(IterableDataset):
         cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(
             cond_info, log_rewards, flat_rewards, hindsight_idxs
         )
-        # TODO: This seems wrong, since we haven't recomputed is_valid
-        # log_rewards[torch.logical_not(is_valid)] = self.illegal_action_logreward
+        self.set_traj_cond_info(trajs, cond_info)
+        for i in range(len(trajs)):
+            trajs[i]["log_reward"] = log_rewards[i]
 
     def sample_idcs(self, n, num_samples):
         return self.rng.choice(n, num_samples, replace=False)

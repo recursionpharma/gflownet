@@ -9,11 +9,11 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
 from gflownet.utils.transforms import to_logreward
 

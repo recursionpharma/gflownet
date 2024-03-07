@@ -11,11 +11,11 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
 from gflownet.utils.transforms import to_logreward
 
