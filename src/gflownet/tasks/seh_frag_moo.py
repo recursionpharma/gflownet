@@ -15,13 +15,13 @@ from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransforme
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config, init_empty
 from gflownet.data.data_source import DataSource
-from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
 from gflownet.models import bengio2021flow
 from gflownet.tasks.seh_frag import SEHFragTrainer, SEHTask
 from gflownet.utils import metrics, sascore
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.sqlite_log import SQLiteLogHook
 from gflownet.utils.transforms import to_logreward
 
 

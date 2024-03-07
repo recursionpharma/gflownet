@@ -19,11 +19,11 @@ from torch.utils.data import DataLoader, Dataset
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.data.data_source import DataSource
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger, set_main_process_device
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
+from gflownet.utils.sqlite_log import SQLiteLogHook
 
 from .config import Config
 

@@ -16,13 +16,13 @@ from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
 from gflownet.data.data_source import DataSource
 from gflownet.data.qm9 import QM9Dataset
-from gflownet.data.sampling_iterator import SQLiteLogHook
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
 from gflownet.utils import metrics
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.sqlite_log import SQLiteLogHook
 from gflownet.utils.transforms import to_logreward
 
 
