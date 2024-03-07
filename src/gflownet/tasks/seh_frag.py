@@ -111,7 +111,7 @@ SOME_MOLS = [
 class LittleSEHDataset(Dataset):
     """Note: this dataset isn't used by default, but turning it on showcases some features of this codebase.
 
-    To turn on, self `cfg.algo.offline_ratio > 0`"""
+    To turn on, self `cfg.algo.num_from_dataset > 0`"""
 
     def __init__(self, smis) -> None:
         super().__init__()
@@ -146,8 +146,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.opt.lr_decay = 20_000
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.num_from_policy = 64
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 
@@ -157,7 +156,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
-        cfg.algo.valid_offline_ratio = 0
+        cfg.algo.valid_num_from_policy = 64
         cfg.num_validation_gen_steps = 10
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
@@ -213,7 +212,6 @@ def main():
     config.num_workers = 8
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99
-    config.algo.offline_ratio = 0.0
     config.cond.temperature.sample_dist = "uniform"
     config.cond.temperature.dist_params = [0, 64.0]
 

@@ -80,9 +80,14 @@ class DataSource(IterableDataset):
                 batch_info.update(d)
             yield self.create_batch(trajs, batch_info)
 
-    def do_sample_model(self, model, num_samples, keep_samples_in_batch=True):
-        if not keep_samples_in_batch:
-            assert self.replay_buffer is not None, "Throwing away samples without a replay buffer"
+    def do_sample_model(self, model, num_from_policy, num_new_replay_samples=None):
+        if num_new_replay_samples is not None:
+            assert self.replay_buffer is not None, "num_new_replay_samples specified without a replay buffer"
+        if num_new_replay_samples is None:
+            assert self.replay_buffer is None, "num_new_replay_samples not specified with a replay buffer"
+
+        num_new_replay_samples = num_new_replay_samples or 0
+        num_samples = max(num_from_policy, num_new_replay_samples)
 
         def iterator():
             while self.active:
@@ -94,9 +99,9 @@ class DataSource(IterableDataset):
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
-                self.send_to_replay(trajs)  # This is a no-op if there is no replay buffer
+                self.send_to_replay(trajs[:num_new_replay_samples])  # This is a no-op if there is no replay buffer
                 batch_info = self.call_sampling_hooks(trajs)
-                yield (trajs, batch_info) if keep_samples_in_batch else ([], {})
+                yield (trajs[:num_from_policy], batch_info)
 
         self.iterators.append(iterator)
         return self

@@ -198,10 +198,8 @@ class QM9MOOTrainer(QM9GapTrainer):
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
         cfg.algo.sampling_tau = 0.95
-        # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
-        # sampling and set the offline ratio to 1
         cfg.cond.valid_sample_cond_info = False
-        cfg.algo.valid_offline_ratio = 1
+        cfg.algo.valid_num_from_dataset = 64
 
     def setup_algo(self):
         algo = self.cfg.algo.method
@@ -330,9 +328,8 @@ class QM9MOOTrainer(QM9GapTrainer):
     def build_validation_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
 
-        n_from_dataset = self.cfg.algo.global_batch_size
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
-        src.do_conditionals_dataset_in_order(self.test_data, n_from_dataset, model)
+        src.do_conditionals_dataset_in_order(self.test_data, self.cfg.algo.valid_num_from_dataset, model)
 
         if self.cfg.log_dir:
             src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))

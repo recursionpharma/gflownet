@@ -41,8 +41,7 @@ class MakeRingsTrainer(StandardOnlineTrainer):
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.num_workers = 8
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.num_from_policy = 64
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 

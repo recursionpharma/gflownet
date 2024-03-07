@@ -95,7 +95,6 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             self.sampling_model = self.model
 
-        self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_callback = {
             "value": lambda params: torch.nn.utils.clip_grad_value_(params, self.cfg.opt.clip_grad_param),
             "norm": lambda params: [torch.nn.utils.clip_grad_norm_(p, self.cfg.opt.clip_grad_param) for p in params],

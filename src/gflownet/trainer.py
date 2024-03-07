@@ -133,7 +133,6 @@ class GFNTrainer:
         # the same as `model`.
         self.sampling_model: nn.Module
         self.replay_buffer: Optional[ReplayBuffer]
-        self.mb_size: int
         self.env: GraphBuildingEnv
         self.ctx: GraphBuildingEnvContext
         self.task: GFNTask
@@ -242,18 +241,21 @@ class GFNTrainer:
         model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
         replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
 
-        n_drawn = int(self.cfg.algo.global_batch_size * (1 - self.cfg.algo.offline_ratio))
-        n_replayed = n_drawn if self.cfg.replay.batch_size is None else self.cfg.replay.batch_size
-        n_from_dataset = self.cfg.algo.global_batch_size - n_drawn
+        if self.cfg.replay.use:
+            # None is fine for either value, it will be replaced by num_from_policy, but 0 is not
+            assert self.cfg.replay.num_from_replay != 0, "Replay is enabled but no samples are being drawn from it"
+            assert self.cfg.replay.num_new_samples != 0, "Replay is enabled but no new samples are being added to it"
+
+        n_drawn = self.cfg.algo.num_from_policy
+        n_replayed = self.cfg.replay.num_from_replay or n_drawn if self.cfg.replay.use else 0
+        n_new_replay_samples = self.cfg.replay.num_new_samples or n_drawn if self.cfg.replay.use else None
+        n_from_dataset = self.cfg.algo.num_from_dataset
 
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, replay_buffer=replay_buffer)
         if n_from_dataset:
             src.do_sample_dataset(self.training_data, n_from_dataset, backwards_model=model)
         if n_drawn:
-            # If we are using a replay buffer, we can choose to keep the new samples in the minibatch, or just
-            # send them to the replay and train only on replay samples.
-            keep_samples_in_batch = not self.cfg.replay.use or not self.cfg.replay.replaces_online_data
-            src.do_sample_model(model, n_drawn, keep_samples_in_batch)
+            src.do_sample_model(model, n_drawn, n_new_replay_samples)
         if n_replayed and replay_buffer is not None:
             src.do_sample_replay(n_replayed)
         if self.cfg.log_dir:
@@ -266,8 +268,8 @@ class GFNTrainer:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
         # TODO: we're changing the default, make sure anything that is using test data is adjusted
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
-        n_drawn = int(self.cfg.algo.global_batch_size * (1 - self.cfg.algo.valid_offline_ratio))
-        n_from_dataset = self.cfg.algo.global_batch_size - n_drawn
+        n_drawn = self.cfg.algo.valid_num_from_policy
+        n_from_dataset = self.cfg.algo.valid_num_from_dataset
 
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
         if n_from_dataset:
@@ -285,10 +287,8 @@ class GFNTrainer:
 
     def build_final_data_loader(self) -> DataLoader:
         model, dev = self._wrap_for_mp(self.model, send_to_device=True)
-        # TODO: we're changing the default, make sure anything that is using test data is adjusted
-        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
-        n_drawn = int(self.cfg.algo.global_batch_size)
 
+        n_drawn = self.cfg.algo.num_from_policy
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
         assert self.cfg.num_final_gen_steps is not None
         # TODO: might be better to change total steps to total trajectories drawn

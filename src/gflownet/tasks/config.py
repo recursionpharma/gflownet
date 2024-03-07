@@ -62,7 +62,7 @@ class QM9MOOTaskConfig:
 
 @dataclass
 class TasksConfig:
-    qm9: QM9TaskConfig = QM9TaskConfig()
-    qm9_moo: QM9MOOTaskConfig = QM9MOOTaskConfig()
-    seh: SEHTaskConfig = SEHTaskConfig()
-    seh_moo: SEHMOOTaskConfig = SEHMOOTaskConfig()
+    qm9: QM9TaskConfig = field(default_factory=QM9TaskConfig)
+    qm9_moo: QM9MOOTaskConfig = field(default_factory=QM9MOOTaskConfig)
+    seh: SEHTaskConfig = field(default_factory=SEHTaskConfig)
+    seh_moo: SEHMOOTaskConfig = field(default_factory=SEHMOOTaskConfig)

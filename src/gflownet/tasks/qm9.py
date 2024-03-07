@@ -120,7 +120,8 @@ class QM9GapTrainer(StandardOnlineTrainer):
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
         cfg.algo.max_nodes = 9
-        cfg.algo.global_batch_size = 64
+        cfg.algo.num_from_policy = 32
+        cfg.algo.num_from_dataset = 32
         cfg.algo.train_random_action_prob = 0.001
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.sampling_tau = 0.0
