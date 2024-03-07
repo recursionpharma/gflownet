@@ -12,6 +12,7 @@ from torch_geometric import data as gd
 from gflownet.config import Config
 from gflownet.utils import metrics
 from gflownet.utils.focus_model import TabularFocusModel
+from gflownet.utils.misc import get_worker_device
 from gflownet.utils.transforms import thermometer
 
 
@@ -142,8 +143,7 @@ class FocusRegionConditional(Conditional):
         if focus_type is not None and "learned" in focus_type:
             if focus_type == "learned-tabular":
                 self.focus_model = TabularFocusModel(
-                    # TODO: proper device propagation
-                    device=torch.device("cpu"),
+                    device=get_worker_device(),
                     n_objectives=cfg.cond.moo.num_objectives,
                     state_space_res=self.cfg.focus_model_state_space_res,
                 )

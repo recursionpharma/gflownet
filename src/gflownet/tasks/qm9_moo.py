@@ -326,7 +326,7 @@ class QM9MOOTrainer(QM9GapTrainer):
         return {"topk": TopKMetricCB()}
 
     def build_validation_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        model = self._wrap_for_mp(self.model)
 
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
         src.do_conditionals_dataset_in_order(self.test_data, self.cfg.algo.valid_num_from_dataset, model)

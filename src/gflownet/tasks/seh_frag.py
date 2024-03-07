@@ -17,6 +17,7 @@ from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.utils.conditioning import TemperatureConditional
+from gflownet.utils.misc import get_worker_device
 from gflownet.utils.transforms import to_logreward
 
 
@@ -43,6 +44,7 @@ class SEHTask(GFNTask):
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
+        self.device = get_worker_device()
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -52,7 +54,8 @@ class SEHTask(GFNTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
+        model.to(self.device)
+        model = self._wrap_model(model, send_to_device=True)
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:

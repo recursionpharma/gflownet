@@ -122,11 +122,9 @@ class GFNTrainer:
         self.setup_algo()
         self.setup_model()
 
-    def _wrap_for_mp(self, obj, send_to_device=False):
+    def _wrap_for_mp(self, obj):
         """Wraps an object in a placeholder whose reference can be sent to a
         data worker process (only if the number of workers is non-zero)."""
-        if send_to_device:
-            obj.to(self.device)
         if self.cfg.num_workers > 0 and obj is not None:
             wrapper = mp_object_wrapper(
                 obj,
@@ -135,9 +133,9 @@ class GFNTrainer:
                 pickle_messages=self.cfg.pickle_mp_messages,
             )
             self.to_terminate.append(wrapper.terminate)
-            return wrapper.placeholder, torch.device("cpu")
+            return wrapper.placeholder
         else:
-            return obj, self.device
+            return obj
 
     def build_callbacks(self):
         return {}
@@ -153,12 +151,9 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         # Since the model may be used by a worker in a different process, we need to wrap it.
-        # The device `dev` returned here is the device that the worker will use to interact with the model;
-        # normally, if the main process has the model on 'cuda', this will simply be 'cpu' (since workers
-        # don't have CUDA access).
         # See implementation_nodes.md for more details.
-        model, dev = self._wrap_for_mp(self.sampling_model, send_to_device=True)
-        replay_buffer, _ = self._wrap_for_mp(self.replay_buffer, send_to_device=False)
+        model = self._wrap_for_mp(self.sampling_model)
+        replay_buffer = self._wrap_for_mp(self.replay_buffer)
 
         if self.cfg.replay.use:
             # None is fine for either value, it will be replaced by num_from_policy, but 0 is not
@@ -184,7 +179,7 @@ class GFNTrainer:
         return self._make_data_loader(src)
 
     def build_validation_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        model = self._wrap_for_mp(self.model)
         # TODO: we're changing the default, make sure anything that is using test data is adjusted
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
         n_drawn = self.cfg.algo.valid_num_from_policy
@@ -205,7 +200,7 @@ class GFNTrainer:
         return self._make_data_loader(src)
 
     def build_final_data_loader(self) -> DataLoader:
-        model, dev = self._wrap_for_mp(self.model, send_to_device=True)
+        model = self._wrap_for_mp(self.model)
 
         n_drawn = self.cfg.algo.num_from_policy
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)

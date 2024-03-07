@@ -15,6 +15,7 @@ from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.utils.conditioning import TemperatureConditional
+from gflownet.utils.misc import get_worker_device
 from gflownet.utils.transforms import to_logreward
 
 
@@ -30,7 +31,8 @@ class QM9GapTask(GFNTask):
     ):
         self._wrap_model = wrap_model
         self.rng = rng
-        self.models = self.load_task_models(cfg.task.qm9.model_path, torch.device(cfg.device))
+        self.device = get_worker_device()
+        self.models = self.load_task_models(cfg.task.qm9.model_path)
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
@@ -60,7 +62,7 @@ class QM9GapTask(GFNTask):
         elif self._rtrans == "unit+95p":
             return (1 - rp + (1 - self._percentile_95)) * self._width + self._min
 
-    def load_task_models(self, path, device):
+    def load_task_models(self, path):
         gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
         # TODO: this path should be part of the config?
         try:
@@ -73,8 +75,8 @@ class QM9GapTask(GFNTask):
                 "https://storage.googleapis.com/emmanuel-data/models/mxmnet_gap_model.pt",
             )
         gap_model.load_state_dict(state_dict)
-        gap_model.to(device)
-        gap_model, self.device = self._wrap_model(gap_model, send_to_device=True)
+        gap_model.to(self.device)
+        gap_model = self._wrap_model(gap_model)
         return {"mxmnet_gap": gap_model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
