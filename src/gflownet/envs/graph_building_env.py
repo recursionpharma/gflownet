@@ -28,6 +28,9 @@ class Graph(nx.Graph):
     def relabel_nodes(self, rmap):
         return nx.relabel_nodes(self, rmap)
 
+    def clear_cache(self):
+        self._Data_cache = None
+
 
 def graph_without_edge(g, e):
     gp = g.copy()
@@ -220,6 +223,7 @@ class GraphBuildingEnv:
         else:
             raise ValueError(f"Unknown action type {action.action}", action.action)
 
+        gp.clear_cache()  # Invalidate cached properties since we've modified the graph
         return gp
 
     def parents(self, g: Graph):

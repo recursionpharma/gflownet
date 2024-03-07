@@ -45,7 +45,7 @@ def build_two_node_states(ctx):
 
     mdp_graph = nx.DiGraph()
     mdp_graph.add_node(0)
-    graph_by_idx[0] = nx.Graph()
+    graph_by_idx[0] = env.new()
 
     def expand(s, idx):
         # Recursively expand all children of s

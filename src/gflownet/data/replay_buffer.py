@@ -36,7 +36,9 @@ class ReplayBuffer(object):
                 out[i] = np.stack(out[i], axis=0)
             elif all([isinstance(x, torch.Tensor) for x in out[i]]):
                 out[i] = torch.stack(out[i], dim=0)
-        return tuple(out)
+            else:
+                out[i] = list(out[i])
+        return out
 
     def __len__(self):
         return len(self.buffer)

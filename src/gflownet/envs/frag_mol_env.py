@@ -190,7 +190,10 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         data:  gd.Data
             The corresponding torch_geometric object.
         """
+        if hasattr(g, "_Data_cache") and g._Data_cache is not None:
+            return g._Data_cache
         zeros = lambda x: np.zeros(x, dtype=np.float32)  # noqa: E731
+        ones = lambda x: np.ones(x, dtype=np.float32)  # noqa: E731
         x = zeros((max(1, len(g.nodes)), self.num_node_dim))
         x[0, -1] = len(g.nodes) == 0
         edge_attr = zeros((len(g.edges) * 2, self.num_edge_dim))
@@ -198,20 +201,18 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # TODO: This is a bit silly but we have to do +1 when the graph is empty because the default
         # padding action is a [0, 0, 0], which needs to be legal for the empty state. Should be
         # fixable with a bit of smarts & refactoring.
-        remove_node_mask = zeros((x.shape[0], 1)) + (1 if len(g) == 0 else 0)
+        remove_node_mask = ones((x.shape[0], 1)) if len(g) == 0 else zeros((x.shape[0], 1))
         remove_edge_attr_mask = zeros((len(g.edges), self.num_edge_attrs))
         if len(g):
             degrees = np.array(list(g.degree), dtype=np.int32)[:, 1]  # type: ignore
             max_degrees = np.array([len(self.frags_stems[g.nodes[n]["v"]]) for n in g.nodes])  # type: ignore
         else:
             degrees = max_degrees = np.zeros((0,), dtype=np.int32)
+
+        node_is_connected = degrees <= 1
+        node_is_connected_to_edge_with_attr = zeros(degrees.shape[0])
         for i, n in enumerate(g.nodes):
             x[i, g.nodes[n]["v"]] = 1
-            # The node must be connected to at most 1 other node and in the case where it is
-            # connected to exactly one other node, the edge connecting them must not have any
-            # attributes.
-            edge_has_no_attr = bool(len(g.edges[list(g.edges(i))[0]]) == 0 if degrees[i] == 1 else degrees[i] == 0)
-            remove_node_mask[i, 0] = degrees[i] <= 1 and edge_has_no_attr
 
         # We compute the attachment points of fragments that have been already used so that we can
         # mask them out for the agent (so that only one neighbor can be attached to one attachment
@@ -222,6 +223,9 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         has_unfilled_attach = False
         for i, e in enumerate(g.edges):
             ed = g.edges[e]
+            if len(ed):
+                node_is_connected_to_edge_with_attr[e[0]] = 1
+                node_is_connected_to_edge_with_attr[e[1]] = 1
             a = ed.get("src_attach", -1)
             b = ed.get("dst_attach", -1)
             if a >= 0:
@@ -234,6 +238,13 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 remove_edge_attr_mask[i, 1] = 1
             else:
                 has_unfilled_attach = True
+
+        # The node must be connected to at most 1 other node and in the case where it is
+        # connected to exactly one other node, the edge connecting them must not have any
+        # attributes.
+        if len(g):
+            remove_node_mask = (node_is_connected * (1 - node_is_connected_to_edge_with_attr)).reshape((-1, 1))
+
         # Here we encode the attached atoms in the edge features, as well as mask out attached
         # atoms.
         for i, e in enumerate(g.edges):
@@ -249,6 +260,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                             set_edge_attr_mask[i, attach_point + self.num_stem_acts * j] = 1
         # Since this is a DiGraph, make sure to put (i, j) first and (j, i) second
         edge_index = np.array([e for i, j in g.edges for e in [(i, j), (j, i)]], dtype=np.int64).reshape((-1, 2)).T
+
         if x.shape[0] == self.max_frags:
             add_node_mask = zeros((x.shape[0], self.num_new_node_values))
         else:
@@ -258,9 +270,9 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 else np.ones((1, 1), np.float32)
             )
             add_node_mask = add_node_mask * np.ones((x.shape[0], self.num_new_node_values), np.float32)
-        stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else np.ones((1, 1), np.float32)
+        stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else ones((1, 1))
 
-        return gd.Data(
+        data = gd.Data(
             **{
                 k: torch.from_numpy(v)
                 for k, v in dict(
@@ -275,6 +287,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 ).items()
             }
         )
+        g._Data_cache = data
+        return data
 
     def collate(self, graphs: List[gd.Data]) -> gd.Batch:
         """Batch Data instances
