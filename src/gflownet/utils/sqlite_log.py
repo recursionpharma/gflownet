@@ -1,7 +1,9 @@
-from typing import Iterable
 import os
 import sqlite3
+from typing import Iterable
+
 import torch
+
 
 class SQLiteLogHook:
     def __init__(self, log_dir, ctx) -> None:
