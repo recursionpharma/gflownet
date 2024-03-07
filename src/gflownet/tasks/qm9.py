@@ -87,7 +87,9 @@ class QM9GapTask(GFNTask):
 
     def compute_reward_from_graph(self, graphs: List[gd.Data]) -> Tensor:
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
+        batch.to(
+            self.models["mxmnet_gap"].device if hasattr(self.models["mxmnet_gap"], "device") else get_worker_device()
+        )
         preds = self.models["mxmnet_gap"](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
         preds[preds.isnan()] = 1
         preds = (

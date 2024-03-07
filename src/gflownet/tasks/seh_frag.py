@@ -40,7 +40,6 @@ class SEHTask(GFNTask):
     ):
         self._wrap_model = wrap_model
         self.rng = rng
-        self.device = get_worker_device()
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
@@ -54,7 +53,7 @@ class SEHTask(GFNTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model.to(self.device)
+        model.to(get_worker_device())
         model = self._wrap_model(model)
         return {"seh": model}
 
@@ -66,7 +65,7 @@ class SEHTask(GFNTask):
 
     def compute_reward_from_graph(self, graphs: List[Data]) -> Tensor:
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
+        batch.to(self.models["seh"].device if hasattr(self.models["seh"], "device") else get_worker_device())
         preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 0
         return self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1,))

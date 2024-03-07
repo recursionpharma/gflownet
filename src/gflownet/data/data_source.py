@@ -266,7 +266,7 @@ class DataSource(IterableDataset):
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_rewards"], t["flat_rewards"], t["cond_info"], t["is_valid"])
+                self.replay_buffer.push(t, t["log_reward"], t["flat_rewards"], t["cond_info"], t["is_valid"])
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
