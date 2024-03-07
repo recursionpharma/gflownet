@@ -74,7 +74,7 @@ class MultiObjectiveStatsHook:
     def _run_pareto_accumulation(self):
         num_updates = 0
         timeouts = 0
-        while not self.stop.is_set() or timeouts < 200:
+        while not self.stop.is_set() and timeouts < 200:
             try:
                 r, smi, owid = self.pareto_queue.get(block=True, timeout=1)
             except queue.Empty:

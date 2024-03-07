@@ -170,7 +170,7 @@ class DataSource(IterableDataset):
                 # I'm also not a fan of encode_conditional_information, it assumes lots of things about what's passed to
                 # it and the state of the program (e.g. validation mode)
                 cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
-                trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info["encoding"], p)
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)

@@ -40,11 +40,11 @@ class SEHTask(GFNTask):
     ):
         self._wrap_model = wrap_model
         self.rng = rng
+        self.device = get_worker_device()
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg, rng)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
-        self.device = get_worker_device()
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(torch.as_tensor(y) / 8)
@@ -55,7 +55,7 @@ class SEHTask(GFNTask):
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
         model.to(self.device)
-        model = self._wrap_model(model, send_to_device=True)
+        model = self._wrap_model(model)
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
