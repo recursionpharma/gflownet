@@ -277,6 +277,7 @@ class GFNTrainer:
             if it % 1024 == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
+
             if isinstance(batch, BatchDescriptor):
                 print(f"buffer size was {batch.size / 1024**2:.2f}M")
                 if train_dl.dataset.do_multiple_buffers:

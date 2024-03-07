@@ -3,6 +3,7 @@ from typing import Callable, Generator, List, Optional
 
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 from torch.utils.data import IterableDataset
 
 from gflownet import GFNAlgorithm, GFNTask
@@ -10,6 +11,7 @@ from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import get_worker_rng
+from gflownet.utils.multiprocessing_proxy import SharedPinnedBuffer, put_into_batch_buffer
 
 
 def cycle_call(it):
@@ -44,6 +46,7 @@ class DataSource(IterableDataset):
         self.global_step_count.share_memory_()
         self.global_step_count_lock = torch.multiprocessing.Lock()
         self.current_iter = start_at_step
+        self.setup_mp_buffers()
 
     def add_sampling_hook(self, hook: Callable):
         """Add a hook that is called when sampling new trajectories.
@@ -230,7 +233,7 @@ class DataSource(IterableDataset):
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
         batch.flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
-        return batch
+        return self._maybe_put_in_mp_buffer(batch)
 
     def compute_properties(self, trajs, mark_as_online=False):
         """Sets trajs' flat_rewards and is_valid keys by querying the task."""
@@ -318,3 +321,17 @@ class DataSource(IterableDataset):
             yield np.arange(i, i + num_samples)
         if i + num_samples < end:
             yield np.arange(i + num_samples, end)
+
+    def setup_mp_buffers(self):
+        self.result_buffer_size = self.cfg.mp_buffer_size
+        if self.result_buffer_size:
+            self.result_buffer = [SharedPinnedBuffer(self.result_buffer_size) for _ in range(self.cfg.num_workers)]
+
+    def _maybe_put_in_mp_buffer(self, batch):
+        if self.result_buffer_size:
+            self.result_buffer[self._wid].lock.acquire()
+            desc = put_into_batch_buffer(batch, self.result_buffer[self._wid].buffer)
+            desc.wid = self._wid
+            return desc
+        else:
+            return batch

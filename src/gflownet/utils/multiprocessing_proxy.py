@@ -68,14 +68,13 @@ def put_into_batch_buffer(batch, buffer):
         types.append(v.dtype)
         shapes.append(tuple(v.shape))
         numel = v.numel() * v.element_size()
-        # print('putting', k, v.shape, numel, offset)
         buffer[offset : offset + numel] = v.view(-1).view(torch.uint8)
         offset += numel
         offset += (8 - offset % 8) % 8  # align to 8 bytes
         if offset > buffer.shape[0]:
-            raise ValueError(f"Offset {offset} exceeds buffer size {buffer.shape[0]}")
-    # print(f'total size: {offset / 1024**2:.3f}M')
-    # print(batch.batch)
+            raise ValueError(
+                f"Offset {offset} exceeds buffer size {buffer.shape[0]}. Try increasing `cfg.mp_buffer_size`."
+            )
     return BatchDescriptor(names, types, shapes, offset, others)
 
 
@@ -83,18 +82,16 @@ def resolve_batch_buffer(descriptor, buffer, device):
     offset = 0
     batch = Batch()
     batch._slice_dict = {}
-    cuda_buffer = buffer[: descriptor.size].to(device)  # TODO: check if only sending `size` is faster?
+    cuda_buffer = buffer[: descriptor.size].to(device)
     for name, dtype, shape in zip(descriptor.names, descriptor.types, descriptor.shapes):
         numel = prod(shape) * dtype.itemsize
-        # print('restoring', name, shape, numel, offset)
         if name.startswith("_slice_dict_"):
             batch._slice_dict[name[12:]] = cuda_buffer[offset : offset + numel].view(dtype).view(shape)
         else:
             setattr(batch, name, cuda_buffer[offset : offset + numel].view(dtype).view(shape))
         offset += numel
         offset += (8 - offset % 8) % 8  # align to 8 bytes
-    # print(batch.batch)
-    # print(f'total size: {offset / 1024**2:.3f}M')
+
     for k, v in descriptor.other.items():
         setattr(batch, k, v)
     return batch
@@ -112,7 +109,6 @@ def put_into_result_buffer(result, buffer):
     for name in gac_names:
         tensors = getattr(gac, name)
         for i, x in enumerate(tensors):
-            # print(f"putting {name}@{i} with shape {x.shape}")
             numel = x.numel() * x.element_size()
             if numel > 0:
                 # We need this for a funny reason
@@ -163,7 +159,6 @@ def resolve_result_buffer(descriptor, buffer, device):
                 raise ValueError(f"Unknown result descriptor name: {name}")
         offset += numel
         offset += (8 - offset % 8) % 8  # align to 8 bytes
-        # print(f"restored {name} with shape {shape}")
     return gac, per_graph_out
 
 
