@@ -23,8 +23,8 @@ from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger, set_main_process_device
+from gflownet.utils.multiprocessing_proxy import BufferUnpickler, mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
-from gflownet.utils.multiprocessing_proxy import mp_object_wrapper, resolve_batch_buffer, BatchDescriptor
 
 from .config import Config
 
@@ -132,7 +132,7 @@ class GFNTrainer:
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
-                bb_size=self.cfg.mp_buffer_size,
+                sb_size=self.cfg.mp_buffer_size,
             )
             self.to_terminate.append(wrapper.terminate)
             return wrapper.placeholder
@@ -182,7 +182,7 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model = self._wrap_for_mp(self.model)
-        
+
         n_drawn = self.cfg.algo.valid_num_from_policy
         n_from_dataset = self.cfg.algo.valid_num_from_dataset
 
@@ -247,13 +247,11 @@ class GFNTrainer:
         info["eval_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
-    def _maybe_resolve_batch_buffer(self, batch: Union[Batch, BatchDescriptor], dl: DataLoader) -> Batch:
-        if isinstance(batch, BatchDescriptor):
-            print(f"buffer size was {batch.size / 1024**2:.2f}M")
-            wid = batch.wid
-            batch = resolve_batch_buffer(batch, dl.dataset.result_buffer[wid].buffer, self.device)
-            dl.dataset.result_buffer[wid].lock.release()
-        else:
+    def _maybe_resolve_shared_buffer(self, batch: Union[Batch, tuple, list], dl: DataLoader) -> Batch:
+        if dl.dataset.mp_buffer_size > 0 and isinstance(batch, (tuple, list)):
+            batch, wid = batch
+            batch = BufferUnpickler(dl.dataset.result_buffer[wid], batch, self.device).load()
+        elif isinstance(batch, Batch):
             batch = batch.to(self.device)
         return batch
 
@@ -288,7 +286,7 @@ class GFNTrainer:
                 gc.collect()
                 torch.cuda.empty_cache()
             _bd = batch
-            batch = self._maybe_resolve_batch_buffer(batch, train_dl)
+            batch = self._maybe_resolve_shared_buffer(batch, train_dl)
             t1 = time.time()
             times.append(t1 - t0)
             print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s")
@@ -309,7 +307,7 @@ class GFNTrainer:
 
             if valid_freq > 0 and it % valid_freq == 0:
                 for batch in valid_dl:
-                    batch = self._maybe_resolve_batch_buffer(batch, valid_dl)
+                    batch = self._maybe_resolve_shared_buffer(batch, valid_dl)
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
@@ -330,7 +328,7 @@ class GFNTrainer:
                 range(num_training_steps + 1, num_training_steps + num_final_gen_steps + 1),
                 cycle(final_dl),
             ):
-                batch = self._maybe_resolve_batch_buffer(batch, final_dl)
+                batch = self._maybe_resolve_shared_buffer(batch, final_dl)
                 if hasattr(batch, "extra_info"):
                     for k, v in batch.extra_info.items():
                         if k not in final_info:

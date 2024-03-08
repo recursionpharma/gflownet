@@ -3,16 +3,15 @@ from typing import Callable, Generator, List, Optional
 
 import numpy as np
 import torch
-import torch.multiprocessing as mp
 from torch.utils.data import IterableDataset
 from torch_geometric.data import Batch
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext, GraphActionCategorical
+from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import get_worker_rng
-from gflownet.utils.multiprocessing_proxy import SharedPinnedBuffer, put_into_batch_buffer
+from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
 
 def cycle_call(it):
@@ -325,20 +324,17 @@ class DataSource(IterableDataset):
 
     def setup_mp_buffers(self):
         if self.cfg.num_workers > 0:
-            self.result_buffer_size = self.cfg.mp_buffer_size
-            if self.result_buffer_size:
-                self.result_buffer = [SharedPinnedBuffer(self.result_buffer_size) for _ in range(self.cfg.num_workers)]
+            self.mp_buffer_size = self.cfg.mp_buffer_size
+            if self.mp_buffer_size:
+                self.result_buffer = [SharedPinnedBuffer(self.mp_buffer_size) for _ in range(self.cfg.num_workers)]
         else:
-            self.result_buffer_size = None
+            self.mp_buffer_size = None
 
     def _maybe_put_in_mp_buffer(self, batch):
-        if self.result_buffer_size:
+        if self.mp_buffer_size:
             if not (isinstance(batch, Batch)):
-                warnings.warn(f"Expected a Batch object, but got {type(batch)}. " "Not using mp buffers.")
+                warnings.warn(f"Expected a Batch object, but got {type(batch)}. Not using mp buffers.")
                 return batch
-            self.result_buffer[self._wid].lock.acquire()
-            desc = put_into_batch_buffer(batch, self.result_buffer[self._wid].buffer)
-            desc.wid = self._wid
-            return desc
+            return (BufferPickler(self.result_buffer[self._wid]).dumps(batch), self._wid)
         else:
             return batch
