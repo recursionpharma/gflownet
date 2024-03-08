@@ -3,7 +3,7 @@ import os
 import pathlib
 import shutil
 import time
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
 import numpy as np
 import torch
@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 from rdkit import RDLogger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from torch_geometric.data import Batch
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.data.data_source import DataSource
@@ -181,8 +182,7 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model = self._wrap_for_mp(self.model)
-        # TODO: we're changing the default, make sure anything that is using test data is adjusted
-        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        
         n_drawn = self.cfg.algo.valid_num_from_policy
         n_from_dataset = self.cfg.algo.valid_num_from_dataset
 
@@ -247,6 +247,16 @@ class GFNTrainer:
         info["eval_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
+    def _maybe_resolve_batch_buffer(self, batch: Union[Batch, BatchDescriptor], dl: DataLoader) -> Batch:
+        if isinstance(batch, BatchDescriptor):
+            print(f"buffer size was {batch.size / 1024**2:.2f}M")
+            wid = batch.wid
+            batch = resolve_batch_buffer(batch, dl.dataset.result_buffer[wid].buffer, self.device)
+            dl.dataset.result_buffer[wid].lock.release()
+        else:
+            batch = batch.to(self.device)
+        return batch
+
     def run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
@@ -277,18 +287,8 @@ class GFNTrainer:
             if it % 1024 == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
-
-            if isinstance(batch, BatchDescriptor):
-                print(f"buffer size was {batch.size / 1024**2:.2f}M")
-                if train_dl.dataset.do_multiple_buffers:
-                    wid = batch.wid
-                    batch = resolve_batch_buffer(batch, train_dl.dataset.result_buffer[wid].buffer, self.device)
-                    train_dl.dataset.result_buffer[wid].lock.release()
-                else:
-                    batch = resolve_batch_buffer(batch, train_dl.dataset.result_buffer.buffer, self.device)
-                    train_dl.dataset.result_buffer.lock.release()
-            else:
-                batch = batch.to(self.device)
+            _bd = batch
+            batch = self._maybe_resolve_batch_buffer(batch, train_dl)
             t1 = time.time()
             times.append(t1 - t0)
             print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s")
@@ -309,6 +309,7 @@ class GFNTrainer:
 
             if valid_freq > 0 and it % valid_freq == 0:
                 for batch in valid_dl:
+                    batch = self._maybe_resolve_batch_buffer(batch, valid_dl)
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
                     self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
@@ -329,6 +330,7 @@ class GFNTrainer:
                 range(num_training_steps + 1, num_training_steps + num_final_gen_steps + 1),
                 cycle(final_dl),
             ):
+                batch = self._maybe_resolve_batch_buffer(batch, final_dl)
                 if hasattr(batch, "extra_info"):
                     for k, v in batch.extra_info.items():
                         if k not in final_info:

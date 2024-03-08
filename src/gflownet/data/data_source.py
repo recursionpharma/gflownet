@@ -5,11 +5,12 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from torch.utils.data import IterableDataset
+from torch_geometric.data import Batch
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphBuildingEnvContext, GraphActionCategorical
 from gflownet.utils.misc import get_worker_rng
 from gflownet.utils.multiprocessing_proxy import SharedPinnedBuffer, put_into_batch_buffer
 
@@ -228,7 +229,7 @@ class DataSource(IterableDataset):
         if "focus_dir" in trajs[0]:
             batch.focus_dir = torch.stack([t["focus_dir"] for t in trajs])
 
-        if self.ctx.has_n():  # Does this go somewhere else? Require a flag? Might not be cheap to compute
+        if self.ctx.has_n() and self.cfg.algo.compute_log_n:
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
@@ -323,12 +324,18 @@ class DataSource(IterableDataset):
             yield np.arange(i + num_samples, end)
 
     def setup_mp_buffers(self):
-        self.result_buffer_size = self.cfg.mp_buffer_size
-        if self.result_buffer_size:
-            self.result_buffer = [SharedPinnedBuffer(self.result_buffer_size) for _ in range(self.cfg.num_workers)]
+        if self.cfg.num_workers > 0:
+            self.result_buffer_size = self.cfg.mp_buffer_size
+            if self.result_buffer_size:
+                self.result_buffer = [SharedPinnedBuffer(self.result_buffer_size) for _ in range(self.cfg.num_workers)]
+        else:
+            self.result_buffer_size = None
 
     def _maybe_put_in_mp_buffer(self, batch):
         if self.result_buffer_size:
+            if not (isinstance(batch, Batch)):
+                warnings.warn(f"Expected a Batch object, but got {type(batch)}. " "Not using mp buffers.")
+                return batch
             self.result_buffer[self._wid].lock.acquire()
             desc = put_into_batch_buffer(batch, self.result_buffer[self._wid].buffer)
             desc.wid = self._wid

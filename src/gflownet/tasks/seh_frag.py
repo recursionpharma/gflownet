@@ -208,9 +208,10 @@ def main():
     config.log_dir = f"./logs/debug_run_seh_frag_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.overwrite_existing_exp = True
+    config.algo.num_from_policy = 64
     config.num_training_steps = 1_00
-    config.validate_every = 20
-    config.num_final_gen_steps = 10
+    config.validate_every = 2000
+    config.num_final_gen_steps = 0
     config.num_workers = 8
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99

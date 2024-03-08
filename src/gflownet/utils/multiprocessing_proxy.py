@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from torch_geometric.data import Batch
+import warnings
 
 from gflownet.envs.graph_building_env import GraphActionCategorical
 
@@ -18,12 +19,23 @@ class SharedPinnedBuffer:
         self.buffer = torch.empty(size, dtype=torch.uint8)
         self.buffer.share_memory_()
         self.lock = mp.Lock()
+        self.do_unreg = False
 
-        cudart = torch.cuda.cudart()
-        r = cudart.cudaHostRegister(self.buffer.data_ptr(), self.buffer.numel() * self.buffer.element_size(), 0)
-        assert r == 0
+        if not self.buffer.is_pinned():
+            # Sometimes torch will create an already pinned (page aligned) buffer, so we don't need to 
+            # pin it again; doing so will raise a CUDA error
+            cudart = torch.cuda.cudart()
+            r = cudart.cudaHostRegister(self.buffer.data_ptr(), self.buffer.numel() * self.buffer.element_size(), 0)
+            assert r == 0
+            self.do_unreg = True  # But then we need to unregister it later
         assert self.buffer.is_shared()
         assert self.buffer.is_pinned()
+
+    def __del__(self):
+        if self.do_unreg and torch.utils.data.get_worker_info() is None:
+            cudart = torch.cuda.cudart()
+            r = cudart.cudaHostUnregister(self.buffer.data_ptr())
+            assert r == 0
 
 
 class BatchDescriptor:
@@ -82,7 +94,10 @@ def resolve_batch_buffer(descriptor, buffer, device):
     offset = 0
     batch = Batch()
     batch._slice_dict = {}
+    # Seems legit to send just a 0-starting slice, because it should be pinned as well (and timing this vs sending
+    # the whole buffer, it seems to be the marginally faster option)
     cuda_buffer = buffer[: descriptor.size].to(device)
+
     for name, dtype, shape in zip(descriptor.names, descriptor.types, descriptor.shapes):
         numel = prod(shape) * dtype.itemsize
         if name.startswith("_slice_dict_"):
@@ -300,7 +315,7 @@ class MPObjectProxy:
     def run(self):
         timeouts = 0
 
-        while not self.stop.is_set() or timeouts < 500:
+        while not self.stop.is_set() and timeouts < 5 / 1e-5:
             for qi, q in enumerate(self.in_queues):
                 try:
                     r = self.decode(q.get(True, 1e-5))
@@ -379,4 +394,4 @@ def mp_object_wrapper(obj, num_workers, cast_types, pickle_messages: bool = Fals
         A placeholder object whose method calls route arguments to the main process
 
     """
-    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages)
+    return MPObjectProxy(obj, num_workers, cast_types, pickle_messages, bb_size=bb_size)

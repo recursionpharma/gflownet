@@ -138,6 +138,7 @@ class AlgoConfig:
     train_det_after: Optional[int] = None
     valid_random_action_prob: float = 0.0
     sampling_tau: float = 0.0
+    compute_log_n: bool = False
     tb: TBConfig = field(default_factory=TBConfig)
     moql: MOQLConfig = field(default_factory=MOQLConfig)
     a2c: A2CConfig = field(default_factory=A2CConfig)
