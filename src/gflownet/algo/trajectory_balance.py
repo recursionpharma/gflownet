@@ -133,6 +133,7 @@ class TrajectoryBalance(GFNAlgorithm):
         assert self.ctx.has_n() or (
             self.cfg.backward_policy not in [Backward.MaxentA, Backward.GSQLA]
         ), "can't do analytical maxent/GSQL w/o knowing $n$"
+        assert self.cfg.do_predict_n or self.cfg.n_loss == NLoss.none, "`n_loss != NLoss.none` requires `do_predict_n`"
 
         self.graph_sampler = GraphSampler(
             ctx,
@@ -394,8 +395,11 @@ class TrajectoryBalance(GFNAlgorithm):
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]
-        log_n_preds = per_graph_out[:, 1]
-        log_n_preds[first_graph_idx] = 0
+        if self.cfg.do_predict_n:
+            log_n_preds = per_graph_out[:, 1]
+            log_n_preds[first_graph_idx] = 0
+        else:
+            log_n_preds = None
 
         # Compute trajectory balance objective
         log_Z = model.logZ(cond_info)[:, 0]
@@ -578,7 +582,7 @@ class TrajectoryBalance(GFNAlgorithm):
             "batch_entropy": -traj_log_p_F.mean(),
             "traj_lens": batch.traj_lens.float().mean(),
         }
-        if self.ctx.has_n():
+        if self.ctx.has_n() and self.cfg.do_predict_n:
             info["n_loss_pred"] = scatter(
                 (log_n_preds - batch.log_ns) ** 2, batch_idx, dim=0, dim_size=num_trajs, reduce="sum"
             ).mean()
