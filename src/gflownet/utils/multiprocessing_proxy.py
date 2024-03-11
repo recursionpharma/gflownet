@@ -28,10 +28,11 @@ class SharedPinnedBuffer:
         assert self.buffer.is_pinned()
 
     def __del__(self):
-        if self.do_unreg and torch.utils.data.get_worker_info() is None:
-            cudart = torch.cuda.cudart()
-            r = cudart.cudaHostUnregister(self.buffer.data_ptr())
-            assert r == 0
+        if torch.utils.data.get_worker_info() is None:
+            if self.do_unreg:
+                cudart = torch.cuda.cudart()
+                r = cudart.cudaHostUnregister(self.buffer.data_ptr())
+                assert r == 0
 
 
 class _BufferPicklerSentinel:
@@ -43,7 +44,8 @@ class BufferPickler(Pickler):
         self._f = io.BytesIO()
         super().__init__(self._f)
         self.buf = buf
-        # The lock will be released by the consumer of this buffer once the memory has been transferred to the device
+        # The lock will be released by the consumer (BufferUnpickler) of this buffer once
+        # the memory has been transferred to the device and copied
         self.buf.lock.acquire()
         self.buf_offset = 0
 
@@ -51,12 +53,30 @@ class BufferPickler(Pickler):
         if not isinstance(v, torch.Tensor):
             return None
         numel = v.numel() * v.element_size()
+        if self.buf_offset + numel > self.buf.size:
+            raise RuntimeError(
+                f"Tried to allocate {self.buf_offset + numel} bytes in a buffer of size {self.buf.size}. "
+                "Consider increasing cfg.mp_buffer_size"
+            )
         start = self.buf_offset
+        shape = tuple(v.shape)
+        if v.ndim > 0 and v.stride(-1) != 1 or not v.is_contiguous():
+            v = v.contiguous().reshape(-1)
+        if v.ndim > 0 and v.stride(-1) != 1:
+            # We're still not contiguous, this unfortunately happens occasionally, e.g.:
+            # x = torch.arange(10).reshape((10, 1))
+            # y = x.T[::2].T
+            # y.stride(), y.is_contiguous(), y.contiguous().stride()
+            # -> (1, 2), True, (1, 2)
+            v = v.flatten() + 0
+            # I don't know if this comes from my misunderstanding of strides or if it's a bug in torch
+            # but either way torch will refuse to view this tensor as a uint8 tensor, so we have to + 0
+            # to force torch to materialize it into a new tensor (it may otherwise be lazy and not materialize)
         if numel > 0:
-            self.buf.buffer[start : start + numel] = v.view(-1).view(torch.uint8)
+            self.buf.buffer[start : start + numel] = v.flatten().view(torch.uint8)
         self.buf_offset += numel
         self.buf_offset += (8 - self.buf_offset % 8) % 8  # align to 8 bytes
-        return (_BufferPicklerSentinel, (start, tuple(v.shape), v.dtype))
+        return (_BufferPicklerSentinel, (start, shape, v.dtype))
 
     def dumps(self, obj):
         self.dump(obj)
@@ -68,11 +88,19 @@ class BufferUnpickler(Unpickler):
         self._f, total_size = io.BytesIO(data[0]), data[1]
         super().__init__(self._f)
         self.buf = buf
-        self.target_buf = buf.buffer[:total_size].to(device)
+        self.target_buf = buf.buffer[:total_size].to(device) + 0
+        # Why the `+ 0`? Unfortunately, we have no way to know exactly when the consumer of the object we're
+        # unpickling will be done using the buffer underlying the tensor, so we have to create a copy.
+        # If we don't and another consumer starts using the buffer, and this consumer transfers this pinned
+        # buffer to the GPU, the first consumer's tensors will be corrupted, because (depending on the CUDA
+        # memory manager) the pinned buffer will transfer to the same GPU location.
+        # Hopefully, especially if the target device is the GPU, the copy will be fast and/or async.
+        # Note that this could be fixed by using one buffer for each worker, but that would be significantly
+        # more memory usage.
 
     def load_tensor(self, offset, shape, dtype):
         numel = prod(shape) * dtype.itemsize
-        tensor = self.target_buf[offset : offset + numel].view(dtype).view(shape)
+        tensor: torch.Tensor = self.target_buf[offset : offset + numel].view(dtype).view(shape)
         return tensor
 
     def persistent_load(self, pid):
@@ -107,7 +135,7 @@ class MPObjectPlaceholder:
         self.pickle_messages = pickle_messages
         self._is_init = False
         self.shared_buffer_size = shared_buffer_size
-        if shared_buffer_size is not None:
+        if shared_buffer_size:
             self._buffer_to_main = SharedPinnedBuffer(shared_buffer_size)
             self._buffer_from_main = SharedPinnedBuffer(shared_buffer_size)
 
@@ -194,7 +222,7 @@ class MPObjectProxy:
         self.in_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
         self.out_queues = [mp.Queue() for i in range(num_workers + 1)]  # type: ignore
         self.pickle_messages = pickle_messages
-        self.use_shared_buffer = sb_size is not None
+        self.use_shared_buffer = bool(sb_size)
         self.placeholder = MPObjectPlaceholder(self.in_queues, self.out_queues, pickle_messages, sb_size)
         self.obj = obj
         if hasattr(obj, "parameters"):
@@ -226,7 +254,6 @@ class MPObjectProxy:
 
     def run(self):
         timeouts = 0
-
         while not self.stop.is_set() and timeouts < 5 / 1e-5:
             for qi, q in enumerate(self.in_queues):
                 try:

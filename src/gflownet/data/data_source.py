@@ -10,6 +10,7 @@ from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import get_worker_rng
 from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
@@ -332,7 +333,7 @@ class DataSource(IterableDataset):
 
     def _maybe_put_in_mp_buffer(self, batch):
         if self.mp_buffer_size:
-            if not (isinstance(batch, Batch)):
+            if not (isinstance(batch, (Batch, SeqBatch))):
                 warnings.warn(f"Expected a Batch object, but got {type(batch)}. Not using mp buffers.")
                 return batch
             return (BufferPickler(self.result_buffer[self._wid]).dumps(batch), self._wid)

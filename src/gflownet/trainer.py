@@ -247,11 +247,13 @@ class GFNTrainer:
         info["eval_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
 
-    def _maybe_resolve_shared_buffer(self, batch: Union[Batch, tuple, list], dl: DataLoader) -> Batch:
-        if dl.dataset.mp_buffer_size > 0 and isinstance(batch, (tuple, list)):
+    def _maybe_resolve_shared_buffer(
+        self, batch: Union[Batch, SeqBatch, tuple, list], dl: DataLoader
+    ) -> Union[Batch, SeqBatch]:
+        if dl.dataset.mp_buffer_size and isinstance(batch, (tuple, list)):
             batch, wid = batch
             batch = BufferUnpickler(dl.dataset.result_buffer[wid], batch, self.device).load()
-        elif isinstance(batch, Batch):
+        elif isinstance(batch, (Batch, SeqBatch)):
             batch = batch.to(self.device)
         return batch
 
@@ -285,7 +287,6 @@ class GFNTrainer:
             if it % 1024 == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
-            _bd = batch
             batch = self._maybe_resolve_shared_buffer(batch, train_dl)
             t1 = time.time()
             times.append(t1 - t0)
