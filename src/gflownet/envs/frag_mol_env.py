@@ -87,7 +87,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveNode,
             GraphActionType.RemoveEdgeAttr,
         ]
-        self.device = torch.device("cpu")
         self.n_counter = NCounter()
         self.sorted_frags = sorted(list(enumerate(self.frags_mol)), key=lambda x: -x[1].GetNumAtoms())
 

@@ -22,6 +22,7 @@ from gflownet.envs.graph_building_env import (
     generate_forward_trajectory,
 )
 from gflownet.trainer import GFNAlgorithm
+from gflownet.utils.misc import get_worker_device
 
 
 def shift_right(x: torch.Tensor, z=0):
@@ -125,6 +126,7 @@ class TrajectoryBalance(GFNAlgorithm):
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
         # like a transformer with causal self-attention.
         self.model_is_autoregressive = False
+        self.random_action_prob = [cfg.algo.train_random_action_prob, cfg.algo.valid_random_action_prob]
 
         self.graph_sampler = GraphSampler(
             ctx,
@@ -138,7 +140,10 @@ class TrajectoryBalance(GFNAlgorithm):
         )
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
-            self._init_subtb(torch.device("cuda"))  # TODO: where are we getting device info?
+            self._init_subtb(get_worker_device())
+
+    def set_is_eval(self, is_eval: bool):
+        self.is_eval = is_eval
 
     def create_training_data_from_own_samples(
         self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
@@ -167,7 +172,7 @@ class TrajectoryBalance(GFNAlgorithm):
            - loss: predicted loss (if bootstrapping)
            - is_valid: is the generated graph valid according to the env & ctx
         """
-        dev = self.ctx.device
+        dev = get_worker_device()
         cond_info = cond_info.to(dev)
         data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         logZ_pred = model.logZ(cond_info)
@@ -202,7 +207,7 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         if self.cfg.do_sample_p_b:
             assert model is not None and cond_info is not None and random_action_prob is not None
-            dev = self.ctx.device
+            dev = get_worker_device()
             cond_info = cond_info.to(dev)
             return self.graph_sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
@@ -213,7 +218,7 @@ class TrajectoryBalance(GFNAlgorithm):
                 self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)
                 for gp, _ in traj["traj"][1:]
             ] + [1]
-            traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(self.ctx.device)
+            traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(get_worker_device())
             traj["result"] = traj["traj"][-1][0]
             if self.cfg.do_parameterize_p_b:
                 traj["bck_a"] = [GraphAction(GraphActionType.Stop)] + [self.env.reverse(g, a) for g, a in traj["traj"]]

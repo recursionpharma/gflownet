@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -35,5 +35,5 @@ class ModelConfig:
     num_layers: int = 3
     num_emb: int = 128
     dropout: float = 0
-    graph_transformer: GraphTransformerConfig = GraphTransformerConfig()
-    seq_transformer: SeqTransformerConfig = SeqTransformerConfig()
+    graph_transformer: GraphTransformerConfig = field(default_factory=GraphTransformerConfig)
+    seq_transformer: SeqTransformerConfig = field(default_factory=SeqTransformerConfig)

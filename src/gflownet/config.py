@@ -1,4 +1,4 @@
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Optional
 
 from omegaconf import MISSING
@@ -94,18 +94,19 @@ class Config:
     print_every: int = 100
     start_at_step: int = 0
     num_final_gen_steps: Optional[int] = None
+    num_validation_gen_steps: Optional[int] = None
     num_training_steps: int = 10_000
     num_workers: int = 0
     hostname: Optional[str] = None
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
     overwrite_existing_exp: bool = False
-    algo: AlgoConfig = AlgoConfig()
-    model: ModelConfig = ModelConfig()
-    opt: OptimizerConfig = OptimizerConfig()
-    replay: ReplayConfig = ReplayConfig()
-    task: TasksConfig = TasksConfig()
-    cond: ConditionalsConfig = ConditionalsConfig()
+    algo: AlgoConfig = field(default_factory=AlgoConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    opt: OptimizerConfig = field(default_factory=OptimizerConfig)
+    replay: ReplayConfig = field(default_factory=ReplayConfig)
+    task: TasksConfig = field(default_factory=TasksConfig)
+    cond: ConditionalsConfig = field(default_factory=ConditionalsConfig)
 
 
 def init_empty(cfg):

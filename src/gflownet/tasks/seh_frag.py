@@ -11,12 +11,13 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.conditioning import TemperatureConditional
+from gflownet.utils.misc import get_worker_device
 from gflownet.utils.transforms import to_logreward
 
 
@@ -52,7 +53,8 @@ class SEHTask(GFNTask):
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
+        model.to(get_worker_device())
+        model = self._wrap_model(model)
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
@@ -63,7 +65,7 @@ class SEHTask(GFNTask):
 
     def compute_reward_from_graph(self, graphs: List[Data]) -> Tensor:
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
-        batch.to(self.device)
+        batch.to(self.models["seh"].device if hasattr(self.models["seh"], "device") else get_worker_device())
         preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
         preds[preds.isnan()] = 0
         return self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1,))
@@ -111,7 +113,7 @@ SOME_MOLS = [
 class LittleSEHDataset(Dataset):
     """Note: this dataset isn't used by default, but turning it on showcases some features of this codebase.
 
-    To turn on, self `cfg.algo.offline_ratio > 0`"""
+    To turn on, self `cfg.algo.num_from_dataset > 0`"""
 
     def __init__(self, smis) -> None:
         super().__init__()
@@ -146,8 +148,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.opt.lr_decay = 20_000
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.num_from_policy = 64
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 
@@ -157,7 +158,8 @@ class SEHFragTrainer(StandardOnlineTrainer):
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
-        cfg.algo.valid_offline_ratio = 0
+        cfg.algo.valid_num_from_policy = 64
+        cfg.num_validation_gen_steps = 10
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
         cfg.algo.tb.Z_learning_rate = 1e-3
@@ -199,16 +201,19 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
 def main():
     """Example of how this model can be run."""
+    import datetime
+
     config = init_empty(Config())
     config.print_every = 1
-    config.log_dir = "./logs/debug_run_seh_frag_pb"
+    config.log_dir = f"./logs/debug_run_seh_frag_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.overwrite_existing_exp = True
-    config.num_training_steps = 10_000
+    config.num_training_steps = 1_00
+    config.validate_every = 20
+    config.num_final_gen_steps = 10
     config.num_workers = 8
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99
-    config.algo.offline_ratio = 0.0
     config.cond.temperature.sample_dist = "uniform"
     config.cond.temperature.dist_params = [0, 64.0]
 

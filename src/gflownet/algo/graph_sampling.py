@@ -1,4 +1,5 @@
 import copy
+import warnings
 from typing import List, Optional
 
 import torch
@@ -248,7 +249,7 @@ class GraphSampler:
 
         # TODO: This should be doable.
         if random_action_prob > 0:
-            raise NotImplementedError("Random action not implemented for backward sampling")
+            warnings.warn("Random action not implemented for backward sampling")
 
         while sum(done) < n:
             torch_graphs = [self.ctx.graph_to_Data(graphs[i]) for i in not_done(range(n))]
