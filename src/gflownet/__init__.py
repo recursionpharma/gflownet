@@ -45,6 +45,27 @@ class GFNAlgorithm:
         """
         raise NotImplementedError()
 
+    def construct_batch(self, trajs, cond_info, log_rewards):
+        """Construct a batch from a list of trajectories and their information
+
+        Typically calls ctx.graph_to_Data and ctx.collate to convert the trajectories into
+        a batch of graphs and adds the necessary attributes for training.
+
+        Parameters
+        ----------
+        trajs: List[List[tuple[Graph, GraphAction]]]
+            A list of N trajectories.
+        cond_info: Tensor
+            The conditional info that is considered for each trajectory. Shape (N, n_info)
+        log_rewards: Tensor
+            The transformed log-reward (e.g. torch.log(R(x) ** beta) ) for each trajectory. Shape (N,)
+        Returns
+        -------
+        batch: gd.Batch
+             A (CPU) Batch object with relevant attributes added
+        """
+        raise NotImplementedError()
+
     def get_random_action_prob(self, it: int):
         if self.is_eval:
             return self.global_cfg.algo.valid_random_action_prob
