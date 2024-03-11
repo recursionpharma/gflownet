@@ -73,7 +73,7 @@ class FocusRegionConfig:
 @dataclass
 class ConditionalsConfig:
     valid_sample_cond_info: bool = True
-    temperature: TempCondConfig = TempCondConfig()
-    moo: MultiObjectiveConfig = MultiObjectiveConfig()
-    weighted_prefs: WeightedPreferencesConfig = WeightedPreferencesConfig()
-    focus_region: FocusRegionConfig = FocusRegionConfig()
+    temperature: TempCondConfig = field(default_factory=TempCondConfig)
+    moo: MultiObjectiveConfig = field(default_factory=MultiObjectiveConfig)
+    weighted_prefs: WeightedPreferencesConfig = field(default_factory=WeightedPreferencesConfig)
+    focus_region: FocusRegionConfig = field(default_factory=FocusRegionConfig)

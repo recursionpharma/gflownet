@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional
 
@@ -151,8 +151,18 @@ class AlgoConfig:
     ----------
     method : str
         The name of the algorithm to use (e.g. "TB")
-    global_batch_size : int
-        The batch size for training
+    num_from_policy : int
+        The number of on-policy samples for a training batch.
+        If using a replay buffer, see `replay.num_from_replay` for the number of samples from the replay buffer, and
+        `replay.num_new_samples` for the number of new samples to add to the replay buffer (e.g. `num_from_policy=0`,
+        and `num_new_samples=N` inserts `N` new samples in the replay buffer at each step, but does not make that data
+        part of the training batch).
+    num_from_dataset : int
+        The number of samples from the dataset for a training batch
+    valid_num_from_policy : int
+        The number of on-policy samples for a validation batch
+    valid_num_from_dataset : int
+        The number of samples from the dataset for a validation batch
     max_len : int
         The maximum length of a trajectory
     max_nodes : int
@@ -161,11 +171,6 @@ class AlgoConfig:
         The maximum number of edges in a generated graph
     illegal_action_logreward : float
         The log reward an agent gets for illegal actions
-    offline_ratio: float
-        The ratio of samples drawn from `self.training_data` during training. The rest is drawn from
-        `self.sampling_model`
-    valid_offline_ratio: float
-        Idem but for validation, and `self.test_data`.
     train_random_action_prob : float
         The probability of taking a random action during training
     train_det_after: Optional[int]
@@ -177,19 +182,20 @@ class AlgoConfig:
     """
 
     method: str = "TB"
-    global_batch_size: int = 64
+    num_from_policy: int = 64
+    num_from_dataset: int = 0
+    valid_num_from_policy: int = 64
+    valid_num_from_dataset: int = 0
     max_len: int = 128
     max_nodes: int = 128
     max_edges: int = 128
     illegal_action_logreward: float = -100
-    offline_ratio: float = 0.5
-    valid_offline_ratio: float = 1
     train_random_action_prob: float = 0.0
     train_det_after: Optional[int] = None
     valid_random_action_prob: float = 0.0
     sampling_tau: float = 0.0
-    tb: TBConfig = TBConfig()
-    moql: MOQLConfig = MOQLConfig()
-    a2c: A2CConfig = A2CConfig()
-    fm: FMConfig = FMConfig()
-    sql: SQLConfig = SQLConfig()
+    tb: TBConfig = field(default_factory=TBConfig)
+    moql: MOQLConfig = field(default_factory=MOQLConfig)
+    a2c: A2CConfig = field(default_factory=A2CConfig)
+    fm: FMConfig = field(default_factory=FMConfig)
+    sql: SQLConfig = field(default_factory=SQLConfig)

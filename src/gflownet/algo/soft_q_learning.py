@@ -8,6 +8,7 @@ from torch_scatter import scatter
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
+from gflownet.utils.misc import get_worker_device
 
 
 class SoftQLearning:
@@ -75,7 +76,7 @@ class SoftQLearning:
            - bck_logprob: sum logprobs P_B
            - is_valid: is the generated graph valid according to the env & ctx
         """
-        dev = self.ctx.device
+        dev = get_worker_device()
         cond_info = cond_info.to(dev)
         data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
         return data

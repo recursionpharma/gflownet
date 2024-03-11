@@ -7,20 +7,22 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 
 import gflownet.models.mxmnet as mxmnet
+from gflownet import FlatRewards, RewardScalar
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
+from gflownet.data.data_source import DataSource
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.tasks.qm9 import QM9GapTask, QM9GapTrainer
 from gflownet.tasks.seh_frag_moo import RepeatedCondInfoDataset, aux_tasks
-from gflownet.trainer import FlatRewards, RewardScalar
 from gflownet.utils import metrics
 from gflownet.utils.conditioning import FocusRegionConditional, MultiObjectiveWeightedPreferences
 from gflownet.utils.multiobjective_hooks import MultiObjectiveStatsHook, TopKHook
+from gflownet.utils.sqlite_log import SQLiteLogHook
 from gflownet.utils.transforms import to_logreward
 
 
@@ -45,6 +47,7 @@ class QM9GapMOOTask(QM9GapTask):
         self.cfg = cfg
         mcfg = self.cfg.task.qm9_moo
         self.objectives = cfg.task.qm9_moo.objectives
+        cfg.cond.moo.num_objectives = len(self.objectives)
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
@@ -195,10 +198,8 @@ class QM9MOOTrainer(QM9GapTrainer):
     def set_default_hps(self, cfg: Config):
         super().set_default_hps(cfg)
         cfg.algo.sampling_tau = 0.95
-        # We use a fixed set of preferences as our "validation set", so we must disable the preference (cond_info)
-        # sampling and set the offline ratio to 1
         cfg.cond.valid_sample_cond_info = False
-        cfg.algo.valid_offline_ratio = 1
+        cfg.algo.valid_num_from_dataset = 64
 
     def setup_algo(self):
         algo = self.cfg.algo.method
@@ -224,14 +225,14 @@ class QM9MOOTrainer(QM9GapTrainer):
                 num_emb=self.cfg.model.num_emb,
                 num_layers=self.cfg.model.num_layers,
                 num_heads=self.cfg.model.graph_transformer.num_heads,
-                num_objectives=len(self.cfg.task.seh_moo.objectives),
+                num_objectives=len(self.cfg.task.qm9_moo.objectives),
             )
         else:
             super().setup_model()
 
     def setup(self):
         super().setup()
-        if self.cfg.task.seh_moo.online_pareto_front:
+        if self.cfg.task.qm9_moo.online_pareto_front:
             self.sampling_hooks.append(
                 MultiObjectiveStatsHook(
                     256,
@@ -245,7 +246,7 @@ class QM9MOOTrainer(QM9GapTrainer):
             self.to_terminate.append(self.sampling_hooks[-1].terminate)
         # instantiate preference and focus conditioning vectors for validation
 
-        n_obj = len(self.cfg.task.seh_moo.objectives)
+        n_obj = len(self.cfg.task.qm9_moo.objectives)
         cond_cfg = self.cfg.cond
 
         # making sure hyperparameters for preferences and focus regions are consistent
@@ -263,7 +264,7 @@ class QM9MOOTrainer(QM9GapTrainer):
         if isinstance(cond_cfg.focus_region.focus_type, list) and len(cond_cfg.focus_region.focus_type) > 1:
             n_valid = len(cond_cfg.focus_region.focus_type)
         else:
-            n_valid = self.cfg.task.seh_moo.n_valid
+            n_valid = self.cfg.task.qm9_moo.n_valid
 
         # preference vectors
         if cond_cfg.weighted_prefs.preference_type is None:
@@ -298,8 +299,8 @@ class QM9MOOTrainer(QM9GapTrainer):
         else:
             valid_cond_vector = valid_preferences
 
-        self._top_k_hook = TopKHook(10, self.cfg.task.seh_moo.n_valid_repeats, n_valid)
-        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.seh_moo.n_valid_repeats)
+        self._top_k_hook = TopKHook(10, self.cfg.task.qm9_moo.n_valid_repeats, n_valid)
+        self.test_data = RepeatedCondInfoDataset(valid_cond_vector, repeat=self.cfg.task.qm9_moo.n_valid_repeats)
         self.valid_sampling_hooks.append(self._top_k_hook)
 
         self.algo.task = self.task
@@ -323,6 +324,19 @@ class QM9MOOTrainer(QM9GapTrainer):
                 print("validation end", metrics)
 
         return {"topk": TopKMetricCB()}
+
+    def build_validation_data_loader(self) -> DataLoader:
+        model = self._wrap_for_mp(self.model)
+
+        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
+        src.do_conditionals_dataset_in_order(self.test_data, self.cfg.algo.valid_num_from_dataset, model)
+
+        if self.cfg.log_dir:
+            src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))
+        for hook in self.valid_sampling_hooks:
+            src.add_sampling_hook(hook)
+
+        return self._make_data_loader(src)
 
     def train_batch(self, batch: gd.Batch, epoch_idx: int, batch_idx: int, train_it: int) -> Dict[str, Any]:
         if self.task.focus_cond is not None:

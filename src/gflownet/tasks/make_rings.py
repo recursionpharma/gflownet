@@ -7,10 +7,10 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 
+from gflownet import FlatRewards, GFNTask, RewardScalar
 from gflownet.config import Config, init_empty
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 
 
 class MakeRingsTask(GFNTask):
@@ -41,8 +41,7 @@ class MakeRingsTrainer(StandardOnlineTrainer):
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.num_workers = 8
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.num_from_policy = 64
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 

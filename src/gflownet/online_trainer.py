@@ -72,6 +72,8 @@ class StandardOnlineTrainer(GFNTrainer):
         super().setup()
         self.offline_ratio = 0
         self.replay_buffer = ReplayBuffer(self.cfg, self.rng) if self.cfg.replay.use else None
+        self.sampling_hooks.append(AvgRewardHook())
+        self.valid_sampling_hooks.append(AvgRewardHook())
 
         # Separate Z parameters from non-Z to allow for LR decay on the former
         if hasattr(self.model, "logZ"):
@@ -93,7 +95,6 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             self.sampling_model = self.model
 
-        self.mb_size = self.cfg.algo.global_batch_size
         self.clip_grad_callback = {
             "value": lambda params: torch.nn.utils.clip_grad_value_(params, self.cfg.opt.clip_grad_param),
             "norm": lambda params: [torch.nn.utils.clip_grad_norm_(p, self.cfg.opt.clip_grad_param) for p in params],
@@ -129,3 +130,8 @@ class StandardOnlineTrainer(GFNTrainer):
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
         return {"grad_norm": g0, "grad_norm_clip": g1}
+
+
+class AvgRewardHook:
+    def __call__(self, trajs, rewards, flat_rewards, extra_info):
+        return {"sampled_reward_avg": rewards.mean().item()}
