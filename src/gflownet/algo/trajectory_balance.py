@@ -90,7 +90,7 @@ class TrajectoryBalance(GFNAlgorithm):
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         cfg: Config,
-    ):
+    ) -> None:
         """Instanciate a TB algorithm.
 
         Parameters

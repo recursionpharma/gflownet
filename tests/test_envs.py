@@ -3,20 +3,19 @@ import pickle
 
 import networkx as nx
 import pytest
-from omegaconf import OmegaConf
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import bengio2021flow
 
 
-def build_two_node_states(ctx):
+def build_two_node_states(ctx: GraphBuildingEnvContext):
     # TODO: This is actually fairly generic code that will probably be reused by other tests in the future.
     # Having a proper class to handle graph-indexed hash maps would probably be good.
-    graph_cache = {}
+    graph_cache: dict[str, nx.Graph] = {}
     graph_by_idx = {}
     _graph_cache_buckets = {}
 
@@ -74,11 +73,11 @@ def build_two_node_states(ctx):
     return [graph_by_idx[i] for i in list(nx.topological_sort(mdp_graph))]
 
 
-def get_frag_env_ctx():
+def get_frag_env_ctx() -> FragMolBuildingEnvContext:
     return FragMolBuildingEnvContext(max_frags=2, fragments=bengio2021flow.FRAGMENTS[:20])
 
 
-def get_atom_env_ctx():
+def get_atom_env_ctx() -> MolBuildingEnvContext:
     return MolBuildingEnvContext(atoms=["C", "N"], expl_H_range=[0], charges=[0], max_nodes=2)
 
 
@@ -106,7 +105,7 @@ def two_node_states_atoms(request):
     return data
 
 
-def _test_backwards_mask_equivalence(two_node_states, ctx):
+def _test_backwards_mask_equivalence(two_node_states: list[nx.Graph], ctx: GraphBuildingEnvContext) -> None:
     """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
@@ -124,7 +123,7 @@ def _test_backwards_mask_equivalence(two_node_states, ctx):
             raise ValueError()
 
 
-def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
+def _test_backwards_mask_equivalence_ipa(two_node_states: list[nx.Graph], ctx: GraphBuildingEnvContext) -> None:
     """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
@@ -132,16 +131,16 @@ def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
     This test also accounts for idempotent actions.
     """
     env = GraphBuildingEnv()
-    cfg = OmegaConf.structured(Config)
+    cfg = Config()
     cfg.algo.max_nodes = 2
-    algo = TrajectoryBalance(env, ctx, None, cfg)
+    algo = TrajectoryBalance(env, ctx, cfg)
     for i in range(1, len(two_node_states)):
         g = two_node_states[i]
         n = env.count_backward_transitions(g, check_idempotent=True)
         gd = ctx.graph_to_Data(g)
         # To check that we're computing masks correctly, we need to check that there is the same
         # number of idempotent action classes, i.e. groups of actions that lead to the same parent.
-        equivalence_classes = []
+        equivalence_classes: list[list[tuple[int, int, int]]] = []
         for u, k in enumerate(ctx.bck_action_type_order):
             m = getattr(gd, k.mask_name)
             for a in m.nonzero():
