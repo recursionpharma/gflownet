@@ -29,6 +29,8 @@ class TBConfig:
         Whether to correct for idempotent actions
     do_parameterize_p_b : bool
         Whether to parameterize the P_B distribution (otherwise it is uniform)
+    do_predict_n : bool
+        Whether to predict the number of paths in the graph
     do_length_normalize : bool
         Whether to normalize the loss by the length of the trajectory
     subtb_max_len : int
@@ -45,6 +47,7 @@ class TBConfig:
     variant: TBVariant = TBVariant.TB
     do_correct_idempotent: bool = False
     do_parameterize_p_b: bool = False
+    do_predict_n: bool = False
     do_sample_p_b: bool = False
     do_length_normalize: bool = False
     subtb_max_len: int = 128
@@ -109,6 +112,8 @@ class AlgoConfig:
         Idem but for validation, and `self.test_data`.
     train_random_action_prob : float
         The probability of taking a random action during training
+    train_det_after: Optional[int]
+        Do not take random actions after this number of steps
     valid_random_action_prob : float
         The probability of taking a random action during validation
     valid_sample_cond_info : bool
@@ -126,6 +131,7 @@ class AlgoConfig:
     offline_ratio: float = 0.5
     valid_offline_ratio: float = 1
     train_random_action_prob: float = 0.0
+    train_det_after: Optional[int] = None
     valid_random_action_prob: float = 0.0
     valid_sample_cond_info: bool = True
     sampling_tau: float = 0.0

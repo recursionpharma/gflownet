@@ -246,6 +246,7 @@ class GraphSampler:
         def not_done(lst):
             return [e for i, e in enumerate(lst) if not done[i]]
 
+        # TODO: This should be doable.
         if random_action_prob > 0:
             raise NotImplementedError("Random action not implemented for backward sampling")
 
