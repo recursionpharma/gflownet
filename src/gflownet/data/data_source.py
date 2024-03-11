@@ -225,7 +225,7 @@ class DataSource(IterableDataset):
         if "focus_dir" in trajs[0]:
             batch.focus_dir = torch.stack([t["focus_dir"] for t in trajs])
 
-        if self.ctx.has_n():  # Does this go somewhere else? Require a flag? Might not be cheap to compute
+        if self.ctx.has_n() and self.cfg.algo.tb.do_predict_n:
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)

@@ -470,7 +470,7 @@ class TrajectoryBalance(GFNAlgorithm):
         else:
             n_loss = self.n_loss(log_p_B, log_n_preds, batch.traj_lens)
 
-        if self.ctx.has_n():
+        if self.ctx.has_n() and self.cfg.do_predict_n:
             analytical_maxent_backward = self.analytical_maxent_backward(batch, first_graph_idx)
             if self.cfg.do_parameterize_p_b:
                 analytical_maxent_backward = torch.roll(analytical_maxent_backward, -1, 0) * (1 - batch.is_sink)
@@ -693,7 +693,7 @@ class TrajectoryBalance(GFNAlgorithm):
             P_B_sums = scatter_sum(P_B[idces + offset], dests)
             F_start = F[offset : offset + T].repeat_interleave(T - ar[:T])
             F_end = F_and_R[fidces]
-            total_loss[ep] = (F_start - F_end + P_F_sums - P_B_sums).pow(2).sum() / car[T]
+            total_loss[ep] = self._loss(F_start - F_end + P_F_sums - P_B_sums).sum() / car[T]
         return total_loss
 
     def n_loss(self, P_N, N, traj_lengths):

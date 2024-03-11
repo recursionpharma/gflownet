@@ -211,7 +211,7 @@ def main():
     config.num_training_steps = 1_00
     config.validate_every = 20
     config.num_final_gen_steps = 10
-    config.num_workers = 8
+    config.num_workers = 1
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99
     config.cond.temperature.sample_dist = "uniform"
