@@ -95,7 +95,7 @@ def main(smi, n_steps):
     molg = ctx.mol_to_graph(mol)
     traj = generate_forward_trajectory(molg)
     for g, a in traj:
-        print(a.action, a.source, a.target, a.value, a.relabel)
+        print(a.action, a.source, a.target, a.value)
     graphs = [ctx.graph_to_Data(i) for i, _ in traj]
     traj_batch = ctx.collate(graphs)
     actions = [ctx.GraphAction_to_aidx(g, a) for g, a in zip(graphs, [i[1] for i in traj])]

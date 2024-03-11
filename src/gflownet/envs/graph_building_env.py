@@ -83,7 +83,7 @@ class GraphActionType(enum.Enum):
 
 
 class GraphAction:
-    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, relabel=None):
+    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None):
         """A single graph-building action
 
         Parameters
@@ -98,15 +98,12 @@ class GraphAction:
             the set attribute of a node/edge
         value: Any, optional
             the value (e.g. new node type) applied
-        relabel: int, optional
-            for AddNode actions, relabels the new node with that id
         """
         self.action = action
         self.source = source
         self.target = target
         self.attr = attr
         self.value = value
-        self.relabel = relabel  # TODO: deprecate this?
 
     def __repr__(self):
         attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
@@ -185,8 +182,6 @@ class GraphBuildingEnv:
             else:
                 assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
-                if action.relabel is not None:
-                    raise ValueError("deprecated")
                 # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
                 assert not g.has_edge(*e)
