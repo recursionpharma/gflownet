@@ -35,6 +35,26 @@ Consider for example the `AddNode` and `SetEdgeAttr` actions, one applies to nod
 
 The `GraphActionCategorical` class handles this and can be used to compute various other things, such as entropy, log probabilities, and so on; it can also be used to sample from the distribution.
 
+To expand, the logits are always 2d tensors, and there’s going to be one such tensor per “action type” that the agent is allowed to take.
+Since graphs have variable number of nodes, and since each node has `n` associated possible action/logits, then the `(n_nodes, n)` tensor will vary from minibatch to minibatch.  
+In addition,the  nodes in said logit tensor belong to different graphs in the minibatch; this is indicated by a `batch` tensor of shape `(n_nodes,)` for nodes (for e.g. edges it would be of shape `(n_edges,)`).
+
+
+Here’s an example: say we have 2 graphs in a minibatch, the first has 3 nodes, the second 2 nodes. The logits associated with AddNode  will be of shape `(5, n)` (assuming there are `n` types of nodes in the problem). Say `n=2`, and `logits[AddNode] = [[1,2],[3,4],[5,6],[7,8],[9,0]]`, and `batch=[0,0,0,1,1]`.  
+Then to compute the policy, we have to compute a softmax appropriately, i.e. the softmax for the first graph would be `softmax([1,2,3,4,5,6])` and for the second `softmax([7,8,9,0])` . This is possible thanks to `batch` and is what `GraphActionCategorical` does behind the scenes.  
+Now that would be for when we only have the `AddNode` action. With more than one action we also have to compute the log-softmax log-normalization factor over the logits of these other tensors, log-add them together and then substract it from all corresponding logits.
+
+## Data sources
+
+The data used for training GFlowNets can come from a variety of sources. `DataSource` implements these different use-cases as individual iterators that collectively assemble the training batches before passing it to the trainer. Some of these use-cases include:
+- Generating new trajectories on-policy
+- Sampling trajectories from passed policies from a replay buffer
+- Sampling trajectories from a fixed, offline dataset 
+
+`DataSource` also covers validation sets, including cases such as:
+- Generating new trajectories (w.r.t a fixed dataset of conditioning goals)
+- Evaluating the model's likelihood on trajectories from a fixed, offline dataset
+
 ## Multiprocessing 
 
 We use the multiprocessing features of torch's `DataLoader` to parallelize data generation and featurization. This is done by setting the `num_workers` (via `cfg.num_workers`) parameter of the `DataLoader` to a value greater than 0. Because workers cannot (easily) use a CUDA handle, we have to resort to a number of tricks.
@@ -46,5 +66,8 @@ Note that the workers do not use CUDA, therefore have to work entirely on CPU, b
 On message serialization, naively sending batches of data and results (`Batch` and `GraphActionCategorical`) through multiprocessing queues is fairly inefficient. Torch tries to be smart and will use shared memory for tensors that are sent through queues, which unfortunately is very slow because creating these shared memory files is slow, and because `Data` `Batch`es tend to contain lots of small tensors, which is not a good fit for shared memory.
 
 We implement two solutions to this problem (in order of preference):
-- using `SharedPinnedBuffer`s, which are shared tensors of fixed size (`cfg.mp_buffer_size`), but initialized once and pinned. This is the fastest solution, but that the size of the largest possible batch/return value is known in advance. This is currently only implemented for `Batch` inputs and `(GraphActionCategorical, Tensor)` outputs.
-- using `cfg.pickle_mp_messages`, which simply serializes messages with `pickle`. This prevents the creating of lots of shared memory files, but is slower than the `SharedPinnedBuffer` solution. This should work for any message that `pickle` can handle.
+- using `SharedPinnedBuffer`s, which are shared tensors of fixed size (`cfg.mp_buffer_size`), but initialized once and pinned. This is the fastest solution, but requires that the size of the largest possible batch/return value is known in advance. This should work for any message, but has only been tested with `Batch` and `GraphActionCategorical` messages.
+- using `cfg.pickle_mp_messages`, which simply serializes messages with `pickle`. This prevents the creation of lots of shared memory files, but is slower than the `SharedPinnedBuffer` solution. This should work for any message that `pickle` can handle.
+
+
+

@@ -210,8 +210,8 @@ def main():
     config.overwrite_existing_exp = True
     config.algo.num_from_policy = 64
     config.num_training_steps = 1_00
-    config.validate_every = 2000
-    config.num_final_gen_steps = 0
+    config.validate_every = 20
+    config.num_final_gen_steps = 10
     config.num_workers = 8
     config.opt.lr_decay = 20_000
     config.opt.clip_grad_type = "total_norm"

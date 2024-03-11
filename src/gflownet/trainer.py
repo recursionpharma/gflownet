@@ -153,7 +153,7 @@ class GFNTrainer:
 
     def build_training_data_loader(self) -> DataLoader:
         # Since the model may be used by a worker in a different process, we need to wrap it.
-        # See implementation_nodes.md for more details.
+        # See implementation_notes.md for more details.
         model = self._wrap_for_mp(self.sampling_model)
         replay_buffer = self._wrap_for_mp(self.replay_buffer)
 
@@ -182,7 +182,6 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model = self._wrap_for_mp(self.model)
-
         n_drawn = self.cfg.algo.valid_num_from_policy
         n_from_dataset = self.cfg.algo.valid_num_from_dataset
 
