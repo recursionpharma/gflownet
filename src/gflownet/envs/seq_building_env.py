@@ -69,6 +69,7 @@ class SeqBatch:
         # Since we're feeding this batch object to graph-based algorithms, we have to use this naming, but this
         # is the total number of timesteps.
         self.num_graphs = self.lens.sum().item()
+        self.cond_info: torch.Tensor  # May be set later
 
     def to(self, device):
         for name in dir(self):
