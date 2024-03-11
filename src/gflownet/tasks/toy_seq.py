@@ -1,7 +1,6 @@
 import socket
 from typing import Dict, List, Tuple
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -22,10 +21,9 @@ class ToySeqTask(GFNTask):
         self,
         seqs: List[str],
         cfg: Config,
-        rng: np.random.Generator,
     ):
         self.seqs = seqs
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
         self.norm = cfg.algo.max_len / min(map(len, seqs))
 
@@ -81,7 +79,6 @@ class ToySeqTrainer(StandardOnlineTrainer):
         self.task = ToySeqTask(
             ["aa", "bb", "cc"],
             cfg=self.cfg,
-            rng=self.rng,
         )
 
     def setup_env_context(self):

@@ -12,7 +12,7 @@ from torch_geometric import data as gd
 from gflownet.config import Config
 from gflownet.utils import metrics
 from gflownet.utils.focus_model import TabularFocusModel
-from gflownet.utils.misc import get_worker_device
+from gflownet.utils.misc import get_worker_device, get_worker_rng
 from gflownet.utils.transforms import thermometer
 
 
@@ -32,10 +32,9 @@ class Conditional(abc.ABC):
 
 
 class TemperatureConditional(Conditional):
-    def __init__(self, cfg: Config, rng: np.random.Generator):
+    def __init__(self, cfg: Config):
         self.cfg = cfg
         tmp_cfg = self.cfg.cond.temperature
-        self.rng = rng
         self.upper_bound = 1024
         if tmp_cfg.sample_dist == "gamma":
             loc, scale = tmp_cfg.dist_params
@@ -53,6 +52,7 @@ class TemperatureConditional(Conditional):
     def sample(self, n):
         cfg = self.cfg.cond.temperature
         beta = None
+        rng = get_worker_rng()
         if cfg.sample_dist == "constant":
             if isinstance(cfg.dist_params[0], (float, int, np.int64, np.int32)):
                 beta = np.array(cfg.dist_params[0]).repeat(n).astype(np.float32)
@@ -62,16 +62,16 @@ class TemperatureConditional(Conditional):
         else:
             if cfg.sample_dist == "gamma":
                 loc, scale = cfg.dist_params
-                beta = self.rng.gamma(loc, scale, n).astype(np.float32)
+                beta = rng.gamma(loc, scale, n).astype(np.float32)
             elif cfg.sample_dist == "uniform":
                 a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
-                beta = self.rng.uniform(a, b, n).astype(np.float32)
+                beta = rng.uniform(a, b, n).astype(np.float32)
             elif cfg.sample_dist == "loguniform":
                 low, high = np.log(cfg.dist_params)
-                beta = np.exp(self.rng.uniform(low, high, n).astype(np.float32))
+                beta = np.exp(rng.uniform(low, high, n).astype(np.float32))
             elif cfg.sample_dist == "beta":
                 a, b = float(cfg.dist_params[0]), float(cfg.dist_params[1])
-                beta = self.rng.beta(a, b, n).astype(np.float32)
+                beta = rng.beta(a, b, n).astype(np.float32)
             beta_enc = thermometer(torch.tensor(beta), cfg.num_thermometer_dim, 0, self.upper_bound)
 
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
@@ -131,12 +131,11 @@ class MultiObjectiveWeightedPreferences(Conditional):
 
 
 class FocusRegionConditional(Conditional):
-    def __init__(self, cfg: Config, n_valid: int, rng: np.random.Generator):
+    def __init__(self, cfg: Config, n_valid: int):
         self.cfg = cfg.cond.focus_region
         self.n_valid = n_valid
         self.n_objectives = cfg.cond.moo.num_objectives
         self.ocfg = cfg
-        self.rng = rng
         self.num_thermometer_dim = cfg.cond.moo.num_thermometer_dim if self.cfg.use_steer_thermomether else 0
 
         focus_type = self.cfg.focus_type
@@ -191,9 +190,10 @@ class FocusRegionConditional(Conditional):
 
     def sample(self, n: int, train_it: int = None):
         train_it = train_it or 0
+        rng = get_worker_rng()
         if self.fixed_focus_dirs is not None:
             focus_dir = torch.tensor(
-                np.array(self.fixed_focus_dirs)[self.rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32)
+                np.array(self.fixed_focus_dirs)[rng.choice(len(self.fixed_focus_dirs), n)].astype(np.float32)
             )
         elif self.cfg.focus_type == "dirichlet":
             m = Dirichlet(torch.FloatTensor([1.0] * self.n_objectives))

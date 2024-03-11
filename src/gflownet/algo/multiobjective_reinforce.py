@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch_geometric.data as gd
 from torch_scatter import scatter
@@ -17,10 +16,9 @@ class MultiObjectiveReinforce(TrajectoryBalance):
         self,
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
-        rng: np.random.RandomState,
         cfg: Config,
     ):
-        super().__init__(env, ctx, rng, cfg)
+        super().__init__(env, ctx, cfg)
 
     def compute_batch_losses(self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0):
         """Compute  multi objective REINFORCE loss over trajectories contained in the batch"""

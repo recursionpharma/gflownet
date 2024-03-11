@@ -46,7 +46,7 @@ class StandardOnlineTrainer(GFNTrainer):
             algo = SoftQLearning
         else:
             raise ValueError(algo)
-        self.algo = algo(self.env, self.ctx, self.rng, self.cfg)
+        self.algo = algo(self.env, self.ctx, self.cfg)
 
     def setup_data(self):
         self.training_data = []
@@ -71,7 +71,7 @@ class StandardOnlineTrainer(GFNTrainer):
     def setup(self):
         super().setup()
         self.offline_ratio = 0
-        self.replay_buffer = ReplayBuffer(self.cfg, self.rng) if self.cfg.replay.use else None
+        self.replay_buffer = ReplayBuffer(self.cfg) if self.cfg.replay.use else None
         self.sampling_hooks.append(AvgRewardHook())
         self.valid_sampling_hooks.append(AvgRewardHook())
 

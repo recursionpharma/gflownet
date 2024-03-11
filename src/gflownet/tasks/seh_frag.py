@@ -1,7 +1,6 @@
 import socket
 from typing import Callable, Dict, List, Tuple, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -35,14 +34,12 @@ class SEHTask(GFNTask):
         self,
         dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self._wrap_model = wrap_model
-        self.rng = rng
         self.models = self._load_task_models()
         self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
 
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
@@ -175,7 +172,6 @@ class SEHFragTrainer(StandardOnlineTrainer):
         self.task = SEHTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 

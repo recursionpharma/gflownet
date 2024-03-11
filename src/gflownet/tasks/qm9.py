@@ -26,15 +26,13 @@ class QM9GapTask(GFNTask):
         self,
         dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self._wrap_model = wrap_model
-        self.rng = rng
         self.device = get_worker_device()
         self.models = self.load_task_models(cfg.task.qm9.model_path)
         self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
         # TODO: fix interface
         self._min, self._max, self._percentile_95 = self.dataset.get_stats("gap", percentile=0.05)  # type: ignore
@@ -159,7 +157,6 @@ class QM9GapTrainer(StandardOnlineTrainer):
         self.task = QM9GapTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 

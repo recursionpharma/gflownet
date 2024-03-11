@@ -21,7 +21,7 @@ from gflownet.data.data_source import DataSource
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
-from gflownet.utils.misc import create_logger, set_main_process_device
+from gflownet.utils.misc import create_logger, set_main_process_device, set_worker_rng_seed
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
 
@@ -114,7 +114,7 @@ class GFNTrainer:
         os.makedirs(self.cfg.log_dir)
 
         RDLogger.DisableLog("rdApp.*")
-        self.rng = np.random.default_rng(142857)
+        set_worker_rng_seed(self.cfg.seed)
         self.env = GraphBuildingEnv()
         self.setup_data()
         self.setup_task()

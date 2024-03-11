@@ -2,7 +2,6 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
-import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -90,7 +89,6 @@ class TrajectoryBalance(GFNAlgorithm):
         self,
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
-        rng: np.random.RandomState,
         cfg: Config,
     ):
         """Instanciate a TB algorithm.
@@ -101,14 +99,11 @@ class TrajectoryBalance(GFNAlgorithm):
             A graph environment.
         ctx: GraphBuildingEnvContext
             A context.
-        rng: np.random.RandomState
-            rng used to take random actions
         cfg: Config
             Hyperparameters
         """
         self.ctx = ctx
         self.env = env
-        self.rng = rng
         self.global_cfg = cfg
         self.cfg = cfg.algo.tb
         self.max_len = cfg.algo.max_len
@@ -133,7 +128,6 @@ class TrajectoryBalance(GFNAlgorithm):
             env,
             cfg.algo.max_len,
             cfg.algo.max_nodes,
-            rng,
             self.sample_temp,
             correct_idempotent=self.cfg.do_correct_idempotent,
             pad_with_terminal_state=self.cfg.do_parameterize_p_b,

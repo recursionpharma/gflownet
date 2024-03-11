@@ -40,17 +40,16 @@ class QM9GapMOOTask(QM9GapTask):
         self,
         dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
-        super().__init__(dataset, cfg, rng, wrap_model)
+        super().__init__(dataset, cfg, wrap_model)
         self.cfg = cfg
         mcfg = self.cfg.task.qm9_moo
         self.objectives = cfg.task.qm9_moo.objectives
         cfg.cond.moo.num_objectives = len(self.objectives)
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
-            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
+            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid)
         else:
             self.focus_cond = None
         self.pref_cond = MultiObjectiveWeightedPreferences(self.cfg)
@@ -204,9 +203,9 @@ class QM9MOOTrainer(QM9GapTrainer):
     def setup_algo(self):
         algo = self.cfg.algo.method
         if algo == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.cfg)
         elif algo == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.cfg)
         else:
             super().setup_algo()
 
@@ -214,7 +213,6 @@ class QM9MOOTrainer(QM9GapTrainer):
         self.task = QM9GapMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 
