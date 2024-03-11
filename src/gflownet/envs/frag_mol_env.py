@@ -303,15 +303,15 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         """
         return gd.Batch.from_data_list(graphs, follow_batch=["edge_index"])
 
-    def mol_to_graph(self, mol):
+    def obj_to_graph(self, mol):
         """Convert an RDMol to a Graph"""
         assert type(mol) is Chem.Mol
         all_matches = {}
         for fragidx, frag in self.sorted_frags:
             all_matches[fragidx] = mol.GetSubstructMatches(frag, uniquify=False)
-        return _recursive_decompose(self, mol, all_matches, {}, [], [], 9)
+        return _recursive_decompose(self, mol, all_matches, {}, [], [], self.max_frags)
 
-    def graph_to_mol(self, g: Graph) -> Chem.Mol:
+    def graph_to_obj(self, g: Graph) -> Chem.Mol:
         """Convert a Graph to an RDKit molecule
 
         Parameters
@@ -360,7 +360,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
     def is_sane(self, g: Graph) -> bool:
         """Verifies whether the given Graph is valid according to RDKit"""
         try:
-            mol = self.graph_to_mol(g)
+            mol = self.graph_to_obj(g)
             assert Chem.MolFromSmiles(Chem.MolToSmiles(mol)) is not None
         except Exception:
             return False
@@ -370,7 +370,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
     def object_to_log_repr(self, g: Graph):
         """Convert a Graph to a string representation"""
-        return Chem.MolToSmiles(self.graph_to_mol(g))
+        return Chem.MolToSmiles(self.graph_to_obj(g))
 
     def has_n(self) -> bool:
         return True
@@ -476,7 +476,7 @@ def _recursive_decompose(ctx, m, all_matches, a2f, frags, bonds, max_depth=9, nu
         for a, b, stemidx_a, stemidx_b, _, _ in bonds:
             g.edges[(a, b)]["src_attach"] = stemidx_a  # TODO: verify src/dst is correct?
             g.edges[(a, b)]["dst_attach"] = stemidx_b
-        m2 = ctx.graph_to_mol(g)
+        m2 = ctx.graph_to_obj(g)
         if m2.HasSubstructMatch(m) and m.HasSubstructMatch(m2):
             return g
         return None

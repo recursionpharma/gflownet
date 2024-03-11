@@ -92,7 +92,7 @@ def main(smi, n_steps):
     model = Model(ctx, num_emb=64)
     opt = torch.optim.Adam(model.parameters(), 5e-4)
     mol = Chem.MolFromSmiles(smi)
-    molg = ctx.mol_to_graph(mol)
+    molg = ctx.obj_to_graph(mol)
     traj = generate_forward_trajectory(molg)
     for g, a in traj:
         print(a.action, a.source, a.target, a.value, a.relabel)
@@ -140,7 +140,7 @@ def main(smi, n_steps):
         if not issub:
             raise ValueError()
         print(g)
-    new_mol = ctx.graph_to_mol(g)
+    new_mol = ctx.graph_to_obj(g)
     print(Chem.MolToSmiles(new_mol))
     # This should be True as well
     print(new_mol.HasSubstructMatch(mol) and mol.HasSubstructMatch(new_mol))

@@ -314,7 +314,7 @@ class EnvelopeQLearning:
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
-        # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
+        # Forward pass of the model, returns a GraphActionCategorical and per graph predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         # Q(s,a,omega)
         fwd_cat, per_state_preds = model(batch, cond_info[batch_idx], output_Qs=True)

@@ -146,12 +146,12 @@ class A2C:
         # of length 4, trajectory 1 of length 3, and so on.
         batch_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens)
 
-        # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
+        # Forward pass of the model, returns a GraphActionCategorical and per graph predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         policy, per_state_preds = model(batch, cond_info[batch_idx])
         V = per_state_preds[:, 0]
         G = rewards[batch_idx]  # The return is the terminal reward everywhere, we're using gamma==1
-        G = G + (1 - batch.is_valid[batch_idx]) * self.invalid_penalty  # Add in penalty for invalid mol
+        G = G + (1 - batch.is_valid[batch_idx]) * self.invalid_penalty  # Add in penalty for invalid object
         A = G - V
         log_probs = policy.log_prob(batch.actions)
 

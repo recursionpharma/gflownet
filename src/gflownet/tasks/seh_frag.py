@@ -118,9 +118,9 @@ class LittleSEHDataset(Dataset):
         self.mols: List[Graph] = []
         self.smis = smis
 
-    def setup(self, task, ctx):
+    def setup(self, task: SEHTask, ctx: FragMolBuildingEnvContext) -> None:
         rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
-        self.mols = [ctx.mol_to_graph(i) for i in rdmols]
+        self.mols = [ctx.obj_to_graph(i) for i in rdmols]
         self.props = task.compute_flat_rewards(rdmols)[0]
 
     def __len__(self):

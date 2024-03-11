@@ -17,23 +17,23 @@ class SQLiteLogHook:
             worker_info = torch.utils.data.get_worker_info()
             self._wid = worker_info.id if worker_info is not None else 0
             os.makedirs(self.log_dir, exist_ok=True)
-            self.log_path = f"{self.log_dir}/generated_mols_{self._wid}.db"
+            self.log_path = f"{self.log_dir}/generated_objs_{self._wid}.db"
             self.log = SQLiteLog()
             self.log.connect(self.log_path)
 
         if hasattr(self.ctx, "object_to_log_repr"):
-            mols = [self.ctx.object_to_log_repr(t["result"]) if t["is_valid"] else "" for t in trajs]
+            objs = [self.ctx.object_to_log_repr(t["result"]) if t["is_valid"] else "" for t in trajs]
         else:
-            mols = [""] * len(trajs)
+            objs = [""] * len(trajs)
 
         flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
         rewards = rewards.data.numpy().tolist()
-        preferences = cond_info.get("preferences", torch.zeros((len(mols), 0))).data.numpy().tolist()
-        focus_dir = cond_info.get("focus_dir", torch.zeros((len(mols), 0))).data.numpy().tolist()
+        preferences = cond_info.get("preferences", torch.zeros((len(objs), 0))).data.numpy().tolist()
+        focus_dir = cond_info.get("focus_dir", torch.zeros((len(objs), 0))).data.numpy().tolist()
         logged_keys = [k for k in sorted(cond_info.keys()) if k not in ["encoding", "preferences", "focus_dir"]]
 
         data = [
-            [mols[i], rewards[i]]
+            [objs[i], rewards[i]]
             + flat_rewards[i]
             + preferences[i]
             + focus_dir[i]

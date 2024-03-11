@@ -318,7 +318,7 @@ class GFNTrainer:
                             v = v.item()
                         final_info[k].append(v)
                 if it % self.print_every == 0:
-                    logger.info(f"Generating mols {it - num_training_steps}/{num_final_gen_steps}")
+                    logger.info(f"Generating objs {it - num_training_steps}/{num_final_gen_steps}")
             final_info = {k: np.mean(v) for k, v in final_info.items()}
 
             logger.info("Final generation steps completed - " + " ".join(f"{k}:{v:.2f}" for k, v in final_info.items()))
