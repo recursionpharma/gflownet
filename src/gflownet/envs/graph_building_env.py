@@ -4,7 +4,7 @@ import json
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -82,6 +82,22 @@ class GraphActionType(enum.Enum):
         return self.name.startswith("Remove")
 
 
+class ActionIndex(NamedTuple):
+    """
+    Represents an index for an action in the GraphBuildingEnv.
+
+    Different types of actions lead to logit matrices of different shapes,
+    for exemple GraphActionType.Stop has a shape of (1, 1), while
+    GraphActionType.AddNode has a shape of (n, m) where n is the number of
+    nodes in the graph and m is the number of possible node types (idem for edge actions).
+    It is thus convenient to represent the action as a tuple of indices.
+    """
+
+    action_type: int  # Index of the action type according to GraphActionType
+    row_idx: int  # Index of the element the action applies to (e.g. node or edge)
+    col_idx: int  # Index of the action variant (e.g. which attribute to set)
+
+
 class GraphAction:
     def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None):
         """A single graph-building action
@@ -90,7 +106,7 @@ class GraphAction:
         ----------
         action: GraphActionType
             the action type
-        source: int
+        source: int, optional (e.g. GraphActionType.Stop has no source)
             the source node this action is applied on
         target: int, optional
             the target node (i.e. if specified this is an edge action)
@@ -99,11 +115,11 @@ class GraphAction:
         value: Any, optional
             the value (e.g. new node type) applied
         """
-        self.action = action
-        self.source = source
-        self.target = target
-        self.attr = attr
-        self.value = value
+        self.action: GraphActionType = action
+        self.source: Optional[int] = source
+        self.target: Optional[int] = target
+        self.attr: Optional[str] = attr
+        self.value: Optional[Any] = value
 
     def __repr__(self):
         attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
@@ -675,11 +691,11 @@ class GraphActionCategorical:
         # Add back max
         return reduction + maxl
 
-    def sample(self) -> List[Tuple[int, int, int]]:
+    def sample(self) -> List[ActionIndex]:
         """Samples this categorical
         Returns
         -------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of indices representing [action type, element index, action index]. See constructor.
         """
         # Use the Gumbel trick to sample categoricals
@@ -719,7 +735,7 @@ class GraphActionCategorical:
         x: List[torch.Tensor],
         batch: List[torch.Tensor] = None,
         dim_size: int = None,
-    ) -> List[Tuple[int, int, int]]:
+    ) -> List[ActionIndex]:
         """Takes the argmax, i.e. if x are the logits, returns the most likely action.
 
         Parameters
@@ -732,7 +748,7 @@ class GraphActionCategorical:
             The reduction dimension, default `self.num_graphs`.
         Returns
         -------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of indices representing [action type, element index, action index]. See constructor.
         """
         # scatter_max and .max create a (values, indices) pair
@@ -765,18 +781,22 @@ class GraphActionCategorical:
             t = type_max_idx[i]
             # Subtract from the slice of that type and index, since the computed
             # row position is batch-wise rather graph-wise
-            argmaxes.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
+            argmaxes.append(
+                ActionIndex(
+                    action_type=int(t), row_idx=int(row_pos[t][i] - self.slice[t][i]), col_idx=int(col_max[t][1][i])
+                )
+            )
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
         Parameters
         ----------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of n action tuples denoting indices
         logprobs: List[Tensor]
             [Optional] The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
@@ -799,7 +819,7 @@ class GraphActionCategorical:
         #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
         # but faster.
 
-        # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
+        # each action is a 3-tuple ActionIndex (type, row, column), where type is the index of the action type group.
         actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
@@ -857,13 +877,13 @@ class GraphBuildingEnvContext:
     device: torch.device
     action_type_order: List[GraphActionType]
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
+    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
         Parameters
         ----------
         g: gd.Data
             The graph to which the action is being applied
-        action_idx: Tuple[int, int, int]
+        aidx: ActionIndex
             The tensor indices for the corresponding action
         fwd: bool
             If True (default) then this is a forward action
@@ -875,8 +895,8 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
-        """Translate a GraphAction to an action index (e.g. from a GraphActionCategorical)
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+        """Translate a GraphAction to an ActionIndex (e.g. from a GraphActionCategorical)
         Parameters
         ----------
         g: gd.Data
@@ -886,7 +906,7 @@ class GraphBuildingEnvContext:
 
         Returns
         -------
-        action_idx: Tuple[int, int, int]
+        aidx: ActionIndex
             The tensor indices for the corresponding action
         """
         raise NotImplementedError()

@@ -98,7 +98,7 @@ class GraphSampler:
         graphs = [self.env.new() for i in range(n)]
         done = [False] * n
         # TODO: instead of padding with Stop, we could have a virtual action whose probability
-        # always evaluates to 1. Presently, Stop should convert to a [0,0,0] aidx, which should
+        # always evaluates to 1. Presently, Stop should convert to a (0,0,0) ActionIndex, which should
         # always be at least a valid index, and will be masked out anyways -- but this isn't ideal.
         # Here we have to pad the backward actions with something, since the backward actions are
         # evaluated at s_{t+1} not s_t.
@@ -136,7 +136,7 @@ class GraphSampler:
                 actions = sample_cat.sample()
             else:
                 actions = fwd_cat.sample()
-            graph_actions = [self.ctx.aidx_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
+            graph_actions = [self.ctx.ActionIndex_to_GraphAction(g, a) for g, a in zip(torch_graphs, actions)]
             log_probs = fwd_cat.log_prob(actions)
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
@@ -273,7 +273,7 @@ class GraphSampler:
                 )
             bck_actions = bck_cat.sample()
             graph_bck_actions = [
-                self.ctx.aidx_to_GraphAction(g, a, fwd=False) for g, a in zip(torch_graphs, bck_actions)
+                self.ctx.ActionIndex_to_GraphAction(g, a, fwd=False) for g, a in zip(torch_graphs, bck_actions)
             ]
             bck_logprobs = bck_cat.log_prob(bck_actions)
 

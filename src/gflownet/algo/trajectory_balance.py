@@ -13,6 +13,7 @@ from gflownet.algo.config import TBVariant
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import (
+    ActionIndex,
     Graph,
     GraphAction,
     GraphActionCategorical,
@@ -249,15 +250,15 @@ class TrajectoryBalance(GFNAlgorithm):
         action: GraphAction
             Action leading from g to gp
         return_aidx: bool
-            If true returns of list of action indices, else a list of GraphAction
+            If true returns of list of ActionIndex, else a list of GraphAction
 
         Returns
         -------
-        actions: Union[List[Tuple[int,int,int]], List[GraphAction]]
+        actions: Union[List[ActionIndex], List[GraphAction]]
             The list of idempotent actions that all lead from g to gp.
 
         """
-        iaction = self.ctx.GraphAction_to_aidx(gd, action)
+        iaction = self.ctx.GraphAction_to_ActionIndex(gd, action)
         if action.action == GraphActionType.Stop:
             return [iaction if return_aidx else action]
         # Here we're looking for potential idempotent actions by looking at legal actions of the
@@ -267,10 +268,10 @@ class TrajectoryBalance(GFNAlgorithm):
         nz = lmask.nonzero()  # Legal actions are those with a nonzero mask value
         actions = [iaction if return_aidx else action]
         for i in nz:
-            aidx = (iaction[0], i[0].item(), i[1].item())
+            aidx = ActionIndex(action_type=iaction[0], row_idx=i[0].item(), col_idx=i[1].item())
             if aidx == iaction:
                 continue
-            ga = self.ctx.aidx_to_GraphAction(gd, aidx, fwd=not action.action.is_backward)
+            ga = self.ctx.ActionIndex_to_GraphAction(gd, aidx, fwd=not action.action.is_backward)
             child = self.env.step(g, ga)
             if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
                 actions.append(aidx if return_aidx else ga)
@@ -294,11 +295,13 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         if self.model_is_autoregressive:
             torch_graphs = [self.ctx.graph_to_Data(tj["traj"][-1][0]) for tj in trajs]
-            actions = [self.ctx.GraphAction_to_aidx(g, i[1]) for g, tj in zip(torch_graphs, trajs) for i in tj["traj"]]
+            actions = [
+                self.ctx.GraphAction_to_ActionIndex(g, i[1]) for g, tj in zip(torch_graphs, trajs) for i in tj["traj"]
+            ]
         else:
             torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
             actions = [
-                self.ctx.GraphAction_to_aidx(g, a)
+                self.ctx.GraphAction_to_ActionIndex(g, a)
                 for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
             ]
         batch = self.ctx.collate(torch_graphs)
@@ -308,7 +311,7 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.do_parameterize_p_b:
             batch.bck_actions = torch.tensor(
                 [
-                    self.ctx.GraphAction_to_aidx(g, a)
+                    self.ctx.GraphAction_to_ActionIndex(g, a)
                     for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
                 ]
             )

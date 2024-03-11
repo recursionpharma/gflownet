@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List
 
 import networkx as nx
 import numpy as np
@@ -8,7 +8,7 @@ import torch_geometric.data as gd
 from rdkit.Chem import Mol
 from rdkit.Chem.rdchem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import ActionIndex, Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
@@ -158,44 +158,43 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveEdgeAttr,
         ]
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
+    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
-        act_type, act_row, act_col = [int(i) for i in action_idx]
         if fwd:
-            t = self.action_type_order[act_type]
+            t = self.action_type_order[aidx.action_type]
         else:
-            t = self.bck_action_type_order[act_type]
+            t = self.bck_action_type_order[aidx.action_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
-            return GraphAction(t, source=act_row, value=self.atom_attr_values["v"][act_col])
+            return GraphAction(t, source=aidx.row_idx, value=self.atom_attr_values["v"][aidx.col_idx])
         elif t is GraphActionType.SetNodeAttr:
-            attr, val = self.atom_attr_logit_map[act_col]
-            return GraphAction(t, source=act_row, attr=attr, value=val)
+            attr, val = self.atom_attr_logit_map[aidx.col_idx]
+            return GraphAction(t, source=aidx.row_idx, attr=attr, value=val)
         elif t is GraphActionType.AddEdge:
-            a, b = g.non_edge_index[:, act_row]
+            a, b = g.non_edge_index[:, aidx.row_idx]
             return GraphAction(t, source=a.item(), target=b.item())
         elif t is GraphActionType.SetEdgeAttr:
             # In order to form an undirected graph for torch_geometric, edges are duplicated, in order (i.e.
             # g.edge_index = [[a,b], [b,a], [c,d], [d,c], ...].T), but edge logits are not. So to go from one
             # to another we can safely divide or multiply by two.
-            a, b = g.edge_index[:, act_row * 2]
-            attr, val = self.bond_attr_logit_map[act_col]
+            a, b = g.edge_index[:, aidx.row_idx * 2]
+            attr, val = self.bond_attr_logit_map[aidx.col_idx]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
         elif t is GraphActionType.RemoveNode:
-            return GraphAction(t, source=act_row)
+            return GraphAction(t, source=aidx.row_idx)
         elif t is GraphActionType.RemoveNodeAttr:
-            attr = self.settable_atom_attrs[act_col]
-            return GraphAction(t, source=act_row, attr=attr)
+            attr = self.settable_atom_attrs[aidx.col_idx]
+            return GraphAction(t, source=aidx.row_idx, attr=attr)
         elif t is GraphActionType.RemoveEdge:
-            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
+            a, b = g.edge_index[:, aidx.row_idx * 2]  # see note above about edge_index
             return GraphAction(t, source=a.item(), target=b.item())
         elif t is GraphActionType.RemoveEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]  # see note above about edge_index
-            attr = self.bond_attrs[act_col]
+            a, b = g.edge_index[:, aidx.row_idx * 2]  # see note above about edge_index
+            attr = self.bond_attrs[aidx.col_idx]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
         """Translate a GraphAction to an index tuple"""
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:
@@ -252,7 +251,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             col = self.bond_attrs.index(action.attr)
         else:
             raise ValueError(f"Unknown action type {action.action}")
-        return (type_idx, int(row), int(col))
+        return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""

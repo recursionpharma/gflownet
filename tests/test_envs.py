@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.envs.graph_building_env import GraphBuildingEnv
+from gflownet.envs.graph_building_env import ActionIndex, GraphBuildingEnv
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import bengio2021flow
 
@@ -56,8 +56,8 @@ def build_two_node_states(ctx):
                 continue
             nz = mask.nonzero()
             for i in nz:  # Only expand non-masked legal actions
-                aidx = (at, i[0].item(), i[1].item())
-                ga = ctx.aidx_to_GraphAction(gd, aidx)
+                aidx = ActionIndex(at, i[0].item(), i[1].item())
+                ga = ctx.ActionIndex_to_GraphAction(gd, aidx)
                 sp = env.step(s, ga)
                 h = g2h(sp)
                 if h in graph_cache:
@@ -152,7 +152,7 @@ def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
                     if a in c:
                         break
                 else:
-                    ga = ctx.aidx_to_GraphAction(gd, a, fwd=False)
+                    ga = ctx.ActionIndex_to_GraphAction(gd, a, fwd=False)
                     gp = env.step(g, ga)
                     # TODO: It is a bit weird that get_idempotent_actions is in an algo class,
                     # probably also belongs in a graph utils file.
