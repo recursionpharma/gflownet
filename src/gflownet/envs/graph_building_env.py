@@ -872,7 +872,8 @@ class GraphActionCategorical:
 
 
 class GraphBuildingEnvContext:
-    """A context class defines what the graphs are, how they map to and from data"""
+    """A context class defines what the graphs are, how they map to and from data
+    """
 
     device: torch.device
     action_type_order: List[GraphActionType]
@@ -913,6 +914,8 @@ class GraphBuildingEnvContext:
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
+        The logic to build masks for prohibited actions can be implemented here,
+        packed in the data object and used in the GraphActionCategorical.
         Parameters
         ----------
         g: Graph

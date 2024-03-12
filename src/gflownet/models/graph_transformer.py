@@ -47,6 +47,9 @@ class GraphTransformer(nn.Module):
             The number of Transformer layers.
         num_heads: int
             The number of Transformer heads per layer.
+        num_noise: int
+            The number of noise features to add to the node features.
+            This can be used as a simple positional encoding mechanism.
         ln_type: str
             The location of Layer Norm in the transformer, either 'pre' or 'post', default 'pre'.
             (apparently, before is better than after, see https://arxiv.org/pdf/2002.04745.pdf)
