@@ -204,13 +204,13 @@ class DataSource(IterableDataset):
     def call_sampling_hooks(self, trajs):
         batch_info = {}
         # TODO: just pass trajs to the hooks and deprecate passing all those arguments
-        flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        obj_props = torch.stack([t["obj_props"] for t in trajs])
         # convert cond_info back to a dict
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         rewards = torch.exp(log_rewards / (cond_info.get("beta", 1)))
         for hook in self.sampling_hooks:
-            batch_info.update(hook(trajs, rewards, flat_rewards, cond_info))
+            batch_info.update(hook(trajs, rewards, obj_props, cond_info))
         return batch_info
 
     def create_batch(self, trajs, batch_info):
@@ -229,26 +229,26 @@ class DataSource(IterableDataset):
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
-        batch.flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        batch.obj_props = torch.stack([t["obj_props"] for t in trajs])
         return batch
 
     def compute_properties(self, trajs, mark_as_online=False):
-        """Sets trajs' flat_rewards and is_valid keys by querying the task."""
-        # TODO: refactor flat_rewards into properties
+        """Sets trajs' obj_props and is_valid keys by querying the task."""
+        # TODO: refactor obj_props into properties
         valid_idcs = torch.tensor([i for i in range(len(trajs)) if trajs[i].get("is_valid", True)]).long()
         # fetch the valid trajectories endpoints
         objs = [self.ctx.graph_to_obj(trajs[i]["result"]) for i in valid_idcs]
         # ask the task to compute their reward
-        # TODO: it's really weird that the task is responsible for this and returns a flat_rewards
+        # TODO: it's really weird that the task is responsible for this and returns a obj_props
         # tensor whose first dimension is possibly not the same as the output???
-        flat_rewards, m_is_valid = self.task.compute_flat_rewards(objs)
-        assert flat_rewards.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
+        obj_props, m_is_valid = self.task.compute_obj_properties(objs)
+        assert obj_props.ndim == 2, "FlatRewards should be (mbsize, n_objectives), even if n_objectives is 1"
         # The task may decide some of the objs are invalid, we have to again filter those
         valid_idcs = valid_idcs[m_is_valid]
-        all_fr = torch.zeros((len(trajs), flat_rewards.shape[1]))
-        all_fr[valid_idcs] = flat_rewards
+        all_fr = torch.zeros((len(trajs), obj_props.shape[1]))
+        all_fr[valid_idcs] = obj_props
         for i in range(len(trajs)):
-            trajs[i]["flat_rewards"] = all_fr[i]
+            trajs[i]["obj_props"] = all_fr[i]
             trajs[i]["is_online"] = mark_as_online
         # Override the is_valid key in case the task made some objs invalid
         for i in valid_idcs:
@@ -256,9 +256,9 @@ class DataSource(IterableDataset):
 
     def compute_log_rewards(self, trajs):
         """Sets trajs' log_reward key by querying the task."""
-        flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        obj_props = torch.stack([t["obj_props"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
-        log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
+        log_rewards = self.task.cond_info_to_logreward(cond_info, obj_props)
         min_r = torch.as_tensor(self.cfg.algo.illegal_action_logreward).float()
         for i in range(len(trajs)):
             trajs[i]["log_reward"] = log_rewards[i] if trajs[i].get("is_valid", True) else min_r
@@ -266,7 +266,7 @@ class DataSource(IterableDataset):
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_reward"], t["flat_rewards"], t["cond_info"], t["is_valid"])
+                self.replay_buffer.push(t, t["log_reward"], t["obj_props"], t["cond_info"], t["is_valid"])
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
@@ -274,7 +274,7 @@ class DataSource(IterableDataset):
 
     def set_traj_props(self, trajs, props):
         for i in range(len(trajs)):
-            trajs[i]["flat_rewards"] = props[i]  # TODO: refactor
+            trajs[i]["obj_props"] = props[i]  # TODO: refactor
 
     def relabel_in_hindsight(self, trajs):
         if self.cfg.replay.hindsight_ratio == 0:
@@ -285,10 +285,10 @@ class DataSource(IterableDataset):
         # samples indexes of trajectories without repeats
         hindsight_idxs = torch.randperm(len(trajs))[: int(len(trajs) * self.cfg.replay.hindsight_ratio)]
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
-        flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        obj_props = torch.stack([t["obj_props"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         cond_info, log_rewards = self.task.relabel_condinfo_and_logrewards(
-            cond_info, log_rewards, flat_rewards, hindsight_idxs
+            cond_info, log_rewards, obj_props, hindsight_idxs
         )
         self.set_traj_cond_info(trajs, cond_info)
         for i in range(len(trajs)):

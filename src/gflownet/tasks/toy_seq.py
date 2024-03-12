@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 import torch
 from torch import Tensor
 
-from gflownet import FlatRewards, GFNTask, RewardScalar
+from gflownet import GFNTask, LogScalar, ObjectProperties
 from gflownet.config import Config, init_empty
 from gflownet.envs.seq_building_env import AutoregressiveSeqBuildingContext, SeqBuildingEnv
 from gflownet.models.seq_transformer import SeqTransformerGFN
@@ -21,7 +21,7 @@ class ToySeqTask(GFNTask):
         self,
         seqs: List[str],
         cfg: Config,
-    ):
+    ) -> None:
         self.seqs = seqs
         self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
@@ -30,12 +30,12 @@ class ToySeqTask(GFNTask):
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:
+        return LogScalar(self.temperature_conditional.transform(cond_info, to_logreward(obj_props)))
 
-    def compute_flat_rewards(self, objs: List[str]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, objs: List[str]) -> Tuple[ObjectProperties, Tensor]:
         rs = torch.tensor([sum([s.count(p) for p in self.seqs]) for s in objs]).float() / self.norm
-        return FlatRewards(rs[:, None]), torch.ones(len(objs), dtype=torch.bool)
+        return ObjectProperties(rs[:, None]), torch.ones(len(objs), dtype=torch.bool)
 
 
 class ToySeqTrainer(StandardOnlineTrainer):

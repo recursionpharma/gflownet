@@ -1,17 +1,18 @@
-from typing import Dict, List, NewType, Optional, Tuple
+from typing import Any, Dict, List, NewType, Optional, Tuple
 
 import torch_geometric.data as gd
-from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor, nn
 
 from .config import Config
 
-# This type represents an unprocessed list of reward signals/conditioning information
-FlatRewards = NewType("FlatRewards", Tensor)  # type: ignore
+# This type represents a set of scalar properties attached to each object in a batch.
+ObjectProperties = NewType("ObjectProperties", Tensor)  # type: ignore
 
-# This type represents the outcome for a multi-objective task of
-# converting FlatRewards to a scalar, e.g. (sum R_i omega_i) ** beta
-RewardScalar = NewType("RewardScalar", Tensor)  # type: ignore
+# This type represents log-scalars, in particular log-rewards at the scale we operate with with GFlowNets
+# for example, converting a reward ObjectProperties to a log-scalar with log [(sum R_i omega_i) ** beta]
+LogScalar = NewType("LogScalar", Tensor)  # type: ignore
+# This type represents linear-scalars
+LinScalar = NewType("LinScalar", Tensor)  # type: ignore
 
 
 class GFNAlgorithm:
@@ -54,15 +55,15 @@ class GFNAlgorithm:
 
 
 class GFNTask:
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:
         """Combines a minibatch of reward signal vectors and conditional information into a scalar reward.
 
         Parameters
         ----------
         cond_info: Dict[str, Tensor]
             A dictionary with various conditional informations (e.g. temperature)
-        flat_reward: FlatRewards
-            A 2d tensor where each row represents a series of flat rewards.
+        obj_props: ObjectProperties
+            A 2d tensor where each row represents a series of object properties.
 
         Returns
         -------
@@ -71,18 +72,35 @@ class GFNTask:
         """
         raise NotImplementedError()
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
-        """Compute the flat rewards of mols according the the tasks' proxies
+    def compute_obj_properties(self, objs: List[Any]) -> Tuple[ObjectProperties, Tensor]:
+        """Compute the flat rewards of objs according the the tasks' proxies
 
         Parameters
         ----------
-        mols: List[RDMol]
-            A list of RDKit molecules.
+        objs: List[Any]
+            A list of n objects.
         Returns
         -------
-        reward: FlatRewards
-            A 2d tensor, a vector of scalar reward for valid each molecule.
+        obj_probs: ObjectProperties
+            A 2d tensor (m, p), a vector of scalar properties for the m <= n valid objects.
         is_valid: Tensor
-            A 1d tensor, a boolean indicating whether the molecule is valid.
+            A 1d tensor (n,), a boolean indicating whether each object is valid.
+        """
+        raise NotImplementedError()
+
+    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+        """Sample conditional information for n objects
+
+        Parameters
+        ----------
+        n: int
+            The number of objects to sample conditional information for.
+        train_it: int
+            The training iteration number.
+
+        Returns
+        -------
+        cond_info: Dict[str, Tensor]
+            A dictionary with various conditional informations (e.g. temperature)
         """
         raise NotImplementedError()

@@ -378,7 +378,7 @@ class EnvelopeQLearning:
         shifted_Q_pareto = self.gamma * torch.cat([Q_pareto[1:], torch.zeros_like(Q_pareto[:1])], dim=0)
         # Replace Q(s_T) with R(tau). Since we've shifted the values in the array, Q(s_T) is Q(s_0)
         # of the next trajectory in the array, and rewards are terminal (0 except at s_T).
-        shifted_Q_pareto[final_graph_idx] = batch.flat_rewards + ((1 - batch.is_valid) * self.invalid_penalty)[:, None]
+        shifted_Q_pareto[final_graph_idx] = batch.obj_props + ((1 - batch.is_valid) * self.invalid_penalty)[:, None]
         y = shifted_Q_pareto.detach()
 
         # We now use the same log_prob trick to get Q(s,a,w)

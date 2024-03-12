@@ -133,5 +133,5 @@ class StandardOnlineTrainer(GFNTrainer):
 
 
 class AvgRewardHook:
-    def __call__(self, trajs, rewards, flat_rewards, extra_info):
+    def __call__(self, trajs, rewards, obj_props, extra_info):
         return {"sampled_reward_avg": rewards.mean().item()}

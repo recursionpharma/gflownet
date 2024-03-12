@@ -1,12 +1,12 @@
 import socket
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import torch
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
 
-from gflownet import FlatRewards, GFNTask, RewardScalar
+from gflownet import GFNTask, LogScalar, ObjectProperties
 from gflownet.config import Config, init_empty
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.online_trainer import StandardOnlineTrainer
@@ -15,19 +15,16 @@ from gflownet.online_trainer import StandardOnlineTrainer
 class MakeRingsTask(GFNTask):
     """A toy task where the reward is the number of rings in the molecule."""
 
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(y)
-
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return {"beta": torch.ones(n), "encoding": torch.ones(n, 1)}
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        scalar_logreward = torch.as_tensor(flat_reward).squeeze().clamp(min=1e-30).log()
-        return RewardScalar(scalar_logreward.flatten())
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:
+        scalar_logreward = torch.as_tensor(obj_props).squeeze().clamp(min=1e-30).log()
+        return LogScalar(scalar_logreward.flatten())
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, mols: List[RDMol]) -> Tuple[ObjectProperties, Tensor]:
         rs = torch.tensor([m.GetRingInfo().NumRings() for m in mols]).float()
-        return FlatRewards(rs.reshape((-1, 1))), torch.ones(len(mols)).bool()
+        return ObjectProperties(rs.reshape((-1, 1))), torch.ones(len(mols)).bool()
 
 
 class MakeRingsTrainer(StandardOnlineTrainer):

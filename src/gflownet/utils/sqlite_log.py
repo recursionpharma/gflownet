@@ -12,7 +12,7 @@ class SQLiteLogHook:
         self.ctx = ctx
         self.data_labels = None
 
-    def __call__(self, trajs, rewards, flat_rewards, cond_info):
+    def __call__(self, trajs, rewards, obj_props, cond_info):
         if self.log is None:
             worker_info = torch.utils.data.get_worker_info()
             self._wid = worker_info.id if worker_info is not None else 0
@@ -26,7 +26,7 @@ class SQLiteLogHook:
         else:
             objs = [""] * len(trajs)
 
-        flat_rewards = flat_rewards.reshape((len(flat_rewards), -1)).data.numpy().tolist()
+        obj_props = obj_props.reshape((len(obj_props), -1)).data.numpy().tolist()
         rewards = rewards.data.numpy().tolist()
         preferences = cond_info.get("preferences", torch.zeros((len(objs), 0))).data.numpy().tolist()
         focus_dir = cond_info.get("focus_dir", torch.zeros((len(objs), 0))).data.numpy().tolist()
@@ -34,7 +34,7 @@ class SQLiteLogHook:
 
         data = [
             [objs[i], rewards[i]]
-            + flat_rewards[i]
+            + obj_props[i]
             + preferences[i]
             + focus_dir[i]
             + [cond_info[k][i].item() for k in logged_keys]
@@ -43,7 +43,7 @@ class SQLiteLogHook:
         if self.data_labels is None:
             self.data_labels = (
                 ["smi", "r"]
-                + [f"fr_{i}" for i in range(len(flat_rewards[0]))]
+                + [f"fr_{i}" for i in range(len(obj_props[0]))]
                 + [f"pref_{i}" for i in range(len(preferences[0]))]
                 + [f"focus_{i}" for i in range(len(focus_dir[0]))]
                 + [f"ci_{k}" for k in logged_keys]

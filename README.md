@@ -52,7 +52,7 @@ For a gentler introduction to the library, see [Getting Started](docs/getting_st
 
 - [algo](src/gflownet/algo), contains GFlowNet algorithms implementations ([Trajectory Balance](https://arxiv.org/abs/2201.13259), [SubTB](https://arxiv.org/abs/2209.12782), [Flow Matching](https://arxiv.org/abs/2106.04399)), as well as some baselines. These implement how to sample trajectories from a model and compute the loss from trajectories.
 - [data](src/gflownet/data), contains dataset definitions, data loading and data sampling utilities.
-- [envs](src/gflownet/envs), contains environment classes; a graph-building environment base, and a molecular graph context class. The base environment is agnostic to what kind of graph is being made, and the context class specifies mappings from graphs to objects (e.g. molecules) and torch geometric Data.
+- [envs](src/gflownet/envs), contains environment classes; the base environment is agnostic to what kind of graph is being made, and context classes specify mappings from graphs to objects (e.g. molecules) and torch geometric Data.
 - [examples](docs/examples), contains simple example implementations of GFlowNet.
 - [models](src/gflownet/models), contains model definitions.
 - [tasks](src/gflownet/tasks), contains training code.

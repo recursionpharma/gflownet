@@ -1,6 +1,6 @@
 import abc
 from copy import deepcopy
-from typing import Dict
+from typing import Dict, Generic, TypeVar, Optional
 
 import numpy as np
 import torch
@@ -9,19 +9,23 @@ from torch import Tensor
 from torch.distributions.dirichlet import Dirichlet
 from torch_geometric import data as gd
 
+from gflownet import LinScalar, LogScalar, ObjectProperties
 from gflownet.config import Config
 from gflownet.utils import metrics
 from gflownet.utils.focus_model import TabularFocusModel
 from gflownet.utils.misc import get_worker_device, get_worker_rng
 from gflownet.utils.transforms import thermometer
 
+Tin = TypeVar("Tin")
+Tout = TypeVar("Tout")
 
-class Conditional(abc.ABC):
+
+class Conditional(abc.ABC, Generic[Tin, Tout]):
     def sample(self, n):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def transform(self, cond_info: Dict[str, Tensor], properties: Tensor) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], data: Tin) -> Tout:
         raise NotImplementedError()
 
     def encoding_size(self):
@@ -31,7 +35,7 @@ class Conditional(abc.ABC):
         raise NotImplementedError()
 
 
-class TemperatureConditional(Conditional):
+class TemperatureConditional(Conditional[LogScalar, LogScalar]):
     def __init__(self, cfg: Config):
         self.cfg = cfg
         tmp_cfg = self.cfg.cond.temperature
@@ -77,11 +81,11 @@ class TemperatureConditional(Conditional):
         assert len(beta.shape) == 1, f"beta should be a 1D array, got {beta.shape}"
         return {"beta": torch.tensor(beta), "encoding": beta_enc}
 
-    def transform(self, cond_info: Dict[str, Tensor], logreward: Tensor) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], logreward: LogScalar) -> LogScalar:
         assert len(logreward.shape) == len(
             cond_info["beta"].shape
         ), f"dangerous shape mismatch: {logreward.shape} vs {cond_info['beta'].shape}"
-        return logreward * cond_info["beta"]
+        return LogScalar(logreward * cond_info["beta"])
 
     def encode(self, conditional: Tensor) -> Tensor:
         cfg = self.cfg.cond.temperature
@@ -90,7 +94,7 @@ class TemperatureConditional(Conditional):
         return thermometer(torch.tensor(conditional), cfg.num_thermometer_dim, 0, self.upper_bound)
 
 
-class MultiObjectiveWeightedPreferences(Conditional):
+class MultiObjectiveWeightedPreferences(Conditional[ObjectProperties, LinScalar]):
     def __init__(self, cfg: Config):
         self.cfg = cfg.cond.weighted_prefs
         self.num_objectives = cfg.cond.moo.num_objectives
@@ -115,10 +119,10 @@ class MultiObjectiveWeightedPreferences(Conditional):
         preferences = torch.as_tensor(preferences).float()
         return {"preferences": preferences, "encoding": self.encode(preferences)}
 
-    def transform(self, cond_info: Dict[str, Tensor], flat_reward: Tensor) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], flat_reward: ObjectProperties) -> LinScalar:
         scalar_reward = (flat_reward * cond_info["preferences"]).sum(1)
         assert len(scalar_reward.shape) == 1, f"scalar_reward should be a 1D array, got {scalar_reward.shape}"
-        return scalar_reward
+        return LinScalar(scalar_reward)
 
     def encoding_size(self):
         return max(1, self.num_thermometer_dim * self.num_objectives)
@@ -130,7 +134,7 @@ class MultiObjectiveWeightedPreferences(Conditional):
             return conditional.unsqueeze(1)
 
 
-class FocusRegionConditional(Conditional):
+class FocusRegionConditional(Conditional[tuple[ObjectProperties, LogScalar], LogScalar]):
     def __init__(self, cfg: Config, n_valid: int):
         self.cfg = cfg.cond.focus_region
         self.n_valid = n_valid
@@ -188,7 +192,7 @@ class FocusRegionConditional(Conditional):
             )
         self.valid_focus_dirs = valid_focus_dirs
 
-    def sample(self, n: int, train_it: int = None):
+    def sample(self, n: int, train_it: Optional[int] = None):
         train_it = train_it or 0
         rng = get_worker_rng()
         if self.fixed_focus_dirs is not None:
@@ -197,7 +201,7 @@ class FocusRegionConditional(Conditional):
             )
         elif self.cfg.focus_type == "dirichlet":
             m = Dirichlet(torch.FloatTensor([1.0] * self.n_objectives))
-            focus_dir = m.sample([n])
+            focus_dir = m.sample(torch.Size((n,)))
         elif self.cfg.focus_type == "hyperspherical":
             focus_dir = torch.tensor(
                 metrics.sample_positiveQuadrant_ndim_sphere(n, self.n_objectives, normalisation="l2")
@@ -224,11 +228,12 @@ class FocusRegionConditional(Conditional):
             else conditional
         )
 
-    def transform(self, cond_info: Dict[str, Tensor], flat_rewards: Tensor, scalar_logreward: Tensor = None) -> Tensor:
+    def transform(self, cond_info: Dict[str, Tensor], data: tuple[ObjectProperties, LogScalar]) -> LogScalar:
+        flat_rewards, scalar_logreward = data
         focus_coef, in_focus_mask = metrics.compute_focus_coef(
             flat_rewards, cond_info["focus_dir"], self.cfg.focus_cosim, self.cfg.focus_limit_coef
         )
-        scalar_logreward = scalar_logreward.clone()  # Avoid modifying the original tensor
+        scalar_logreward = LogScalar(scalar_logreward.clone())  # Avoid modifying the original tensor
         scalar_logreward[in_focus_mask] += torch.log(focus_coef[in_focus_mask])
         scalar_logreward[~in_focus_mask] = self.ocfg.algo.illegal_action_logreward
 

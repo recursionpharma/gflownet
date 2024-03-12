@@ -1,5 +1,5 @@
 import socket
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
-from gflownet import FlatRewards, GFNTask, RewardScalar
+from gflownet import GFNTask, LogScalar, ObjectProperties
 from gflownet.config import Config, init_empty
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext, Graph
 from gflownet.models import bengio2021flow
@@ -35,18 +35,12 @@ class SEHTask(GFNTask):
         dataset: Dataset,
         cfg: Config,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
-    ):
+    ) -> None:
         self._wrap_model = wrap_model
         self.models = self._load_task_models()
         self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
-
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y) / 8)
-
-    def inverse_flat_reward_transform(self, rp):
-        return rp * 8
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
@@ -57,25 +51,25 @@ class SEHTask(GFNTask):
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: ObjectProperties) -> LogScalar:
+        return LogScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
     def compute_reward_from_graph(self, graphs: List[Data]) -> Tensor:
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
         batch.to(self.models["seh"].device if hasattr(self.models["seh"], "device") else get_worker_device())
-        preds = self.models["seh"](batch).reshape((-1,)).data.cpu()
+        preds = self.models["seh"](batch).reshape((-1,)).data.cpu() / 8
         preds[preds.isnan()] = 0
-        return self.flat_reward_transform(preds).clip(1e-4, 100).reshape((-1,))
+        return preds.clip(1e-4, 100).reshape((-1,))
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, mols: List[RDMol]) -> Tuple[ObjectProperties, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return FlatRewards(torch.zeros((0, 1))), is_valid
+            return ObjectProperties(torch.zeros((0, 1))), is_valid
 
         preds = self.compute_reward_from_graph(graphs).reshape((-1, 1))
         assert len(preds) == is_valid.sum()
-        return FlatRewards(preds), is_valid
+        return ObjectProperties(preds), is_valid
 
 
 SOME_MOLS = [
@@ -114,14 +108,14 @@ class LittleSEHDataset(Dataset):
 
     def __init__(self, smis) -> None:
         super().__init__()
-        self.props: List[Tensor] = []
+        self.props: ObjectProperties
         self.mols: List[Graph] = []
         self.smis = smis
 
     def setup(self, task: SEHTask, ctx: FragMolBuildingEnvContext) -> None:
         rdmols = [Chem.MolFromSmiles(i) for i in SOME_MOLS]
         self.mols = [ctx.obj_to_graph(i) for i in rdmols]
-        self.props = task.compute_flat_rewards(rdmols)[0]
+        self.props = task.compute_obj_properties(rdmols)[0]
 
     def __len__(self):
         return len(self.mols)
