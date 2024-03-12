@@ -79,6 +79,8 @@ class GraphSampler:
             Conditional information of each trajectory, shape (n, n_info)
         dev: torch.device
             Device on which data is manipulated
+        random_action_prob: float
+            Probability of taking a random action at each step
 
         Returns
         -------
@@ -92,17 +94,17 @@ class GraphSampler:
         # This will be returned
         data = [{"traj": [], "reward_pred": None, "is_valid": True, "is_sink": []} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
-        fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
-        bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
+        fwd_logprob: List[List[Tensor]] = [[] for _ in range(n)]
+        bck_logprob: List[List[Tensor]] = [[] for _ in range(n)]
 
-        graphs = [self.env.new() for i in range(n)]
-        done = [False] * n
+        graphs = [self.env.new() for _ in range(n)]
+        done = [False for _ in range(n)]
         # TODO: instead of padding with Stop, we could have a virtual action whose probability
         # always evaluates to 1. Presently, Stop should convert to a (0,0,0) ActionIndex, which should
         # always be at least a valid index, and will be masked out anyways -- but this isn't ideal.
         # Here we have to pad the backward actions with something, since the backward actions are
         # evaluated at s_{t+1} not s_t.
-        bck_a = [[GraphAction(GraphActionType.Stop)] for i in range(n)]
+        bck_a = [[GraphAction(GraphActionType.Stop)] for _ in range(n)]
 
         def not_done(lst):
             return [e for i, e in enumerate(lst) if not done[i]]
@@ -116,19 +118,14 @@ class GraphSampler:
             # TODO: compute bck_cat.log_prob(bck_a) when relevant
             fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
             if random_action_prob > 0:
-                masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(
                     self.rng.uniform(size=len(torch_graphs)) < random_action_prob, device=dev
                 ).float()
-                # Set the logits to some large value if they're not masked, this way the masked
-                # actions have no probability of getting sampled, and there is a uniform
-                # distribution over the rest
+                # Set the logits to some large value to have a uniform distribution
                 fwd_cat.logits = [
-                    # We don't multiply m by i on the right because we're assume the model forward()
-                    # method already does that
-                    is_random_action[b][:, None] * torch.ones_like(i) * m * 100 + i * (1 - is_random_action[b][:, None])
-                    for i, m, b in zip(fwd_cat.logits, masks, fwd_cat.batch)
+                    is_random_action[b][:, None] * torch.ones_like(i) * 100 + i * (1 - is_random_action[b][:, None])
+                    for i, b in zip(fwd_cat.logits, fwd_cat.batch)
                 ]
             if self.sample_temp != 1:
                 sample_cat = copy.copy(fwd_cat)
@@ -259,16 +256,12 @@ class GraphSampler:
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order
-                masks = [getattr(gbatch, i.mask_name) for i in action_types]
+                action_masks = [self.ctx.action_type_to_mask(t, g, assert_mask_exists=True) for t in action_types]
                 bck_cat = GraphActionCategorical(
                     gbatch,
-                    logits=[m * 1e6 for m in masks],
-                    keys=[
-                        # TODO: This is not very clean, could probably abstract this away somehow
-                        GraphTransformerGFN._graph_part_to_key[GraphTransformerGFN._action_type_to_graph_part[t]]
-                        for t in action_types
-                    ],
-                    masks=masks,
+                    raw_logits=[torch.ones_like(m) for m in action_masks],
+                    keys=[GraphTransformerGFN.action_type_to_key(t) for t in action_types],
+                    action_masks=action_masks,
                     types=action_types,
                 )
             bck_actions = bck_cat.sample()

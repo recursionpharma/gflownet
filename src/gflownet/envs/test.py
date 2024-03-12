@@ -63,7 +63,7 @@ class Model(nn.Module):
         e_row, e_col = g.edge_index[:, ::2]
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 self.emb2stop(glob),
                 self.emb2add_node(o),
                 self.emb2add_node_attr(o),

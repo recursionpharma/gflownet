@@ -393,7 +393,9 @@ def main():
     config.desc = "debug_seh_frag_moo"
     config.log_dir = "./logs/debug_run_sfm"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
+    config.num_workers = 0
     config.print_every = 1
+    config.algo.num_from_policy = 2
     config.validate_every = 1
     config.num_final_gen_steps = 5
     config.num_training_steps = 3

@@ -50,8 +50,8 @@ def build_two_node_states(ctx):
     def expand(s, idx):
         # Recursively expand all children of s
         gd = ctx.graph_to_Data(s)
-        masks = [getattr(gd, gat.mask_name) for gat in ctx.action_type_order]
-        for at, mask in enumerate(masks):
+        action_masks = [getattr(gd, gat.mask_name) for gat in ctx.action_type_order]
+        for at, mask in enumerate(action_masks):
             if at == 0:  # Ignore Stop action
                 continue
             nz = mask.nonzero()
@@ -106,8 +106,8 @@ def two_node_states_atoms(request):
     return data
 
 
-def _test_backwards_mask_equivalence(two_node_states, ctx):
-    """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
+def _test_backwards_action_mask_equivalence(two_node_states, ctx):
+    """This tests that FragMolBuildingEnvContext implements backwards action masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
     """
@@ -124,7 +124,7 @@ def _test_backwards_mask_equivalence(two_node_states, ctx):
             raise ValueError()
 
 
-def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
+def _test_backwards_action_mask_equivalence_ipa(two_node_states, ctx):
     """This tests that FragMolBuildingEnvContext implements backwards masks correctly. It treats
     GraphBuildingEnv.count_backward_transitions as the ground truth and raises an error if there is
     a different number of actions leading to the parents of any state.
@@ -162,17 +162,17 @@ def _test_backwards_mask_equivalence_ipa(two_node_states, ctx):
             raise ValueError()
 
 
-def test_backwards_mask_equivalence_frag(two_node_states_frags):
-    _test_backwards_mask_equivalence(two_node_states_frags, get_frag_env_ctx())
+def test_backwards_action_mask_equivalence_frag(two_node_states_frags):
+    _test_backwards_action_mask_equivalence(two_node_states_frags, get_frag_env_ctx())
 
 
-def test_backwards_mask_equivalence_ipa_frag(two_node_states_frags):
-    _test_backwards_mask_equivalence_ipa(two_node_states_frags, get_frag_env_ctx())
+def test_backwards_action_mask_equivalence_ipa_frag(two_node_states_frags):
+    _test_backwards_action_mask_equivalence_ipa(two_node_states_frags, get_frag_env_ctx())
 
 
-def test_backwards_mask_equivalence_atom(two_node_states_atoms):
-    _test_backwards_mask_equivalence(two_node_states_atoms, get_atom_env_ctx())
+def test_backwards_action_mask_equivalence_atom(two_node_states_atoms):
+    _test_backwards_action_mask_equivalence(two_node_states_atoms, get_atom_env_ctx())
 
 
-def test_backwards_mask_equivalence_ipa_atom(two_node_states_atoms):
-    _test_backwards_mask_equivalence_ipa(two_node_states_atoms, get_atom_env_ctx())
+def test_backwards_action_mask_equivalence_ipa_atom(two_node_states_atoms):
+    _test_backwards_action_mask_equivalence_ipa(two_node_states_atoms, get_atom_env_ctx())
