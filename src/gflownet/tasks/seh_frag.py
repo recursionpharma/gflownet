@@ -162,7 +162,6 @@ class SEHFragTrainer(StandardOnlineTrainer):
 
     def setup_task(self):
         self.task = SEHTask(
-            dataset=self.training_data,
             cfg=self.cfg,
             wrap_model=self._wrap_for_mp,
         )

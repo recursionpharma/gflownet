@@ -1,4 +1,5 @@
 import gc
+import logging
 import os
 import pathlib
 import shutil
@@ -331,6 +332,10 @@ class GFNTrainer:
             del final_dl
 
     def terminate(self):
+        logger = logging.getLogger("logger")
+        for handler in logger.handlers:
+            handler.close()
+
         for hook in self.sampling_hooks:
             if hasattr(hook, "terminate") and hook.terminate not in self.to_terminate:
                 hook.terminate()

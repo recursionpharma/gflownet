@@ -93,3 +93,19 @@ class SQLiteLog:
         cur.executemany(f'insert into results values ({",".join("?"*len(rows[0]))})', rows)  # nosec
         cur.close()
         self.db.commit()
+
+    def __del__(self):
+        if self.db is not None:
+            self.db.close()
+
+
+def read_all_results(path):
+    # E402: module level import not at top of file, but pandas is an optional dependency
+    import pandas as pd  # noqa: E402
+
+    num_workers = len([f for f in os.listdir(path) if f.startswith("generated_objs")])
+    dfs = [
+        pd.read_sql_query("SELECT * FROM results", sqlite3.connect(f"file:{path}/generated_objs_{i}.db?mode=ro"))
+        for i in range(num_workers)
+    ]
+    return pd.concat(dfs).sort_index().reset_index(drop=True)

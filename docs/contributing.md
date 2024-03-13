@@ -28,6 +28,10 @@ linters (as well as tests) are run.
 
 We use Github Actions to run tests and linting on every push and pull request. The configuration for these actions is found in `.github/workflows/`.
 
+The cascade of events is as follows:
+- For `build-and-test`, `tox -> testenv:py310 -> pytest` is run.
+- For `code-quality`, `tox -e style -> testenv:style -> pre-commit -> {isort, black, mypy, bandit, ruff, & others}`. This and the "others" are defined in `.pre-commit-config.yaml` and include things like checking for secrets and trailing whitespace.
+
 ## Style Guide
 
 On top of `black`-as-a-style-guide, we generally adhere to the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html). 

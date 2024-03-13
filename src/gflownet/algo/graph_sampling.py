@@ -62,9 +62,7 @@ class GraphSampler:
         self.correct_idempotent = correct_idempotent
         self.pad_with_terminal_state = pad_with_terminal_state
 
-    def sample_from_model(
-        self, model: nn.Module, n: int, cond_info: Optional[Tensor], random_action_prob: float = 0.0
-    ):
+    def sample_from_model(self, model: nn.Module, n: int, cond_info: Optional[Tensor], random_action_prob: float = 0.0):
         """Samples a model in a minibatch
 
         Parameters

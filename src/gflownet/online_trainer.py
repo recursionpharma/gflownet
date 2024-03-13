@@ -77,7 +77,7 @@ class StandardOnlineTrainer(GFNTrainer):
 
         # Separate Z parameters from non-Z to allow for LR decay on the former
         if hasattr(self.model, "logZ"):
-            Z_params = list(self.model.logZ.parameters())
+            Z_params = list(self.model._logZ.parameters())
             non_Z_params = [i for i in self.model.parameters() if all(id(i) != id(j) for j in Z_params)]
         else:
             Z_params = []

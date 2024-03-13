@@ -366,7 +366,7 @@ class TrajectoryBalance(GFNAlgorithm):
         clip_log_R = torch.maximum(
             log_rewards, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
         ).float()
-        cond_info = getattr(batch, 'cond_info', None)
+        cond_info = getattr(batch, "cond_info", None)
         invalid_mask = 1 - batch.is_valid
 
         # This index says which trajectory each graph belongs to, so
