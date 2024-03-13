@@ -140,7 +140,11 @@ class TrajectoryBalance(GFNAlgorithm):
         self.is_eval = is_eval
 
     def create_training_data_from_own_samples(
-        self, model: TrajectoryBalanceModel, n: int, cond_info: Tensor, random_action_prob: float
+        self,
+        model: TrajectoryBalanceModel,
+        n: int,
+        cond_info: Optional[Tensor] = None,
+        random_action_prob: Optional[float] = 0.0,
     ):
         """Generate trajectories by sampling a model
 
@@ -167,11 +171,12 @@ class TrajectoryBalance(GFNAlgorithm):
            - is_valid: is the generated graph valid according to the env & ctx
         """
         dev = get_worker_device()
-        cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
-        logZ_pred = model.logZ(cond_info)
-        for i in range(n):
-            data[i]["logZ"] = logZ_pred[i].item()
+        cond_info = cond_info.to(dev) if cond_info is not None else None
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, random_action_prob)
+        if cond_info is not None:
+            logZ_pred = model.logZ(cond_info)
+            for i in range(n):
+                data[i]["logZ"] = logZ_pred[i].item()
         return data
 
     def create_training_data_from_graphs(
@@ -204,7 +209,7 @@ class TrajectoryBalance(GFNAlgorithm):
             dev = get_worker_device()
             cond_info = cond_info.to(dev)
             return self.graph_sampler.sample_backward_from_graphs(
-                graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, dev, random_action_prob
+                graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, random_action_prob
             )
         trajs: List[Dict[str, Any]] = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
@@ -333,6 +338,9 @@ class TrajectoryBalance(GFNAlgorithm):
                 batch.bck_ip_actions = torch.tensor(sum(bck_ipa, []))
                 batch.bck_ip_lens = torch.tensor([len(i) for i in bck_ipa])
 
+        # compute_batch_losses expects these two optional values, if someone else doesn't fill them in, default to 0
+        batch.num_offline = 0
+        batch.num_online = 0
         return batch
 
     def compute_batch_losses(
@@ -358,7 +366,7 @@ class TrajectoryBalance(GFNAlgorithm):
         clip_log_R = torch.maximum(
             log_rewards, torch.tensor(self.global_cfg.algo.illegal_action_logreward, device=dev)
         ).float()
-        cond_info = batch.cond_info
+        cond_info = getattr(batch, 'cond_info', None)
         invalid_mask = 1 - batch.is_valid
 
         # This index says which trajectory each graph belongs to, so
@@ -367,16 +375,18 @@ class TrajectoryBalance(GFNAlgorithm):
         batch_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens)
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
+        # The per-state cond_info
+        batched_cond_info = cond_info[batch_idx] if cond_info is not None else None
 
         # Forward pass of the model, returns a GraphActionCategorical representing the forward
         # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
         if self.cfg.do_parameterize_p_b:
-            fwd_cat, bck_cat, per_graph_out = model(batch, cond_info[batch_idx])
+            fwd_cat, bck_cat, per_graph_out = model(batch, batched_cond_info)
         else:
             if self.model_is_autoregressive:
                 fwd_cat, per_graph_out = model(batch, cond_info, batched=True)
             else:
-                fwd_cat, per_graph_out = model(batch, cond_info[batch_idx])
+                fwd_cat, per_graph_out = model(batch, batched_cond_info)
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]

@@ -249,7 +249,6 @@ def compute_idx(pos, edge_index):
 
     unique, counts = torch.unique(edge_index[0], sorted=True, return_counts=True) #Get central values
     full_index = torch.arange(0, edge_index[0].size()[0]).cuda().int() #init full index
-    import pdb; pdb.set_trace()
     #print('full_index', full_index)
 
     #Compute 1

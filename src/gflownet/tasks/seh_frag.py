@@ -1,5 +1,5 @@
 import socket
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -32,13 +32,11 @@ class SEHTask(GFNTask):
 
     def __init__(
         self,
-        dataset: Dataset,
         cfg: Config,
-        wrap_model: Callable[[nn.Module], nn.Module] = None,
+        wrap_model: Optional[Callable[[nn.Module], nn.Module]] = None,
     ) -> None:
-        self._wrap_model = wrap_model
+        self._wrap_model = wrap_model if wrap_model is not None else (lambda x: x)
         self.models = self._load_task_models()
-        self.dataset = dataset
         self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
 

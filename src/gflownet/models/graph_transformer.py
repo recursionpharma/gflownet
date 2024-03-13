@@ -1,4 +1,5 @@
 from itertools import chain
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -59,7 +60,7 @@ class GraphTransformer(nn.Module):
 
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
-        self.c2h = mlp(g_dim, num_emb, num_emb, 2)
+        self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
         self.graph2emb = nn.ModuleList(
             sum(
                 [
@@ -78,7 +79,7 @@ class GraphTransformer(nn.Module):
             )
         )
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
+    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
         """Forward pass
 
         Parameters
@@ -100,7 +101,7 @@ class GraphTransformer(nn.Module):
             x = g.x
         o = self.x2h(x)
         e = self.e2h(g.edge_attr)
-        c = self.c2h(cond)
+        c = self.c2h(cond if cond is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
         num_total_nodes = g.x.shape[0]
         # Augment the edges with a new edge to the conditioning
         # information node. This new node is connected to every node
@@ -221,7 +222,12 @@ class GraphTransformerGFN(nn.Module):
 
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
-        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
+        self._logZ = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
+
+    def logZ(self, cond_info: Optional[torch.Tensor]):
+        if cond_info is None:
+            return self._logZ(torch.ones((1, 1), device=self._logZ[0].weight.device))
+        return self._logZ(cond_info)
 
     def _action_type_to_mask(self, t, g):
         return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)
@@ -244,7 +250,7 @@ class GraphTransformerGFN(nn.Module):
             types=action_types,
         )
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
+    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
         node_embeddings, graph_embeddings = self.transf(g, cond)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):

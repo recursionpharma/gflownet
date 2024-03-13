@@ -8,7 +8,7 @@ from torch import Tensor
 
 from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionCategorical, GraphActionType
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.utils.misc import get_worker_rng
+from gflownet.utils.misc import get_worker_rng, get_worker_device
 
 
 def relabel(g: Graph, ga: GraphAction):
@@ -63,7 +63,7 @@ class GraphSampler:
         self.pad_with_terminal_state = pad_with_terminal_state
 
     def sample_from_model(
-        self, model: nn.Module, n: int, cond_info: Tensor, dev: torch.device, random_action_prob: float = 0.0
+        self, model: nn.Module, n: int, cond_info: Optional[Tensor], random_action_prob: float = 0.0
     ):
         """Samples a model in a minibatch
 
@@ -75,8 +75,6 @@ class GraphSampler:
             Number of graphs to sample
         cond_info: Tensor
             Conditional information of each trajectory, shape (n, n_info)
-        dev: torch.device
-            Device on which data is manipulated
 
         Returns
         -------
@@ -87,6 +85,7 @@ class GraphSampler:
            - bck_logprob: sum logprobs P_B
            - is_valid: is the generated graph valid according to the env & ctx
         """
+        dev = get_worker_device()
         # This will be returned
         data = [{"traj": [], "reward_pred": None, "is_valid": True, "is_sink": []} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
@@ -114,7 +113,8 @@ class GraphSampler:
             # Forward pass to get GraphActionCategorical
             # Note about `*_`, the model may be outputting its own bck_cat, but we ignore it if it does.
             # TODO: compute bck_cat.log_prob(bck_a) when relevant
-            fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+            ci = cond_info[not_done_mask] if cond_info is not None else None
+            fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), ci)
             if random_action_prob > 0:
                 masks = [1] * len(fwd_cat.logits) if fwd_cat.masks is None else fwd_cat.masks
                 # Device which graphs in the minibatch will get their action randomized
@@ -208,8 +208,7 @@ class GraphSampler:
         self,
         graphs: List[Graph],
         model: Optional[nn.Module],
-        cond_info: Tensor,
-        dev: torch.device,
+        cond_info: Optional[Tensor],
         random_action_prob: float = 0.0,
     ):
         """Sample a model's P_B starting from a list of graphs, or if the model is None, use a uniform distribution
@@ -229,6 +228,7 @@ class GraphSampler:
             Probability of taking a random action (only used if model parameterizes P_B)
 
         """
+        dev = get_worker_device()
         n = len(graphs)
         done = [False] * n
         data = [
@@ -254,7 +254,8 @@ class GraphSampler:
             torch_graphs = [self.ctx.graph_to_Data(graphs[i]) for i in not_done(range(n))]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             if model is not None:
-                _, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask])
+                ci = cond_info[not_done_mask] if cond_info is not None else None
+                _, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), ci)
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order

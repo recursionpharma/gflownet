@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -8,7 +8,7 @@ import torch_geometric.data as gd
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from gflownet import LogScalar, ObjectProperties
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
@@ -63,16 +63,14 @@ class SEHMOOTask(SEHTask):
 
     def __init__(
         self,
-        dataset: Dataset,
         cfg: Config,
-        wrap_model: Callable[[nn.Module], nn.Module] = None,
+        wrap_model: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
-        super().__init__(dataset, cfg, wrap_model)
+        super().__init__(cfg, wrap_model)
         self.cfg = cfg
         mcfg = self.cfg.task.seh_moo
         self.objectives = cfg.task.seh_moo.objectives
         cfg.cond.moo.num_objectives = len(self.objectives)  # This value is used by the focus_cond and pref_cond
-        self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
             self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid)
         else:
