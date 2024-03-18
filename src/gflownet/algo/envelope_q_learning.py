@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -167,7 +166,6 @@ class EnvelopeQLearning:
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
         task: GFNTask,
-        rng: np.random.RandomState,
         cfg: Config,
     ):
         """Envelope Q-Learning implementation, see
@@ -185,15 +183,12 @@ class EnvelopeQLearning:
             A graph environment.
         ctx: GraphBuildingEnvContext
             A context.
-        rng: np.random.RandomState
-            rng used to take random actions
         cfg: Config
             The experiment configuration
         """
         self.ctx = ctx
         self.env = env
         self.task = task
-        self.rng = rng
         self.max_len = cfg.algo.max_len
         self.max_nodes = cfg.algo.max_nodes
         self.illegal_action_logreward = cfg.algo.illegal_action_logreward
@@ -208,7 +203,7 @@ class EnvelopeQLearning:
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
-        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, rng, self.sample_temp)
+        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, self.sample_temp)
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
@@ -236,7 +231,7 @@ class EnvelopeQLearning:
         """
         dev = get_worker_device()
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, random_action_prob)
         return data
 
     def create_training_data_from_graphs(self, graphs):
@@ -319,7 +314,7 @@ class EnvelopeQLearning:
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
-        # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
+        # Forward pass of the model, returns a GraphActionCategorical and per graph predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         # Q(s,a,omega)
         fwd_cat, per_state_preds = model(batch, cond_info[batch_idx], output_Qs=True)
@@ -383,7 +378,7 @@ class EnvelopeQLearning:
         shifted_Q_pareto = self.gamma * torch.cat([Q_pareto[1:], torch.zeros_like(Q_pareto[:1])], dim=0)
         # Replace Q(s_T) with R(tau). Since we've shifted the values in the array, Q(s_T) is Q(s_0)
         # of the next trajectory in the array, and rewards are terminal (0 except at s_T).
-        shifted_Q_pareto[final_graph_idx] = batch.flat_rewards + ((1 - batch.is_valid) * self.invalid_penalty)[:, None]
+        shifted_Q_pareto[final_graph_idx] = batch.obj_props + ((1 - batch.is_valid) * self.invalid_penalty)[:, None]
         y = shifted_Q_pareto.detach()
 
         # We now use the same log_prob trick to get Q(s,a,w)

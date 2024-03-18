@@ -125,9 +125,9 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
     def is_sane(self, g: Graph) -> bool:
         return True
 
-    def graph_to_mol(self, g: Graph):
+    def graph_to_obj(self, g: Graph):
         s: Seq = g  # type: ignore
         return "".join(self.alphabet[int(i)] for i in s.seq)
 
     def object_to_log_repr(self, g: Graph):
-        return self.graph_to_mol(g)
+        return self.graph_to_obj(g)

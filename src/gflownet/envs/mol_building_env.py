@@ -397,7 +397,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         """Batch Data instances"""
         return gd.Batch.from_data_list(graphs, follow_batch=["edge_index", "non_edge_index"])
 
-    def mol_to_graph(self, mol: Mol) -> Graph:
+    def obj_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
         g = Graph()
         mol = Mol(mol)  # Make a copy
@@ -428,7 +428,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             )
         return g
 
-    def graph_to_mol(self, g: Graph) -> Mol:
+    def graph_to_obj(self, g: Graph) -> Mol:
         mp = Chem.RWMol()
         mp.BeginBatchEdit()
         for i in range(len(g.nodes)):
@@ -456,7 +456,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def is_sane(self, g: Graph) -> bool:
         try:
-            mol = self.graph_to_mol(g)
+            mol = self.graph_to_obj(g)
         except Exception:
             return False
         if mol is None:
@@ -466,7 +466,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
     def object_to_log_repr(self, g: Graph):
         """Convert a Graph to a string representation"""
         try:
-            mol = self.graph_to_mol(g)
+            mol = self.graph_to_obj(g)
             assert mol is not None
             return Chem.MolToSmiles(mol)
         except Exception:

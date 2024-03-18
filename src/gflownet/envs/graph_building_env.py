@@ -11,7 +11,6 @@ import numpy as np
 import torch
 import torch_geometric.data as gd
 from networkx.algorithms.isomorphism import is_isomorphic
-from rdkit.Chem import Mol
 from torch_scatter import scatter, scatter_max
 
 
@@ -861,6 +860,7 @@ class GraphBuildingEnvContext:
 
     device: torch.device
     action_type_order: List[GraphActionType]
+    bck_action_type_order: List[GraphActionType]
 
     def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
@@ -943,19 +943,18 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def mol_to_graph(self, mol: Mol) -> Graph:
-        """Verifies whether a graph is sane according to the context. This can
-        catch, e.g. impossible molecules.
+    def obj_to_graph(self, obj: Any) -> Graph:
+        """Converts a native object into a generic Graph that the environment can handle
 
         Parameters
         ----------
-        mol: Mol
-            An RDKit molecule
+        obj: Any
+            An object
 
         Returns
         -------
         g: Graph
-            The corresponding Graph representation of that molecule.
+            The corresponding Graph representation of that object.
         """
         raise NotImplementedError()
 
@@ -964,6 +963,10 @@ class GraphBuildingEnvContext:
         return json.dumps(
             [[(i, g.nodes[i]) for i in g.nodes], [(e, g.edges[e]) for e in g.edges]], separators=(",", ":")
         )
+
+    def graph_to_obj(self, g: Graph) -> Any:
+        """Convert a graph back to an object"""
+        raise NotImplementedError()
 
     def has_n(self) -> bool:
         return False

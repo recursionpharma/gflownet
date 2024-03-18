@@ -31,10 +31,10 @@ class QM9Dataset(Dataset):
             self.idcs = idcs[: int(np.floor(ratio * len(self.df)))]
         else:
             self.idcs = idcs[int(np.floor(ratio * len(self.df))) :]
-        self.mol_to_graph = lambda x: x
+        self.obj_to_graph = lambda x: x
 
     def setup(self, task, ctx):
-        self.mol_to_graph = ctx.mol_to_graph
+        self.obj_to_graph = ctx.obj_to_graph
 
     def get_stats(self, target=None, percentile=0.95):
         if target is None:
@@ -47,7 +47,7 @@ class QM9Dataset(Dataset):
 
     def __getitem__(self, idx):
         return (
-            self.mol_to_graph(Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]])),
+            self.obj_to_graph(Chem.MolFromSmiles(self.df["SMILES"][self.idcs[idx]])),
             torch.tensor([self.df[t][self.idcs[idx]] for t in self.targets]).float(),
         )
 

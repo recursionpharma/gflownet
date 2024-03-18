@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 import gflownet.models.mxmnet as mxmnet
-from gflownet import FlatRewards, GFNTask, RewardScalar
+from gflownet import GFNTask, LogScalar, ObjectProperties
 from gflownet.config import Config, init_empty
 from gflownet.data.qm9 import QM9Dataset
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
@@ -26,22 +26,20 @@ class QM9GapTask(GFNTask):
         self,
         dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self._wrap_model = wrap_model
-        self.rng = rng
         self.device = get_worker_device()
         self.models = self.load_task_models(cfg.task.qm9.model_path)
         self.dataset = dataset
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
         # TODO: fix interface
         self._min, self._max, self._percentile_95 = self.dataset.get_stats("gap", percentile=0.05)  # type: ignore
         self._width = self._max - self._min
         self._rtrans = "unit+95p"  # TODO: hyperparameter
 
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
+    def reward_transform(self, y: Union[float, Tensor]) -> ObjectProperties:
         """Transforms a target quantity y (e.g. the LUMO energy in QM9) to a positive reward scalar"""
         if self._rtrans == "exp":
             flat_r = np.exp(-(y - self._min) / self._width)
@@ -52,9 +50,9 @@ class QM9GapTask(GFNTask):
             flat_r = 1 - (y - self._percentile_95) / self._width
         else:
             raise ValueError(self._rtrans)
-        return FlatRewards(flat_r)
+        return ObjectProperties(flat_r)
 
-    def inverse_flat_reward_transform(self, rp):
+    def inverse_reward_transform(self, rp):
         if self._rtrans == "exp":
             return -np.log(rp) * self._width + self._min
         elif self._rtrans == "unit":
@@ -66,7 +64,7 @@ class QM9GapTask(GFNTask):
         gap_model = mxmnet.MXMNet(mxmnet.Config(128, 6, 5.0))
         # TODO: this path should be part of the config?
         try:
-            state_dict = torch.load(path)
+            state_dict = torch.load(path, map_location=self.device)
         except Exception as e:
             print(
                 "Could not load model.",
@@ -82,8 +80,8 @@ class QM9GapTask(GFNTask):
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
-        return RewardScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: ObjectProperties) -> LogScalar:
+        return LogScalar(self.temperature_conditional.transform(cond_info, to_logreward(flat_reward)))
 
     def compute_reward_from_graph(self, graphs: List[gd.Data]) -> Tensor:
         batch = gd.Batch.from_data_list([i for i in graphs if i is not None])
@@ -93,7 +91,7 @@ class QM9GapTask(GFNTask):
         preds = self.models["mxmnet_gap"](batch).reshape((-1,)).data.cpu() / mxmnet.HAR2EV  # type: ignore[attr-defined]
         preds[preds.isnan()] = 1
         preds = (
-            self.flat_reward_transform(preds)
+            self.reward_transform(preds)
             .clip(1e-4, 2)
             .reshape(
                 -1,
@@ -101,15 +99,15 @@ class QM9GapTask(GFNTask):
         )
         return preds
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, mols: List[RDMol]) -> Tuple[ObjectProperties, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         is_valid = torch.tensor([i is not None for i in graphs]).bool()
         if not is_valid.any():
-            return FlatRewards(torch.zeros((0, 1))), is_valid
+            return ObjectProperties(torch.zeros((0, 1))), is_valid
 
         preds = self.compute_reward_from_graph(graphs).reshape((-1, 1))
         assert len(preds) == is_valid.sum()
-        return FlatRewards(preds), is_valid
+        return ObjectProperties(preds), is_valid
 
 
 class QM9GapTrainer(StandardOnlineTrainer):
@@ -159,7 +157,6 @@ class QM9GapTrainer(StandardOnlineTrainer):
         self.task = QM9GapTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 

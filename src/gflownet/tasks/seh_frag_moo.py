@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -8,9 +8,9 @@ import torch_geometric.data as gd
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem.rdchem import Mol as RDMol
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from gflownet import FlatRewards, RewardScalar
+from gflownet import LogScalar, ObjectProperties
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config, init_empty
@@ -63,19 +63,16 @@ class SEHMOOTask(SEHTask):
 
     def __init__(
         self,
-        dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
-        wrap_model: Callable[[nn.Module], nn.Module] = None,
+        wrap_model: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
-        super().__init__(dataset, cfg, rng, wrap_model)
+        super().__init__(cfg, wrap_model)
         self.cfg = cfg
         mcfg = self.cfg.task.seh_moo
         self.objectives = cfg.task.seh_moo.objectives
         cfg.cond.moo.num_objectives = len(self.objectives)  # This value is used by the focus_cond and pref_cond
-        self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
-            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
+            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid)
         else:
             self.focus_cond = None
         self.pref_cond = MultiObjectiveWeightedPreferences(self.cfg)
@@ -88,9 +85,6 @@ class SEHMOOTask(SEHTask):
             + (self.focus_cond.encoding_size() if self.focus_cond is not None else 0)
         )
         assert set(self.objectives) <= {"seh", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
-
-    def inverse_flat_reward_transform(self, rp):
-        return rp
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
@@ -144,7 +138,7 @@ class SEHMOOTask(SEHTask):
         }
 
     def relabel_condinfo_and_logrewards(
-        self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: FlatRewards, hindsight_idxs: Tensor
+        self, cond_info: Dict[str, Tensor], log_rewards: Tensor, obj_props: ObjectProperties, hindsight_idxs: Tensor
     ):
         # TODO: we seem to be relabeling tensors in place, could that cause a problem?
         if self.focus_cond is None:
@@ -153,13 +147,13 @@ class SEHMOOTask(SEHTask):
             return cond_info, log_rewards
         # only keep hindsight_idxs that actually correspond to a violated constraint
         _, in_focus_mask = metrics.compute_focus_coef(
-            flat_rewards, cond_info["focus_dir"], self.focus_cond.cfg.focus_cosim
+            obj_props, cond_info["focus_dir"], self.focus_cond.cfg.focus_cosim
         )
         out_focus_mask = torch.logical_not(in_focus_mask)
         hindsight_idxs = hindsight_idxs[out_focus_mask[hindsight_idxs]]
 
         # relabels the focus_dirs and log_rewards
-        cond_info["focus_dir"][hindsight_idxs] = nn.functional.normalize(flat_rewards[hindsight_idxs], dim=1)
+        cond_info["focus_dir"][hindsight_idxs] = nn.functional.normalize(obj_props[hindsight_idxs], dim=1)
 
         preferences_enc = self.pref_cond.encode(cond_info["preferences"])
         focus_enc = self.focus_cond.encode(cond_info["focus_dir"])
@@ -167,13 +161,15 @@ class SEHMOOTask(SEHTask):
             [cond_info["encoding"][:, : self.num_thermometer_dim], preferences_enc, focus_enc], 1
         )
 
-        log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
+        log_rewards = self.cond_info_to_logreward(cond_info, obj_props)
         return cond_info, log_rewards
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:
         """
-        Compute the logreward from the flat_reward and the conditional information
+        Compute the logreward from the object properties, which we interpret as each objective, and the conditional
+        information
         """
+        flat_reward = obj_props
         if isinstance(flat_reward, list):
             if isinstance(flat_reward[0], Tensor):
                 flat_reward = torch.stack(flat_reward)
@@ -183,22 +179,22 @@ class SEHMOOTask(SEHTask):
         scalarized_rewards = self.pref_cond.transform(cond_info, flat_reward)
         scalarized_logrewards = to_logreward(scalarized_rewards)
         focused_logreward = (
-            self.focus_cond.transform(cond_info, flat_reward, scalarized_logrewards)
+            self.focus_cond.transform(cond_info, (flat_reward, scalarized_logrewards))
             if self.focus_cond is not None
             else scalarized_logrewards
         )
         tempered_logreward = self.temperature_conditional.transform(cond_info, focused_logreward)
         clamped_logreward = tempered_logreward.clamp(min=self.cfg.algo.illegal_action_logreward)
 
-        return RewardScalar(clamped_logreward)
+        return LogScalar(clamped_logreward)
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, mols: List[RDMol]) -> Tuple[ObjectProperties, Tensor]:
         graphs = [bengio2021flow.mol2graph(i) for i in mols]
         assert len(graphs) == len(mols)
         is_valid = [i is not None for i in graphs]
         is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
         if not any(is_valid):
-            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
+            return ObjectProperties(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
             for obj in self.objectives:
@@ -209,7 +205,7 @@ class SEHMOOTask(SEHTask):
 
             flat_rewards = torch.stack(flat_r, dim=1)
             assert flat_rewards.shape[0] == len(mols)
-            return FlatRewards(flat_rewards), is_valid_t
+            return ObjectProperties(flat_rewards), is_valid_t
 
 
 class SEHMOOFragTrainer(SEHFragTrainer):
@@ -227,9 +223,9 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_algo(self):
         algo = self.cfg.algo.method
         if algo == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.cfg)
         elif algo == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.cfg)
         else:
             super().setup_algo()
 
@@ -238,7 +234,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
         self.task = SEHMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 

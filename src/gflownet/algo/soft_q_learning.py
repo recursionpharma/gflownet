@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -16,7 +15,6 @@ class SoftQLearning:
         self,
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
-        rng: np.random.RandomState,
         cfg: Config,
     ):
         """Soft Q-Learning implementation, see
@@ -32,14 +30,11 @@ class SoftQLearning:
             A graph environment.
         ctx: GraphBuildingEnvContext
             A context.
-        rng: np.random.RandomState
-            rng used to take random actions
         cfg: Config
             The experiment configuration
         """
         self.ctx = ctx
         self.env = env
-        self.rng = rng
         self.max_len = cfg.algo.max_len
         self.max_nodes = cfg.algo.max_nodes
         self.illegal_action_logreward = cfg.algo.illegal_action_logreward
@@ -50,7 +45,7 @@ class SoftQLearning:
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
-        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, rng, self.sample_temp)
+        self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, self.sample_temp)
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
@@ -78,7 +73,7 @@ class SoftQLearning:
         """
         dev = get_worker_device()
         cond_info = cond_info.to(dev)
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, dev, random_action_prob)
+        data = self.graph_sampler.sample_from_model(model, n, cond_info, random_action_prob)
         return data
 
     def create_training_data_from_graphs(self, graphs):
@@ -149,7 +144,7 @@ class SoftQLearning:
         # The position of the last graph of each trajectory
         final_graph_idx = torch.cumsum(batch.traj_lens, 0) - 1
 
-        # Forward pass of the model, returns a GraphActionCategorical and per molecule predictions
+        # Forward pass of the model, returns a GraphActionCategorical and per object predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         Q, per_state_preds = model(batch, cond_info[batch_idx])
 

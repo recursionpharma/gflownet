@@ -1,5 +1,4 @@
 import networkx as nx
-import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -39,10 +38,9 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         self,
         env: GraphBuildingEnv,
         ctx: GraphBuildingEnvContext,
-        rng: np.random.RandomState,
         cfg: Config,
     ):
-        super().__init__(env, ctx, rng, cfg)
+        super().__init__(env, ctx, cfg)
         self.fm_epsilon = torch.as_tensor(cfg.algo.fm.epsilon).log()
         # We include the "balanced loss" as a possibility to reproduce results from the FM paper, but
         # in a number of settings the regular loss is more stable.

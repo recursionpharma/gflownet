@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 import gflownet.models.mxmnet as mxmnet
-from gflownet import FlatRewards, RewardScalar
+from gflownet import LogScalar, ObjectProperties
 from gflownet.algo.envelope_q_learning import EnvelopeQLearning, GraphTransformerFragEnvelopeQL
 from gflownet.algo.multiobjective_reinforce import MultiObjectiveReinforce
 from gflownet.config import Config
@@ -40,17 +40,16 @@ class QM9GapMOOTask(QM9GapTask):
         self,
         dataset: Dataset,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
-        super().__init__(dataset, cfg, rng, wrap_model)
+        super().__init__(dataset, cfg, wrap_model)
         self.cfg = cfg
         mcfg = self.cfg.task.qm9_moo
         self.objectives = cfg.task.qm9_moo.objectives
         cfg.cond.moo.num_objectives = len(self.objectives)
         self.dataset = dataset
         if self.cfg.cond.focus_region.focus_type is not None:
-            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid, rng)
+            self.focus_cond = FocusRegionConditional(self.cfg, mcfg.n_valid)
         else:
             self.focus_cond = None
         self.pref_cond = MultiObjectiveWeightedPreferences(self.cfg)
@@ -64,10 +63,10 @@ class QM9GapMOOTask(QM9GapTask):
         )
         assert set(self.objectives) <= {"gap", "qed", "sa", "mw"} and len(self.objectives) == len(set(self.objectives))
 
-    def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
-        return FlatRewards(torch.as_tensor(y))
+    def reward_transform(self, y: Union[float, Tensor]) -> ObjectProperties:
+        return ObjectProperties(torch.as_tensor(y))
 
-    def inverse_flat_reward_transform(self, rp):
+    def inverse_reward_transform(self, rp):
         return rp
 
     def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
@@ -122,7 +121,7 @@ class QM9GapMOOTask(QM9GapTask):
         }
 
     def relabel_condinfo_and_logrewards(
-        self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: FlatRewards, hindsight_idxs: Tensor
+        self, cond_info: Dict[str, Tensor], log_rewards: Tensor, flat_rewards: ObjectProperties, hindsight_idxs: Tensor
     ):
         # TODO: we seem to be relabeling tensors in place, could that cause a problem?
         if self.focus_cond is None:
@@ -148,7 +147,7 @@ class QM9GapMOOTask(QM9GapTask):
         log_rewards = self.cond_info_to_logreward(cond_info, flat_rewards)
         return cond_info, log_rewards
 
-    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
+    def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: ObjectProperties) -> LogScalar:
         """
         Compute the logreward from the flat_reward and the conditional information
         """
@@ -161,23 +160,23 @@ class QM9GapMOOTask(QM9GapTask):
         scalarized_rewards = self.pref_cond.transform(cond_info, flat_reward)
         scalarized_logrewards = to_logreward(scalarized_rewards)
         focused_logreward = (
-            self.focus_cond.transform(cond_info, flat_reward, scalarized_logrewards)
+            self.focus_cond.transform(cond_info, (flat_reward, scalarized_logrewards))
             if self.focus_cond is not None
             else scalarized_logrewards
         )
         tempered_logreward = self.temperature_conditional.transform(cond_info, focused_logreward)
         clamped_logreward = tempered_logreward.clamp(min=self.cfg.algo.illegal_action_logreward)
 
-        return RewardScalar(clamped_logreward)
+        return LogScalar(clamped_logreward)
 
-    def compute_flat_rewards(self, mols: List[RDMol]) -> Tuple[FlatRewards, Tensor]:
+    def compute_obj_properties(self, mols: List[RDMol]) -> Tuple[ObjectProperties, Tensor]:
         graphs = [mxmnet.mol2graph(i) for i in mols]  # type: ignore[attr-defined]
         assert len(graphs) == len(mols)
         is_valid = [i is not None for i in graphs]
         is_valid_t = torch.tensor(is_valid, dtype=torch.bool)
 
         if not any(is_valid):
-            return FlatRewards(torch.zeros((0, len(self.objectives)))), is_valid_t
+            return ObjectProperties(torch.zeros((0, len(self.objectives)))), is_valid_t
         else:
             flat_r: List[Tensor] = []
             for obj in self.objectives:
@@ -188,7 +187,7 @@ class QM9GapMOOTask(QM9GapTask):
 
             flat_rewards = torch.stack(flat_r, dim=1)
             assert flat_rewards.shape[0] == is_valid_t.sum()
-            return FlatRewards(flat_rewards), is_valid_t
+            return ObjectProperties(flat_rewards), is_valid_t
 
 
 class QM9MOOTrainer(QM9GapTrainer):
@@ -204,9 +203,9 @@ class QM9MOOTrainer(QM9GapTrainer):
     def setup_algo(self):
         algo = self.cfg.algo.method
         if algo == "MOREINFORCE":
-            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.rng, self.cfg)
+            self.algo = MultiObjectiveReinforce(self.env, self.ctx, self.cfg)
         elif algo == "MOQL":
-            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.rng, self.cfg)
+            self.algo = EnvelopeQLearning(self.env, self.ctx, self.task, self.cfg)
         else:
             super().setup_algo()
 
@@ -214,7 +213,6 @@ class QM9MOOTrainer(QM9GapTrainer):
         self.task = QM9GapMOOTask(
             dataset=self.training_data,
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 

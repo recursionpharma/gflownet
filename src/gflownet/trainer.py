@@ -1,4 +1,5 @@
 import gc
+import logging
 import os
 import pathlib
 import shutil
@@ -21,7 +22,7 @@ from gflownet.data.data_source import DataSource
 from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
-from gflownet.utils.misc import create_logger, set_main_process_device
+from gflownet.utils.misc import create_logger, set_main_process_device, set_worker_rng_seed
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
 
@@ -114,7 +115,7 @@ class GFNTrainer:
         os.makedirs(self.cfg.log_dir)
 
         RDLogger.DisableLog("rdApp.*")
-        self.rng = np.random.default_rng(142857)
+        set_worker_rng_seed(self.cfg.seed)
         self.env = GraphBuildingEnv()
         self.setup_data()
         self.setup_task()
@@ -318,7 +319,7 @@ class GFNTrainer:
                             v = v.item()
                         final_info[k].append(v)
                 if it % self.print_every == 0:
-                    logger.info(f"Generating mols {it - num_training_steps}/{num_final_gen_steps}")
+                    logger.info(f"Generating objs {it - num_training_steps}/{num_final_gen_steps}")
             final_info = {k: np.mean(v) for k, v in final_info.items()}
 
             logger.info("Final generation steps completed - " + " ".join(f"{k}:{v:.2f}" for k, v in final_info.items()))
@@ -331,6 +332,10 @@ class GFNTrainer:
             del final_dl
 
     def terminate(self):
+        logger = logging.getLogger("logger")
+        for handler in logger.handlers:
+            handler.close()
+
         for hook in self.sampling_hooks:
             if hasattr(hook, "terminate") and hook.terminate not in self.to_terminate:
                 hook.terminate()
