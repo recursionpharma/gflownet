@@ -1,6 +1,6 @@
 import abc
 from copy import deepcopy
-from typing import Dict, Generic, TypeVar, Optional
+from typing import Dict, Generic, Optional, TypeVar
 
 import numpy as np
 import torch

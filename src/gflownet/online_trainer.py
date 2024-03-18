@@ -103,8 +103,10 @@ class StandardOnlineTrainer(GFNTrainer):
         }[self.cfg.opt.clip_grad_type]
 
         # saving hyperparameters
-        git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
-        self.cfg.git_hash = git_hash
+        try:
+            self.cfg.git_hash = git.Repo(__file__, search_parent_directories=True).head.object.hexsha[:7]
+        except git.InvalidGitRepositoryError:
+            self.cfg.git_hash = "unknown"  # May not have been installed through git
 
         yaml_cfg = OmegaConf.to_yaml(self.cfg)
         if self.print_config:

@@ -8,7 +8,7 @@ from torch import Tensor
 
 from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionCategorical, GraphActionType
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.utils.misc import get_worker_rng, get_worker_device
+from gflownet.utils.misc import get_worker_device, get_worker_rng
 
 
 def relabel(g: Graph, ga: GraphAction):
