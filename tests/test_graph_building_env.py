@@ -17,7 +17,7 @@ def make_test_cat():
     cat = GraphActionCategorical(
         # Let's use arange to have different logit values
         batch,
-        logits=[
+        raw_logits=[
             torch.arange(3).reshape((3, 1)).float(),
             torch.arange(6 * 4).reshape((6, 4)).float(),
             torch.arange(2 * 3).reshape((2, 3)).float(),

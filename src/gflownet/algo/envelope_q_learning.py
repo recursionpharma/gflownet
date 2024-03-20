@@ -75,9 +75,10 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
                 + self.mask_value * (1 - m[:, :, None])
             ).reshape(x.shape)
 
+        masks = [1, g.add_node_mask, g.set_edge_attr_mask]
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 F.relu(self.emb2stop(graph_embeddings)),
                 _mask(F.relu(self.emb2add_node(node_embeddings)), g.add_node_mask),
                 _mask_obj(F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)), g.set_edge_attr_mask),
@@ -134,7 +135,7 @@ class GraphTransformerEnvelopeQL(nn.Module):
         e_row, e_col = g.edge_index[:, ::2]
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 self.emb2stop(graph_embeddings),
                 self.emb2add_node(node_embeddings),
                 self.emb2set_node_attr(node_embeddings),

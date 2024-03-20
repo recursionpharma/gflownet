@@ -1,13 +1,16 @@
 from itertools import chain
 
+from typing import Dict
+
 import torch
+from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
 from torch_geometric.utils import add_self_loops
 
 from gflownet.config import Config
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnvContext
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -168,9 +171,11 @@ class GraphTransformerGFN(nn.Module):
         "edge": "edge_index",
     }
 
+    action_type_to_key = lambda action_type: GraphTransformerGFN._graph_part_to_key.get(GraphTransformerGFN._action_type_to_graph_part.get(action_type))
+
     def __init__(
         self,
-        env_ctx,
+        env_ctx: GraphBuildingEnvContext,
         cfg: Config,
         num_graph_out=1,
         do_bck=False,
@@ -186,6 +191,7 @@ class GraphTransformerGFN(nn.Module):
             num_heads=cfg.model.graph_transformer.num_heads,
             ln_type=cfg.model.graph_transformer.ln_type,
         )
+        self.env_ctx = env_ctx
         num_emb = cfg.model.num_emb
         num_final = num_emb
         num_glob_final = num_emb * 2
@@ -226,24 +232,12 @@ class GraphTransformerGFN(nn.Module):
         # TODO: flag for this
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
 
-    def _action_type_to_mask(self, t, g):
-        return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)
-
-    def _action_type_to_logit(self, t, emb, g):
-        logits = self.mlps[t.cname](emb[self._action_type_to_graph_part[t]])
-        return self._mask(logits, self._action_type_to_mask(t, g))
-
-    def _mask(self, x, m):
-        # mask logit vector x with binary mask m, -1000 is a tiny log-value
-        # Note to self: we can't use torch.inf here, because inf * 0 is nan (but also see issue #99)
-        return x * m + -1000 * (1 - m)
-
-    def _make_cat(self, g, emb, action_types):
+    def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType]):
         return GraphActionCategorical(
             g,
-            logits=[self._action_type_to_logit(t, emb, g) for t in action_types],
+            raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types],
-            masks=[self._action_type_to_mask(t, g) for t in action_types],
+            masks=[self.env_ctx.action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
 

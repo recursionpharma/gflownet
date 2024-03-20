@@ -79,6 +79,8 @@ class GraphSampler:
             Conditional information of each trajectory, shape (n, n_info)
         dev: torch.device
             Device on which data is manipulated
+        random_action_prob: float
+            Probability of taking a random action at each step
 
         Returns
         -------
@@ -92,17 +94,17 @@ class GraphSampler:
         # This will be returned
         data = [{"traj": [], "reward_pred": None, "is_valid": True, "is_sink": []} for i in range(n)]
         # Let's also keep track of trajectory statistics according to the model
-        fwd_logprob: List[List[Tensor]] = [[] for i in range(n)]
-        bck_logprob: List[List[Tensor]] = [[] for i in range(n)]
+        fwd_logprob: List[List[Tensor]] = [[] for _ in range(n)]
+        bck_logprob: List[List[Tensor]] = [[] for _ in range(n)]
 
-        graphs = [self.env.new() for i in range(n)]
-        done = [False] * n
+        graphs = [self.env.new() for _ in range(n)]
+        done = [False for _ in range(n)]
         # TODO: instead of padding with Stop, we could have a virtual action whose probability
         # always evaluates to 1. Presently, Stop should convert to a (0,0,0) ActionIndex, which should
         # always be at least a valid index, and will be masked out anyways -- but this isn't ideal.
         # Here we have to pad the backward actions with something, since the backward actions are
         # evaluated at s_{t+1} not s_t.
-        bck_a = [[GraphAction(GraphActionType.Stop)] for i in range(n)]
+        bck_a = [[GraphAction(GraphActionType.Stop)] for _ in range(n)]
 
         def not_done(lst):
             return [e for i, e in enumerate(lst) if not done[i]]
@@ -259,15 +261,11 @@ class GraphSampler:
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order
-                masks = [getattr(gbatch, i.mask_name) for i in action_types]
+                masks = [self.ctx.action_type_to_mask(t, g, assert_mask_exists=True) for t in action_types]
                 bck_cat = GraphActionCategorical(
                     gbatch,
-                    logits=[m * 1e6 for m in masks],
-                    keys=[
-                        # TODO: This is not very clean, could probably abstract this away somehow
-                        GraphTransformerGFN._graph_part_to_key[GraphTransformerGFN._action_type_to_graph_part[t]]
-                        for t in action_types
-                    ],
+                    raw_logits=[torch.ones_like(m) for m in masks],
+                    keys=[GraphTransformerGFN.action_type_to_key(t) for t in action_types],
                     masks=masks,
                     types=action_types,
                 )

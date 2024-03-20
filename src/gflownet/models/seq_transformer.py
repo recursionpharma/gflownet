@@ -108,7 +108,7 @@ class SeqTransformerGFN(nn.Module):
         return (
             GraphActionCategorical(
                 xs,
-                logits=[stop_logits, add_node_logits],
+                raw_logits=[stop_logits, add_node_logits],
                 keys=[None, None],
                 types=self.ctx.action_type_order,
                 slice_dict={},

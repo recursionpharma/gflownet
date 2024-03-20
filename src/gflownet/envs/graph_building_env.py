@@ -471,7 +471,7 @@ class GraphActionCategorical:
     def __init__(
         self,
         graphs: gd.Batch,
-        logits: List[torch.Tensor],
+        raw_logits: List[torch.Tensor],
         keys: List[Union[str, None]],
         types: List[GraphActionType],
         deduplicate_edge_index=True,
@@ -493,8 +493,8 @@ class GraphActionCategorical:
         ----------
         graphs: Batch
             A Batch of graphs to which the logits correspond
-        logits: List[Tensor]
-            A list of tensors of shape `(n, m)` representing logits
+        raw_logits: List[Tensor]
+            A list of tensors of shape `(n, m)` representing raw (unmasked) logits
             over a variable number of graph elements (e.g. nodes) for
             which there are `m` possible actions. `n` should thus be
             equal to the sum of the number of such elements for each
@@ -516,29 +516,30 @@ class GraphActionCategorical:
             If true, this means that the 'edge_index' keys have been reduced
             by e_i[::2] (presumably because the graphs are undirected)
         masks: List[Tensor], default=None
-            If not None, a list of broadcastable tensors that multiplicatively
+            If not None, a list of broadcastable tensors that
             mask out logits of invalid actions
         slice_dist: Optional[dict[str, Tensor]], default=None
             If not None, a map of tensors that indicate the start (and end) the graph index
             of each object keyed. If None, uses the `_slice_dict` attribute of the graphs.
         """
         self.num_graphs = graphs.num_graphs
-        assert all([i.ndim == 2 for i in logits])
-        assert len(logits) == len(types) == len(keys)
+        assert all([i.ndim == 2 for i in raw_logits])
+        assert len(raw_logits) == len(types) == len(keys)
         if masks is not None:
-            assert len(logits) == len(masks)
+            assert len(raw_logits) == len(masks)
             assert all([i.ndim == 2 for i in masks])
         # The logits
-        self.logits = logits
+        self.raw_logits = raw_logits
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
         self._epsilon = 1e-38
         # TODO: mask is only used by graph_sampler, but maybe we should be more careful with it
         # (e.g. in a softmax and such)
-        # Can be set to indicate which logits are masked out (shape must match logits or have
+        # Can be set to indicate which raw_logits are masked out (shape must match raw_logits or have
         # broadcast dimensions already set)
         self.masks: List[Any] = masks
+        self._apply_masks()
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
@@ -574,9 +575,28 @@ class GraphActionCategorical:
                 self.batch[idx] = self.batch[idx][::2]
                 self.slice[idx] = self.slice[idx].div(2, rounding_mode="floor")
 
+    @property
+    def logits(self):
+        return self._masked_logits
+    
+    @logits.setter
+    def logits(self, new_raw_logits):
+        self.raw_logits = new_raw_logits
+        self._apply_masks()
+
+    def _apply_masks(self):
+        self._masked_logits = [self._mask(logits, mask) for logits, mask in zip(self.raw_logits, self.masks)] if self.masks is not None else self.raw_logits
+
+    def _mask(self, x, m):
+        """
+        mask logit vector x with binary mask m, -1000 is a tiny log-value
+        Note to self: we can't use torch.inf here, because inf * 0 is nan
+        """
+        return x * m + -1000 * (1 - m)
+
     def detach(self):
         new = copy.copy(self)
-        new.logits = [i.detach() for i in new.logits]
+        new._masked_logits = [i.detach() for i in new._masked_logits]
         if new.logprobs is not None:
             new.logprobs = [i.detach() for i in new.logprobs]
         if new.log_n is not None:
@@ -585,7 +605,7 @@ class GraphActionCategorical:
 
     def to(self, device):
         self.dev = device
-        self.logits = [i.to(device) for i in self.logits]
+        self._masked_logits = [i.to(device) for i in self._masked_logits]
         self.batch = [i.to(device) for i in self.batch]
         self.slice = [i.to(device) for i in self.slice]
         if self.logprobs is not None:
@@ -602,7 +622,7 @@ class GraphActionCategorical:
                 sum(
                     [
                         scatter(m.broadcast_to(i.shape).int().sum(1), b, dim=0, dim_size=self.num_graphs, reduce="sum")
-                        for m, i, b in zip(self.masks, self.logits, self.batch)
+                        for m, i, b in zip(self.masks, self._masked_logits, self.batch)
                     ]
                 )
                 .clamp(1)
@@ -624,7 +644,7 @@ class GraphActionCategorical:
         Parameters
         ----------
         x: List[torch.Tensor]
-            A list of tensors of shape `(n, m)` (e.g. representing logits)
+            A list of tensors of shape `(n, m)` (e.g. representing _masked_logits)
         detach: bool, default=True
             If true, detach the tensors before computing the max
         batch: List[torch.Tensor], default=None
@@ -659,10 +679,10 @@ class GraphActionCategorical:
         if self.logprobs is not None:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors.
-        maxl = self._compute_batchwise_max(self.logits).values
+        maxl = self._compute_batchwise_max(self._masked_logits).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
+        corr_logits = [(i - maxl[b, None]) for i, b in zip(self._masked_logits, self.batch)]
         exp_logits = [i.exp().clamp(self._epsilon) for i, b in zip(corr_logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z') = log(Z - max) = log(sum(exp(logits - max)))
         logZ = sum(
@@ -676,15 +696,15 @@ class GraphActionCategorical:
         return self.logprobs
 
     def logsumexp(self, x=None):
-        """Reduces `x` (the logits by default) to one scalar per graph"""
+        """Reduces `x` (the _masked_logits by default) to one scalar per graph"""
         if x is None:
-            x = self.logits
+            x = self._masked_logits
         # Use the `subtract by max` trick to avoid precision errors.
         maxl = self._compute_batchwise_max(x).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
-        # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
+        # sum corrected exponentiated _masked_logits, to get log(Z - max) = log(sum(exp(_masked_logits)) - max)
         reduction = sum(
             [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1) for i, b in zip(exp_vals, self.batch)]
         ).log()
