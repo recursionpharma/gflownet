@@ -1,5 +1,5 @@
 import socket
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -29,7 +29,7 @@ class ToySeqTask(GFNTask):
         self.num_cond_dim = self.temperature_conditional.encoding_size()
         self.norm = cfg.algo.max_len / min(map(len, seqs))
 
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: Optional[int] = None) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:

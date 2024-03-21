@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union, Optional
 
 import numpy as np
 import torch
@@ -79,7 +79,7 @@ class QM9GapTask(GFNTask):
         gap_model = self._wrap_model(gap_model)
         return {"mxmnet_gap": gap_model}
 
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: Optional[int] = None) -> Dict[str, Tensor]:
         return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:
