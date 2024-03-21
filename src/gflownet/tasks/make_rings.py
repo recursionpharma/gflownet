@@ -1,5 +1,5 @@
 import socket
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 
 import numpy as np
 import torch
@@ -25,7 +25,7 @@ class MakeRingsTask(GFNTask):
     def flat_reward_transform(self, y: Union[float, Tensor]) -> FlatRewards:
         return FlatRewards(y)
 
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: Optional[int] = None) -> Dict[str, Tensor]:
         return {"beta": torch.ones(n), "encoding": torch.ones(n, 1)}
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: FlatRewards) -> RewardScalar:

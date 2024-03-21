@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -92,7 +92,7 @@ class SEHMOOTask(SEHTask):
     def inverse_flat_reward_transform(self, rp):
         return rp
 
-    def sample_conditional_information(self, n: int, train_it: int) -> Dict[str, Tensor]:
+    def sample_conditional_information(self, n: int, train_it: Optional[int] = None) -> Dict[str, Tensor]:
         cond_info = super().sample_conditional_information(n, train_it)
         pref_ci = self.pref_cond.sample(n)
         focus_ci = (
@@ -250,6 +250,7 @@ class SEHMOOFragTrainer(SEHFragTrainer):
                 num_layers=self.cfg.model.num_layers,
                 num_heads=self.cfg.model.graph_transformer.num_heads,
                 num_objectives=len(self.cfg.task.seh_moo.objectives),
+                
             )
         else:
             super().setup_model()
@@ -395,6 +396,7 @@ def main():
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.print_every = 1
     config.validate_every = 1
+    config.algo.num_from_policy = 13
     config.num_final_gen_steps = 5
     config.num_training_steps = 3
     config.pickle_mp_messages = True
