@@ -294,7 +294,8 @@ class GFNTrainer:
             batch = self._maybe_resolve_shared_buffer(batch, train_dl)
             t1 = time.time()
             times.append(t1 - t0)
-            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s, average wait: {np.mean(wtimes):.2f} s")
+            peak_cuda_mem = int(torch.cuda.max_memory_reserved() / 1024 ** 2)
+            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s, average wait: {np.mean(wtimes):.2f} s, peak VRAM: {peak_cuda_mem}Mb")
             t0 = t1
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
