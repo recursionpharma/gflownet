@@ -143,6 +143,11 @@ class DataSource(IterableDataset):
         def iterator():
             while self.active:
                 trajs, *_ = self.replay_buffer.sample(num_samples)
+                trajs = [dict(i) for i in trajs]
+                for t in trajs:
+                    for k in ['bck_logprobs', 'bck_logprob', 'fwd_logprob']:
+                        if k in t:
+                            t[k] = torch.from_numpy(t[k])
                 self.relabel_in_hindsight(trajs)  # This is a no-op if the hindsight ratio is 0
                 yield trajs, {}
 
@@ -208,18 +213,18 @@ class DataSource(IterableDataset):
     def call_sampling_hooks(self, trajs):
         batch_info = {}
         # TODO: just pass trajs to the hooks and deprecate passing all those arguments
-        flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        flat_rewards = torch.from_numpy(np.stack([t["flat_rewards"] for t in trajs]))
         # convert cond_info back to a dict
-        cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
-        log_rewards = torch.stack([t["log_reward"] for t in trajs])
+        cond_info = {k: torch.from_numpy(np.stack([t["cond_info"][k] for t in trajs])) for k in trajs[0]["cond_info"]}
+        log_rewards = torch.from_numpy(np.stack([t["log_reward"] for t in trajs]))
         rewards = torch.exp(log_rewards / (cond_info.get("beta", 1)))
         for hook in self.sampling_hooks:
             batch_info.update(hook(trajs, rewards, flat_rewards, cond_info))
         return batch_info
 
     def create_batch(self, trajs, batch_info):
-        ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
-        log_rewards = torch.stack([t["log_reward"] for t in trajs])
+        ci = torch.from_numpy(np.stack([t["cond_info"]["encoding"] for t in trajs]))
+        log_rewards = torch.from_numpy(np.stack([t["log_reward"] for t in trajs]))
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
         batch.num_online = sum(t.get("is_online", 0) for t in trajs)
         batch.num_offline = len(trajs) - batch.num_online
@@ -233,7 +238,7 @@ class DataSource(IterableDataset):
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
-        batch.flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
+        batch.flat_rewards = torch.from_numpy(np.stack([t["flat_rewards"] for t in trajs]))
         return self._maybe_put_in_mp_buffer(batch)
 
     def compute_properties(self, trajs, mark_as_online=False):
@@ -252,7 +257,7 @@ class DataSource(IterableDataset):
         all_fr = torch.zeros((len(trajs), flat_rewards.shape[1]))
         all_fr[valid_idcs] = flat_rewards
         for i in range(len(trajs)):
-            trajs[i]["flat_rewards"] = all_fr[i]
+            trajs[i]["flat_rewards"] = all_fr[i].numpy()
             trajs[i]["is_online"] = mark_as_online
         # Override the is_valid key in case the task made some objs invalid
         for i in valid_idcs:
@@ -260,25 +265,32 @@ class DataSource(IterableDataset):
 
     def compute_log_rewards(self, trajs):
         """Sets trajs' log_reward key by querying the task."""
-        flat_rewards = torch.stack([t["flat_rewards"] for t in trajs])
-        cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
+        flat_rewards = torch.from_numpy(np.stack([t["flat_rewards"] for t in trajs]))
+        cond_info = {k: torch.from_numpy(np.stack([t["cond_info"][k] for t in trajs])) for k in trajs[0]["cond_info"]}
         log_rewards = self.task.cond_info_to_logreward(cond_info, flat_rewards)
         min_r = torch.as_tensor(self.cfg.algo.illegal_action_logreward).float()
         for i in range(len(trajs)):
-            trajs[i]["log_reward"] = log_rewards[i] if trajs[i].get("is_valid", True) else min_r
+            trajs[i]["log_reward"] = log_rewards[i].item() if trajs[i].get("is_valid", True) else min_r.item()
 
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_reward"], t["flat_rewards"], t["cond_info"], t["is_valid"])
+                for k in ['bck_logprobs', 'bck_logprob', 'fwd_logprob']:
+                    if k in t:
+                        t[k] = t[k].detach().cpu().numpy()
+            if 1:
+                self.replay_buffer.push_many(trajs)
+            else:
+                for t in trajs:
+                    self.replay_buffer.push(t, t["log_reward"], t["flat_rewards"], t["cond_info"], t["is_valid"])
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
-            trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
+            trajs[i]["cond_info"] = {k: cond_info[k][i].numpy() for k in cond_info}
 
     def set_traj_props(self, trajs, props):
         for i in range(len(trajs)):
-            trajs[i]["flat_rewards"] = props[i]  # TODO: refactor
+            trajs[i]["flat_rewards"] = props[i].numpy()
 
     def relabel_in_hindsight(self, trajs):
         if self.cfg.replay.hindsight_ratio == 0:

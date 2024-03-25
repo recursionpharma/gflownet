@@ -170,7 +170,7 @@ class GFNTrainer:
         src = DataSource(self.cfg, self.ctx, self.algo, self.task, replay_buffer=replay_buffer)
         if n_from_dataset:
             src.do_sample_dataset(self.training_data, n_from_dataset, backwards_model=model)
-        if n_drawn:
+        if n_drawn or n_new_replay_samples:
             src.do_sample_model(model, n_drawn, n_new_replay_samples)
         if n_replayed and replay_buffer is not None:
             src.do_sample_replay(n_replayed)
@@ -279,7 +279,12 @@ class GFNTrainer:
         start_time = time.time()
         t0 = time.time()
         times = []
+        wt0 = time.time()
+        wtimes = []
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
+            wt1 = time.time()
+            wt = wt1 - wt0
+            wtimes.append(wt)
             # the memory fragmentation or allocation keeps growing, how often should we clean up?
             # is changing the allocation strategy helpful?
 
@@ -289,7 +294,7 @@ class GFNTrainer:
             batch = self._maybe_resolve_shared_buffer(batch, train_dl)
             t1 = time.time()
             times.append(t1 - t0)
-            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s")
+            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s, average wait: {np.mean(wtimes):.2f} s")
             t0 = t1
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
@@ -318,6 +323,7 @@ class GFNTrainer:
                 self.log(end_metrics, it, "valid_end")
             if ckpt_freq > 0 and it % ckpt_freq == 0:
                 self._save_state(it)
+            wt0 = time.time()
         self._save_state(num_training_steps)
 
         num_final_gen_steps = self.cfg.num_final_gen_steps

@@ -117,9 +117,11 @@ class StandardOnlineTrainer(GFNTrainer):
     def step(self, loss: Tensor):
         loss.backward()
         with torch.no_grad():
-            g0 = model_grad_norm(self.model)
+            if self.cfg.report_grad_norm:
+                g0 = model_grad_norm(self.model)
             self.clip_grad_callback(self.model.parameters())
-            g1 = model_grad_norm(self.model)
+            if self.cfg.report_grad_norm:
+                g1 = model_grad_norm(self.model)
         self.opt.step()
         self.opt.zero_grad()
         self.opt_Z.step()
@@ -129,7 +131,9 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
-        return {"grad_norm": g0, "grad_norm_clip": g1}
+        if self.cfg.report_grad_norm:
+            return {"grad_norm": g0, "grad_norm_clip": g1}
+        return {}
 
 
 class AvgRewardHook:

@@ -16,6 +16,10 @@ class ReplayBuffer(object):
         self.position = 0
         self.rng = rng
 
+    def push_many(self, trajs):
+        for i in trajs:
+            self.push(i, None)
+
     def push(self, *args):
         if len(self.buffer) == 0:
             self._input_size = len(args)
