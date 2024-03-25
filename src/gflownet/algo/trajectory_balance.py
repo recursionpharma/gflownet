@@ -342,7 +342,10 @@ class TrajectoryBalance(GFNAlgorithm):
         return batch
 
     def compute_batch_losses(
-        self, model: TrajectoryBalanceModel, batch: gd.Batch, num_bootstrap: int = 0  # type: ignore[override]
+        self,
+        model: TrajectoryBalanceModel,
+        batch: gd.Batch,
+        num_bootstrap: int = 0,  # type: ignore[override]
     ):
         """Compute the losses over trajectories contained in the batch
 
