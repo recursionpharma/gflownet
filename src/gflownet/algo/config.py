@@ -1,14 +1,55 @@
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import IntEnum
 from typing import Optional
 
 
-class TBVariant(int, Enum):
+class Backward(IntEnum):
+    """
+    See algo.trajectory_balance.TrajectoryBalance for details.
+    The A variant of `Maxent` and `GSQL` equire the environment to provide $n$.
+    This is true for sEH but not QM9.
+    """
+
+    Uniform = 1
+    Free = 2
+    Maxent = 3
+    MaxentA = 4
+    GSQL = 5
+    GSQLA = 6
+
+
+class NLoss(IntEnum):
+    """See algo.trajectory_balance.TrajectoryBalance for details."""
+
+    none = 0
+    Transition = 1
+    SubTB1 = 2
+    TermTB1 = 3
+    StartTB1 = 4
+    TB = 5
+
+
+class TBVariant(IntEnum):
     """See algo.trajectory_balance.TrajectoryBalance for details."""
 
     TB = 0
     SubTB1 = 1
     DB = 2
+
+
+class LossFN(IntEnum):
+    """
+    The loss function to use.
+
+    - GHL:  Kaan Gokcesu, Hakan Gokcesu
+    https://arxiv.org/pdf/2108.12627.pdf,
+    Note: This can be used as a differentiable version of HUB.
+    """
+
+    MSE = 0
+    MAE = 1
+    HUB = 2
+    GHL = 3
 
 
 @dataclass
@@ -39,6 +80,16 @@ class TBConfig:
         The learning rate for the logZ parameter (only relevant when do_subtb is False)
     Z_lr_decay : float
         The learning rate decay for the logZ parameter (only relevant when do_subtb is False)
+    loss_fn: LossFN
+        The loss function to use
+    loss_fn_par: float
+        The loss function parameter in case of Huber loss, it is the delta
+    n_loss: NLoss
+        The $n$ loss to use (defaults to NLoss.none i.e., do not learn $n$)
+    n_loss_multiplier: float
+        The multiplier for the $n$ loss
+    backward_policy: Backward
+        The backward policy to use
     """
 
     bootstrap_own_reward: bool = False
@@ -54,6 +105,11 @@ class TBConfig:
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
     cum_subtb: bool = True
+    loss_fn: LossFN = LossFN.MSE
+    loss_fn_par: float = 1.0
+    n_loss: NLoss = NLoss.none
+    n_loss_multiplier: float = 1.0
+    backward_policy: Backward = Backward.Uniform
 
 
 @dataclass
