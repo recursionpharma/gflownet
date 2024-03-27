@@ -14,7 +14,6 @@ from gflownet.utils import sascore
 class QM9Dataset(Dataset):
     def __init__(self, h5_file=None, xyz_file=None, train=True, targets=["gap"], split_seed=142857, ratio=0.9):
         if h5_file is not None:
-
             self.hdf = pd.HDFStore(h5_file, "r")
             self.df = self.hdf["df"]
             self.is_hdf = True
