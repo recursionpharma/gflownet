@@ -256,7 +256,7 @@ class GraphSampler:
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order
-                action_masks = [self.ctx.action_type_to_mask(t, g, assert_mask_exists=True) for t in action_types]
+                action_masks = [self.ctx.action_type_to_mask(t, gbatch, assert_mask_exists=True) for t in action_types]
                 bck_cat = GraphActionCategorical(
                     gbatch,
                     raw_logits=[torch.ones_like(m) for m in action_masks],
