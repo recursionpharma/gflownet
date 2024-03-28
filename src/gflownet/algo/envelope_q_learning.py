@@ -71,14 +71,18 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
                 F.relu(self.emb2add_node(node_embeddings)),
                 F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)),
             ],
-            action_masks=[1, g.add_node_mask.repeat(1, self.num_objectives), g.set_edge_attr_mask.repeat(1, self.num_objectives)],
+            action_masks=[
+                1,
+                g.add_node_mask.repeat(1, self.num_objectives),
+                g.set_edge_attr_mask.repeat(1, self.num_objectives),
+            ],
             keys=[None, "x", "edge_index"],
             types=self.action_type_order,
         )
         r_pred = self.emb2reward(graph_embeddings)
         if output_Qs:
             return cat, r_pred
-        
+
         else:
             # Compute the greedy policy
             # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations

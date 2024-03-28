@@ -1,16 +1,15 @@
 from itertools import chain
-
 from typing import Dict
 
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
+from torch import Tensor
 from torch_geometric.utils import add_self_loops
 
 from gflownet.config import Config
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -171,11 +170,13 @@ class GraphTransformerGFN(nn.Module):
         "edge": "edge_index",
     }
 
-    action_type_to_key = lambda action_type: GraphTransformerGFN._graph_part_to_key.get(GraphTransformerGFN._action_type_to_graph_part.get(action_type))
+    action_type_to_key = lambda action_type: GraphTransformerGFN._graph_part_to_key.get(  # noqa: E731
+        GraphTransformerGFN._action_type_to_graph_part.get(action_type)
+    )
 
     def __init__(
         self,
-        env_ctx: GraphBuildingEnvContext,
+        env_ctx,
         cfg: Config,
         num_graph_out=1,
         do_bck=False,

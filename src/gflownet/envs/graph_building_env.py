@@ -493,11 +493,11 @@ class GraphActionCategorical:
         Action masks depend on the environment logic (what are allowed v.s. prohibited actions).
         Thus, the action_masks should be created by the EnvContext (e.g. FragMolBuildingEnvContext)
         and passed to the GraphActionCategorical as a list of tensors. However, action masks
-        should be applied to the logits within this class only to allow proper masking 
+        should be applied to the logits within this class only to allow proper masking
         when computing log probabilities and sampling and avoid confusion about
-        the state of the logits (masked or not) for external members. 
-        For this reason, the constructor takes as input the raw (unmasked) logits and the 
-        masks separately. The (masked) logits are cached in the _masked_logits attribute. 
+        the state of the logits (masked or not) for external members.
+        For this reason, the constructor takes as input the raw (unmasked) logits and the
+        masks separately. The (masked) logits are cached in the _masked_logits attribute.
         Both the (masked) logits and the masks are private properties, and attempts to edit the masks or the logits will
         apply the masks to the raw_logits again.
 
@@ -590,23 +590,27 @@ class GraphActionCategorical:
     @property
     def logits(self):
         return self._masked_logits
-    
+
     @logits.setter
     def logits(self, new_raw_logits):
         self.raw_logits = new_raw_logits
         self._apply_action_masks()
-    
+
     @property
     def action_masks(self):
         return self._action_masks
-    
+
     @action_masks.setter
     def action_masks(self, new_action_masks):
         self._action_masks = new_action_masks
         self._apply_action_masks()
 
     def _apply_action_masks(self):
-        self._masked_logits = [self._mask(logits, mask) for logits, mask in zip(self.raw_logits, self._action_masks)] if self._action_masks is not None else self.raw_logits
+        self._masked_logits = (
+            [self._mask(logits, mask) for logits, mask in zip(self.raw_logits, self._action_masks)]
+            if self._action_masks is not None
+            else self.raw_logits
+        )
 
     def _mask(self, x, m):
         return x.masked_fill(m == 0, -torch.inf)
@@ -892,8 +896,7 @@ class GraphActionCategorical:
 
 
 class GraphBuildingEnvContext:
-    """A context class defines what the graphs are, how they map to and from data
-    """
+    """A context class defines what the graphs are, how they map to and from data"""
 
     device: torch.device
     action_type_order: List[GraphActionType]
