@@ -145,14 +145,14 @@ def _test_backwards_action_mask_equivalence_ipa(two_node_states, ctx):
         for u, k in enumerate(ctx.bck_action_type_order):
             m = getattr(gd, k.mask_name)
             for a in m.nonzero():
-                a = (u, a[0].item(), a[1].item())
+                aidx = ActionIndex(u, a[0].item(), a[1].item())
                 for c in equivalence_classes:
                     # Here `a` could have been added in another equivalence class by
                     # get_idempotent_actions. If so, no need to check it.
                     if a in c:
                         break
                 else:
-                    ga = ctx.ActionIndex_to_GraphAction(gd, a, fwd=False)
+                    ga = ctx.ActionIndex_to_GraphAction(gd, aidx, fwd=False)
                     gp = env.step(g, ga)
                     # TODO: It is a bit weird that get_idempotent_actions is in an algo class,
                     # probably also belongs in a graph utils file.
