@@ -613,7 +613,8 @@ class GraphActionCategorical:
         )
 
     def _mask(self, x, m):
-        return x.masked_fill(m == 0, -torch.inf)
+        assert m.dtype == torch.float
+        return x.masked_fill(m == 0., -torch.inf)
 
     def detach(self):
         new = copy.copy(self)
