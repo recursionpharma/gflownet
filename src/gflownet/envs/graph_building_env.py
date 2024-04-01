@@ -613,8 +613,12 @@ class GraphActionCategorical:
         )
 
     def _mask(self, x, m):
+        """
+        mask logit vector x with binary mask m, -1000 is a tiny log-value
+        Note to self: we can't use torch.inf here, because inf * 0 is nan
+        """
         assert m.dtype == torch.float
-        return x.masked_fill(m == 0., -torch.inf)
+        return x * m + -1000 * (1 - m)
 
     def detach(self):
         new = copy.copy(self)
@@ -752,8 +756,25 @@ class GraphActionCategorical:
         u = [torch.rand(i.shape, device=self.dev) for i in self._masked_logits]
         # Gumbel noise
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self._masked_logits, u)]
+
+        if self._action_masks is not None:
+            gumbel_safe = [
+                torch.where(
+                    mask == 1,
+                    torch.maximum(
+                        x,
+                        torch.nextafter(
+                            torch.tensor(torch.finfo(x.dtype).min, dtype=x.dtype), torch.tensor(0.0, dtype=x.dtype)
+                        ).to(x.device),
+                    ),
+                    torch.finfo(x.dtype).min,
+                )
+                for x, mask in zip(gumbel, self._action_masks)
+            ]
+        else:
+            gumbel_safe = gumbel
         # Take the argmax
-        return self.argmax(x=gumbel)
+        return self.argmax(x=gumbel_safe)
 
     def argmax(
         self,
