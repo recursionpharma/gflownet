@@ -53,9 +53,9 @@ def detach_and_cpu(x):
     if isinstance(x, torch.Tensor):
         x = x.detach().cpu()
     elif isinstance(x, dict):
-        for k in x.keys():
-            x[k] = detach_and_cpu(x[k])
+        x = {k: detach_and_cpu(v) for k, v in x.items()}
     elif isinstance(x, list):
-        for i in range(len(x)):
-            x[i] = detach_and_cpu(x[i])
+        x = [detach_and_cpu(v) for v in x]
+    elif isinstance(x, tuple):
+        x = tuple(detach_and_cpu(v) for v in x)
     return x
