@@ -7,7 +7,7 @@ from torch.utils.data import IterableDataset
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
-from gflownet.data.replay_buffer import ReplayBuffer
+from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import get_worker_rng
 
@@ -214,6 +214,7 @@ class DataSource(IterableDataset):
         return batch_info
 
     def create_batch(self, trajs, batch_info):
+        trajs = detach_and_cpu(trajs)
         ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
