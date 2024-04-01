@@ -27,7 +27,7 @@ class ReplayBuffer(object):
             assert self._input_size == len(args), "ReplayBuffer input size must be constant"
         if len(self.buffer) < self.capacity:
             self.buffer.append(None)
-        args = detach_and_cpu(list(args))
+        args = detach_and_cpu(args)
         self.buffer[self.position] = args
         self.position = (self.position + 1) % self.capacity
 
