@@ -61,13 +61,15 @@ class GraphTransformer(nn.Module):
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
         self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
+        concat = False
+        n_att = num_emb * num_heads if concat else num_emb
         self.graph2emb = nn.ModuleList(
             sum(
                 [
                     [
                         gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None),
-                        gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
-                        nn.Linear(num_heads * num_emb, num_emb),
+                        gnn.TransformerConv(num_emb * 2, n_att // num_heads, edge_dim=num_emb, heads=num_heads),
+                        nn.Linear(n_att, num_emb),
                         gnn.LayerNorm(num_emb, affine=False),
                         mlp(num_emb, num_emb * 4, num_emb, 1),
                         gnn.LayerNorm(num_emb, affine=False),
