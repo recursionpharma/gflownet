@@ -65,4 +65,8 @@ class StrictDataClass:
         if hasattr(self, name) or name in self.__annotations__:
             super().__setattr__(name, value)
         else:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'."
+                f" '{type(self).__name__}' is a StrictDataClass object."
+                f" Attributes can only be defined in the class definition."
+            )
