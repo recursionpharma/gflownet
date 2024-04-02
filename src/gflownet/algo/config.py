@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional
 
+from gflownet.utils.misc import StrictDataClass
+
 
 class Backward(IntEnum):
     """
@@ -53,7 +55,7 @@ class LossFN(IntEnum):
 
 
 @dataclass
-class TBConfig:
+class TBConfig(StrictDataClass):
     """Trajectory Balance config.
 
     Attributes
@@ -113,7 +115,7 @@ class TBConfig:
 
 
 @dataclass
-class MOQLConfig:
+class MOQLConfig(StrictDataClass):
     gamma: float = 1
     num_omega_samples: int = 32
     num_objectives: int = 2
@@ -122,14 +124,14 @@ class MOQLConfig:
 
 
 @dataclass
-class A2CConfig:
+class A2CConfig(StrictDataClass):
     entropy: float = 0.01
     gamma: float = 1
     penalty: float = -10
 
 
 @dataclass
-class FMConfig:
+class FMConfig(StrictDataClass):
     epsilon: float = 1e-38
     balanced_loss: bool = False
     leaf_coef: float = 10
@@ -137,14 +139,14 @@ class FMConfig:
 
 
 @dataclass
-class SQLConfig:
+class SQLConfig(StrictDataClass):
     alpha: float = 0.01
     gamma: float = 1
     penalty: float = -10
 
 
 @dataclass
-class AlgoConfig:
+class AlgoConfig(StrictDataClass):
     """Generic configuration for algorithms
 
     Attributes

@@ -1,14 +1,16 @@
 from dataclasses import dataclass, field
 from typing import List
 
+from gflownet.utils.misc import StrictDataClass
+
 
 @dataclass
-class SEHTaskConfig:
+class SEHTaskConfig(StrictDataClass):
     reduced_frag: bool = False
 
 
 @dataclass
-class SEHMOOTaskConfig:
+class SEHMOOTaskConfig(StrictDataClass):
     """Config for the SEHMOOTask
 
     Attributes
@@ -31,13 +33,13 @@ class SEHMOOTaskConfig:
 
 
 @dataclass
-class QM9TaskConfig:
+class QM9TaskConfig(StrictDataClass):
     h5_path: str = "./data/qm9/qm9.h5"  # see src/gflownet/data/qm9.py
     model_path: str = "./data/qm9/qm9_model.pt"
 
 
 @dataclass
-class QM9MOOTaskConfig:
+class QM9MOOTaskConfig(StrictDataClass):
     """
     Config for the QM9MooTask
 
@@ -61,7 +63,7 @@ class QM9MOOTaskConfig:
 
 
 @dataclass
-class TasksConfig:
+class TasksConfig(StrictDataClass):
     qm9: QM9TaskConfig = field(default_factory=QM9TaskConfig)
     qm9_moo: QM9MOOTaskConfig = field(default_factory=QM9MOOTaskConfig)
     seh: SEHTaskConfig = field(default_factory=SEHTaskConfig)
