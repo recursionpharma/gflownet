@@ -54,3 +54,19 @@ def set_main_process_device(device):
 def get_worker_device():
     worker_info = torch.utils.data.get_worker_info()
     return _main_process_device[0] if worker_info is None else torch.device("cpu")
+
+
+class StrictDataClass:
+    """
+    A dataclass that raises an error if any field is created outside of the __init__ method.
+    """
+
+    def __setattr__(self, name, value):
+        if hasattr(self, name) or name in self.__annotations__:
+            super().__setattr__(name, value)
+        else:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'."
+                f" '{type(self).__name__}' is a StrictDataClass object."
+                f" Attributes can only be defined in the class definition."
+            )
