@@ -77,8 +77,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # The + 1 is for an extra dimension to indicate when the attribute isn't yet set
         self.num_edge_dim = (most_stems + 1) * 2
         self.num_cond_dim = num_cond_dim
-        self.edges_are_duplicated = True
-        self.edges_are_unordered = False
         self.fail_on_missing_attr = True
 
         # Order in which models have to output logits

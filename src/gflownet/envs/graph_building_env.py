@@ -701,19 +701,14 @@ class GraphActionCategorical:
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
 
         if self.masks is not None:
-            gumbel_safe = [
-                torch.where(
-                    mask == 1,
-                    torch.maximum(
-                        x,
-                        torch.nextafter(
-                            torch.tensor(torch.finfo(x.dtype).min, dtype=x.dtype), torch.tensor(0.0, dtype=x.dtype)
-                        ).to(x.device),
-                    ),
-                    torch.finfo(x.dtype).min,
-                )
-                for x, mask in zip(gumbel, self.masks)
-            ]
+            gumbel_safe = []
+            for x, mask in zip(gumbel, self.masks):
+                small = torch.nextafter(torch.tensor(torch.finfo(x.dtype).min, dtype=x.dtype), 
+                                        torch.tensor(0.0, dtype=x.dtype)).to(x.device)
+                if type(mask) != torch.Tensor:
+                    mask = torch.tensor(mask, device=x.device)
+                g = torch.where(mask == 1, torch.maximum(x, small), torch.finfo(x.dtype).min)
+                gumbel_safe.append(g)
         else:
             gumbel_safe = gumbel
         # Take the argmax
@@ -764,7 +759,7 @@ class GraphActionCategorical:
 
         # Now we can return the indices of where the actions occured
         # in the form List[(type, row, column)]
-        assert dim_size == type_max_idx.shape[0]
+        assert dim_size == type_max_idx.shape[0], f"dim_size {dim_size} != type_max_idx.shape[0] {type_max_idx.shape[0]}"
         argmaxes = []
         for i in range(type_max_idx.shape[0]):
             t = type_max_idx[i]

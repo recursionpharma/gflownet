@@ -42,65 +42,80 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
         )
         num_final = num_emb * 2
         num_mlp_layers = 0
-        self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values * num_objectives, num_mlp_layers)
+        num_edge_emb = num_emb if env_ctx.edges_are_unordered else num_emb * 2
+        self.emb2add_node = mlp(num_emb, num_emb, env_ctx.num_new_node_values * num_objectives, num_mlp_layers)
         # Edge attr logits are "sided", so we will compute both sides independently
         self.emb2set_edge_attr = mlp(
             num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2 * num_objectives, num_mlp_layers
         )
-        self.emb2stop = mlp(num_emb * 3, num_emb, num_objectives, num_mlp_layers)
-        self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
-        self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
+        self.emb2stop = mlp(num_final, num_emb, num_objectives, num_mlp_layers)
+        self.emb2reward = mlp(num_final, num_emb, 1, num_mlp_layers)
+        self.edge2emb = mlp(num_final, num_emb, num_edge_emb, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
         self.mask_value = -10
         self.num_objectives = num_objectives
+        self.edges_are_duplicated = env_ctx.edges_are_duplicated
+        self.edges_are_unordered = env_ctx.edges_are_unordered
 
     def forward(self, g: gd.Batch, cond: torch.Tensor, output_Qs=False):
         """See `GraphTransformer` for argument values"""
         node_embeddings, graph_embeddings = self.transf(g, cond)
-        # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
-        e_row, e_col = g.edge_index[:, ::2]
-        edge_emb = self.edge2emb(node_embeddings[e_row] + node_embeddings[e_col])
-        src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_row]], 1))
-        dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_col]], 1))
+        if self.edges_are_duplicated:
+            # On `::2`, edges are typically duplicated to make graphs undirected, only take the even ones
+            e_row, e_col = g.edge_index[:, ::2]
+        else:
+            e_row, e_col = g.edge_index
+        if self.edges_are_unordered:
+            edge_embeddings = node_embeddings[e_row] + node_embeddings[e_col]
+        else:
+            edge_embeddings = torch.cat([node_embeddings[e_row], node_embeddings[e_col]], 1)
+        edge_embeddings = self.edge2emb(edge_embeddings)
+
+        src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_embeddings, node_embeddings[e_row]], 1))
+        dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_embeddings, node_embeddings[e_col]], 1))
 
         def _mask(x, m):
             # mask logit vector x with binary mask m
             return x * m + self.mask_value * (1 - m)
 
-        def _mask_obj(x, m):
-            # mask logit vector x with binary mask m
-            return (
-                x.reshape(x.shape[0], x.shape[1] // self.num_objectives, self.num_objectives) * m[:, :, None]
-                + self.mask_value * (1 - m[:, :, None])
-            ).reshape(x.shape)
-
+        # evelope Q learning uses outputs Q-values for each action and each objective
+        # we duplicate the masks for each objective
+        add_node_masks = g.add_node_mask.repeat(1, self.num_objectives)
+        set_edge_attr_mask = g.set_edge_attr_mask.repeat(1, self.num_objectives)
         cat = GraphActionCategorical(
             g,
             logits=[
                 F.relu(self.emb2stop(graph_embeddings)),
-                _mask(F.relu(self.emb2add_node(node_embeddings)), g.add_node_mask),
-                _mask_obj(F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)), g.set_edge_attr_mask),
+                _mask(F.relu(self.emb2add_node(node_embeddings)), add_node_masks),
+                _mask(F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)), set_edge_attr_mask),
             ],
             keys=[None, "x", "edge_index"],
             types=self.action_type_order,
         )
         r_pred = self.emb2reward(graph_embeddings)
         if output_Qs:
+            # we ouput the full set of Q-values when the model is used in training mode
             return cat, r_pred
-        cat.masks = [1, g.add_node_mask.cpu(), g.set_edge_attr_mask.cpu()]
-        # Compute the greedy policy
-        # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
-        # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
-        w = cond[:, -self.num_objectives :]
-        w_dot_Q = [
-            (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
-            for qi, b in zip(cat.logits, cat.batch)
-        ]
-        # Set the softmax distribution to a very low temperature to make sure only the max gets
-        # sampled (and we get random argmax tie breaking for free!):
-        cat.logits = [i * 100 for i in w_dot_Q]
-        return cat, r_pred
+
+        else:
+            # if we don't output (e.g. for sampling new trajectories), we get the Q-values for the current omega
+            # and we need a single set of masks
+            cat.masks = [1, g.add_node_mask, g.set_edge_attr_mask]
+
+            # Compute the greedy policy
+            # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
+            # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
+            w = cond[:, -self.num_objectives :]
+            w_dot_Q = [
+                (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
+                for qi, b in zip(cat.logits, cat.batch)
+            ]
+            # Set the softmax distribution to a very low temperature to make sure only the max gets
+            # sampled (and we get random argmax tie breaking for free!):
+            cat.logits = [i * 100 for i in w_dot_Q]
+
+            return cat, r_pred
 
 
 class GraphTransformerEnvelopeQL(nn.Module):
@@ -205,10 +220,21 @@ class EnvelopeQLearning:
         self._num_updates = 0
         assert self.gamma == 1
         self.bootstrap_own_reward = False
+        self.global_cfg = cfg
         # Experimental flags
         self.sample_temp = 1
         self.do_q_prime_correction = False
         self.graph_sampler = GraphSampler(ctx, env, self.max_len, self.max_nodes, rng, self.sample_temp)
+    
+    def set_is_eval(self, is_eval: bool):
+        self.is_eval = is_eval
+
+    def get_random_action_prob(self, it: int):
+        if self.is_eval:
+            return self.global_cfg.algo.valid_random_action_prob
+        if self.global_cfg.algo.train_det_after is None or it < self.global_cfg.algo.train_det_after:
+            return self.global_cfg.algo.train_random_action_prob
+        return 0
 
     def create_training_data_from_own_samples(
         self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float
@@ -280,9 +306,10 @@ class EnvelopeQLearning:
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
         batch.is_valid = torch.tensor([i.get("is_valid", True) for i in trajs]).float()
+        batch.preferences = torch.stack([i['cond_info']['preferences'] for i in trajs])
 
         # Now we create a duplicate/repeated batch for Q(s,a,w')
-        omega_prime = self.task.sample_conditional_information(self.num_omega_samples * batch.num_graphs)
+        omega_prime = self.task.sample_conditional_information(self.num_omega_samples * batch.num_graphs) 
         torch_graphs = [i for i in torch_graphs for j in range(self.num_omega_samples)]
         actions = [i for i in actions for j in range(self.num_omega_samples)]
         batch_prime = self.ctx.collate(torch_graphs)
@@ -298,7 +325,7 @@ class EnvelopeQLearning:
 
         Parameters
         ----------
-        model: TrajectoryBalanceModel
+        model: GraphTransformerFragEnvelopeQL
            A GNN taking in a batch of graphs as input as per constructed by `self.construct_batch`.
            Must have a `logZ` attribute, itself a model, which predicts log of Z(cond_info)
         batch: gd.Batch
@@ -370,9 +397,7 @@ class EnvelopeQLearning:
         # same (and thus the max is over all of the repeats as well).
         # Since the batch slices we will later index to get Q[:, argmax a, argmax omega'] are those
         # of Q_omega_prime, we need to use fwd_cat_prime.
-        argmax = fwd_cat_prime.argmax(
-            x=w_dot_Q, batch=[b.repeat_interleave(self.num_omega_samples) for b in fwd_cat.batch], dim_size=num_states
-        )
+        argmax = fwd_cat_prime.argmax(x=w_dot_Q, batch=[b.repeat_interleave(self.num_omega_samples) for b in fwd_cat.batch], dim_size=num_states)
         # Now what we want, for each state, is the vector prediction made by Q(s, a, w') for the
         # argmax a,w'. Let's again reuse GraphActionCategorical methods to do the indexing for us.
         # We must again use fwd_cat_prime to use the right slices.
