@@ -9,7 +9,7 @@ from torch import Tensor
 from torch_geometric.utils import add_self_loops
 
 from gflownet.config import Config
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, action_type_to_mask
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -238,7 +238,7 @@ class GraphTransformerGFN(nn.Module):
             g,
             raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types],
-            action_masks=[self.env_ctx.action_type_to_mask(t, g) for t in action_types],
+            action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
 

@@ -6,7 +6,13 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionCategorical, GraphActionType
+from gflownet.envs.graph_building_env import (
+    Graph,
+    GraphAction,
+    GraphActionCategorical,
+    GraphActionType,
+    action_type_to_mask,
+)
 from gflownet.models.graph_transformer import GraphTransformerGFN
 
 
@@ -256,7 +262,7 @@ class GraphSampler:
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order
-                action_masks = [self.ctx.action_type_to_mask(t, gbatch, assert_mask_exists=True) for t in action_types]
+                action_masks = [action_type_to_mask(t, gbatch, assert_mask_exists=True) for t in action_types]
                 bck_cat = GraphActionCategorical(
                     gbatch,
                     raw_logits=[torch.ones_like(m) for m in action_masks],

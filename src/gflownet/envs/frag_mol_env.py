@@ -179,13 +179,6 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 col = 1
         return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
 
-    def action_type_to_mask(self, t: GraphActionType, gbatch: gd.Batch, assert_mask_exists: bool = False):
-        if assert_mask_exists:
-            assert hasattr(gbatch, t.mask_name), f"Mask {t.mask_name} not found in graph data"
-        return (
-            getattr(gbatch, t.mask_name) if hasattr(gbatch, t.mask_name) else torch.ones((1, 1), device=gbatch.x.device)
-        )
-
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters
