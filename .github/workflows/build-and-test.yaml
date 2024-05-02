@@ -14,7 +14,8 @@ jobs:
         include:
           - {name: Linux, python: '3.10', os: ubuntu-latest, tox: py310}
           - {name: Windows, python: '3.10', os: windows-latest, tox: py310}
-          - {name: Mac, python: '3.10', os: macos-latest, tox: py310}
+          # Some packages fail on M1 (macos-latest) due to not having wheels and not being able to build from source
+          - {name: Mac, python: '3.10', os: macos-13, tox: py310}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v3
