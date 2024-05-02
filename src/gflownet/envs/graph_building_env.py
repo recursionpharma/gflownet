@@ -627,6 +627,7 @@ class GraphActionCategorical:
 
     def to(self, device):
         self.dev = device
+        self.raw_logits = [i.to(device) for i in self.raw_logits]
         self._masked_logits = [i.to(device) for i in self._masked_logits]
         self.batch = [i.to(device) for i in self.batch]
         self.slice = [i.to(device) for i in self.slice]
