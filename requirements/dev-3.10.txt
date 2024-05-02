@@ -5,7 +5,7 @@
 #    pip-compile-cross-platform requirements/dev-3.10.in --output-file requirements/dev-3.10.txt --min-python-version 3.10
 #
 absl-py==2.1.0 ; python_version >= "3.10" and python_version < "4.0"
-antlr4-python3-runtime==4.9.3 ; python_version >= "3.10" and python_version < "4.0"
+antlr4-python3-runtime==4.13.1 ; python_version >= "3.10" and python_version < "4.0"
 appdirs==1.4.4 ; python_version >= "3.10" and python_version < "4.0"
 bandit[toml]==1.7.7 ; python_version >= "3.10" and python_version < "4.0"
 black==24.2.0 ; python_version >= "3.10" and python_version < "4.0"
