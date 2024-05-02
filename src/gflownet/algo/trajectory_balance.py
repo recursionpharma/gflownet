@@ -2,6 +2,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
+import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
@@ -395,7 +396,7 @@ class TrajectoryBalance(GFNAlgorithm):
         first_graph_idx = shift_right(traj_cumlen)
         final_graph_idx_1 = torch.maximum(final_graph_idx - 1, first_graph_idx)
 
-        fwd_cat: GraphActionCategorical        # The per-state cond_info
+        fwd_cat: GraphActionCategorical  # The per-state cond_info
         batched_cond_info = cond_info[batch_idx] if cond_info is not None else None
 
         # Forward pass of the model, returns a GraphActionCategorical representing the forward

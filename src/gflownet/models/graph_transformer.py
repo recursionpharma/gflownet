@@ -33,7 +33,9 @@ class GraphTransformer(nn.Module):
     node embeddings, and of the final virtual node embeddings.
     """
 
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True):
+    def __init__(
+        self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True
+    ):
         """
         Parameters
         ----------
@@ -57,7 +59,7 @@ class GraphTransformer(nn.Module):
             (apparently, before is better than after, see https://arxiv.org/pdf/2002.04745.pdf)
         concat: bool
             Whether each head uses num_emb units (True) or num_emb // num_heads (False) units. Defaults to True.
-            If True this implies num_emb * num_heads output units within the attention mechanism (which are later 
+            If True this implies num_emb * num_heads output units within the attention mechanism (which are later
             reprojected to num_emb units).
         """
         super().__init__()
