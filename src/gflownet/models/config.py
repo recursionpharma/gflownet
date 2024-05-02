@@ -7,6 +7,7 @@ class GraphTransformerConfig:
     num_heads: int = 2
     ln_type: str = "pre"
     num_mlp_layers: int = 0
+    concat_heads: bool = True
 
 
 class SeqPosEnc(int, Enum):

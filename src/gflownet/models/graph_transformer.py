@@ -32,7 +32,7 @@ class GraphTransformer(nn.Module):
     node embeddings, and of the final virtual node embeddings.
     """
 
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre"):
+    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True):
         """
         Parameters
         ----------
@@ -51,6 +51,10 @@ class GraphTransformer(nn.Module):
         ln_type: str
             The location of Layer Norm in the transformer, either 'pre' or 'post', default 'pre'.
             (apparently, before is better than after, see https://arxiv.org/pdf/2002.04745.pdf)
+        concat: bool
+            Whether each head uses num_emb units (True) or num_emb // num_heads (False) units. Defaults to True.
+            If True this implies num_emb * num_heads output units within the attention mechanism (which are later 
+            reprojected to num_emb units).
         """
         super().__init__()
         self.num_layers = num_layers
@@ -61,7 +65,6 @@ class GraphTransformer(nn.Module):
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
         self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
-        concat = False
         n_att = num_emb * num_heads if concat else num_emb
         self.graph2emb = nn.ModuleList(
             sum(
@@ -185,6 +188,7 @@ class GraphTransformerGFN(nn.Module):
             num_layers=cfg.model.num_layers,
             num_heads=cfg.model.graph_transformer.num_heads,
             ln_type=cfg.model.graph_transformer.ln_type,
+            concat=cfg.model.graph_transformer.concat_heads,
         )
         num_emb = cfg.model.num_emb
         num_final = num_emb
