@@ -9,7 +9,7 @@ import torch
 import torch_geometric.data as gd
 from scipy import special
 
-from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import ActionIndex, Graph, GraphAction, GraphActionType, GraphBuildingEnvContext
 from gflownet.models import bengio2021flow
 
 
@@ -90,14 +90,14 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.n_counter = NCounter()
         self.sorted_frags = sorted(list(enumerate(self.frags_mol)), key=lambda x: -x[1].GetNumAtoms())
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True):
+    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
 
         Parameters
         ----------
         g: gd.Data
             The graph object on which this action would be applied.
-        action_idx: Tuple[int, int, int]
+        aidx: ActionIndex
              A triple describing the type of action, and the corresponding row and column index for
              the corresponding Categorical matrix.
 
@@ -105,33 +105,34 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         action: GraphAction
             A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
         """
-        act_type, act_row, act_col = [int(i) for i in action_idx]
         if fwd:
-            t = self.action_type_order[act_type]
+            t = self.action_type_order[aidx.action_type]
         else:
-            t = self.bck_action_type_order[act_type]
+            t = self.bck_action_type_order[aidx.action_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
-            return GraphAction(t, source=act_row, value=act_col)
+            return GraphAction(t, source=aidx.row_idx, value=aidx.col_idx)
         elif t is GraphActionType.SetEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]  # Edges are duplicated to get undirected GNN, deduplicated for logits
-            if act_col < self.num_stem_acts:
+            a, b = g.edge_index[
+                :, aidx.row_idx * 2
+            ]  # Edges are duplicated to get undirected GNN, deduplicated for logits
+            if aidx.col_idx < self.num_stem_acts:
                 attr = "src_attach"
-                val = act_col
+                val = aidx.col_idx
             else:
                 attr = "dst_attach"
-                val = act_col - self.num_stem_acts
+                val = aidx.col_idx - self.num_stem_acts
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr, value=val)
         elif t is GraphActionType.RemoveNode:
-            return GraphAction(t, source=act_row)
+            return GraphAction(t, source=aidx.row_idx)
         elif t is GraphActionType.RemoveEdgeAttr:
-            a, b = g.edge_index[:, act_row * 2]
-            attr = "src_attach" if act_col == 0 else "dst_attach"
+            a, b = g.edge_index[:, aidx.row_idx * 2]
+            attr = "src_attach" if aidx.col_idx == 0 else "dst_attach"
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
-        """Translate a GraphAction to an index tuple
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+        """Translate a GraphAction to an ActionIndex
 
         Parameters
         ----------
@@ -142,7 +143,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
 
         Returns
         -------
-        action_idx: Tuple[int, int, int]
+        action_idx: ActionIndex
              A triple describing the type of action, and the corresponding row and column index for
              the corresponding Categorical matrix.
         """
@@ -176,7 +177,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 col = 0
             else:
                 col = 1
-        return (type_idx, int(row), int(col))
+        return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance

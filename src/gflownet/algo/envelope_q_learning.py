@@ -63,23 +63,17 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
         src_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_row]], 1))
         dst_anchor_logits = self.emb2set_edge_attr(torch.cat([edge_emb, node_embeddings[e_col]], 1))
 
-        def _mask(x, m):
-            # mask logit vector x with binary mask m
-            return x * m + self.mask_value * (1 - m)
-
-        def _mask_obj(x, m):
-            # mask logit vector x with binary mask m
-            return (
-                x.reshape(x.shape[0], x.shape[1] // self.num_objectives, self.num_objectives) * m[:, :, None]
-                + self.mask_value * (1 - m[:, :, None])
-            ).reshape(x.shape)
-
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 F.relu(self.emb2stop(graph_embeddings)),
-                _mask(F.relu(self.emb2add_node(node_embeddings)), g.add_node_mask),
-                _mask_obj(F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)), g.set_edge_attr_mask),
+                F.relu(self.emb2add_node(node_embeddings)),
+                F.relu(torch.cat([src_anchor_logits, dst_anchor_logits], 1)),
+            ],
+            action_masks=[
+                1,
+                g.add_node_mask.repeat(1, self.num_objectives),
+                g.set_edge_attr_mask.repeat(1, self.num_objectives),
             ],
             keys=[None, "x", "edge_index"],
             types=self.action_type_order,
@@ -87,19 +81,21 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
         r_pred = self.emb2reward(graph_embeddings)
         if output_Qs:
             return cat, r_pred
-        cat.masks = [1, g.add_node_mask.cpu(), g.set_edge_attr_mask.cpu()]
-        # Compute the greedy policy
-        # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
-        # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
-        w = cond[:, -self.num_objectives :]
-        w_dot_Q = [
-            (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
-            for qi, b in zip(cat.logits, cat.batch)
-        ]
-        # Set the softmax distribution to a very low temperature to make sure only the max gets
-        # sampled (and we get random argmax tie breaking for free!):
-        cat.logits = [i * 100 for i in w_dot_Q]
-        return cat, r_pred
+
+        else:
+            # Compute the greedy policy
+            # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
+            # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
+            w = cond[:, -self.num_objectives :]
+            w_dot_Q = [
+                (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
+                for qi, b in zip(cat.logits, cat.batch)
+            ]
+            cat.action_masks = [1, g.add_node_mask.cpu(), g.set_edge_attr_mask.cpu()]
+            # Set the softmax distribution to a very low temperature to make sure only the max gets
+            # sampled (and we get random argmax tie breaking for free!):
+            cat.logits = [i * 100 for i in w_dot_Q]
+            return cat, r_pred
 
 
 class GraphTransformerEnvelopeQL(nn.Module):
@@ -133,7 +129,7 @@ class GraphTransformerEnvelopeQL(nn.Module):
         e_row, e_col = g.edge_index[:, ::2]
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 self.emb2stop(graph_embeddings),
                 self.emb2add_node(node_embeddings),
                 self.emb2set_node_attr(node_embeddings),
@@ -267,7 +263,8 @@ class EnvelopeQLearning:
         """
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
         actions = [
-            self.ctx.GraphAction_to_aidx(g, a) for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
+            self.ctx.GraphAction_to_ActionIndex(g, a)
+            for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
         ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])

@@ -1,11 +1,12 @@
 from copy import deepcopy
-from typing import Any, List, Sequence, Tuple
+from typing import Any, List, Sequence
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch_geometric.data import Data
 
 from gflownet.envs.graph_building_env import (
+    ActionIndex,
     Graph,
     GraphAction,
     GraphActionType,
@@ -94,17 +95,16 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
         self.num_actions = len(alphabet) + 1  # Alphabet + Stop
         self.num_cond_dim = num_cond_dim
 
-    def aidx_to_GraphAction(self, g: Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
+    def ActionIndex_to_GraphAction(self, g: Data, aidx: ActionIndex, fwd: bool = True) -> GraphAction:
         # Since there's only one "object" per timestep to act upon (in graph parlance), the row is always == 0
-        act_type, _, act_col = [int(i) for i in action_idx]
-        t = self.action_type_order[act_type]
+        t = self.action_type_order[aidx.action_type]
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
-            return GraphAction(t, value=act_col)
-        raise ValueError(action_idx)
+            return GraphAction(t, value=aidx.col_idx)
+        raise ValueError(aidx)
 
-    def GraphAction_to_aidx(self, g: Data, action: GraphAction) -> Tuple[int, int, int]:
+    def GraphAction_to_ActionIndex(self, g: Data, action: GraphAction) -> ActionIndex:
         if action.action is GraphActionType.Stop:
             col = 0
             type_idx = self.action_type_order.index(action.action)
@@ -113,7 +113,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
             type_idx = self.action_type_order.index(action.action)
         else:
             raise ValueError(action)
-        return (type_idx, 0, int(col))
+        return ActionIndex(action_type=type_idx, row_idx=0, col_idx=int(col))
 
     def graph_to_Data(self, g: Graph):
         s: Seq = g  # type: ignore

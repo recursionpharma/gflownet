@@ -7,7 +7,7 @@ from torch.utils.data import IterableDataset
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
-from gflownet.data.replay_buffer import ReplayBuffer
+from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext
 from gflownet.utils.misc import get_worker_rng
 
@@ -214,19 +214,19 @@ class DataSource(IterableDataset):
         return batch_info
 
     def create_batch(self, trajs, batch_info):
+        trajs = detach_and_cpu(trajs)
         ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
         batch.num_online = sum(t.get("is_online", 0) for t in trajs)
         batch.num_offline = len(trajs) - batch.num_online
         batch.extra_info = batch_info
-        if "preferences" in trajs[0]:
-            batch.preferences = torch.stack([t["preferences"] for t in trajs])
-        if "focus_dir" in trajs[0]:
-            batch.focus_dir = torch.stack([t["focus_dir"] for t in trajs])
+        if "preferences" in trajs[0]["cond_info"].keys():
+            batch.preferences = torch.stack([t["cond_info"]["preferences"] for t in trajs])
+        if "focus_dir" in trajs[0]["cond_info"].keys():
+            batch.focus_dir = torch.stack([t["cond_info"]["focus_dir"] for t in trajs])
 
-        # TODO: Restore this during merge
-        if self.ctx.has_n() and False:  # Does this go somewhere else? Require a flag? Might not be cheap to compute
+        if self.ctx.has_n() and self.cfg.algo.tb.do_predict_n:
             log_ns = [self.ctx.traj_log_n(i["traj"]) for i in trajs]
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)

@@ -8,10 +8,11 @@ from gflownet.data.config import ReplayConfig
 from gflownet.models.config import ModelConfig
 from gflownet.tasks.config import TasksConfig
 from gflownet.utils.config import ConditionalsConfig
+from gflownet.utils.misc import StrictDataClass
 
 
 @dataclass
-class OptimizerConfig:
+class OptimizerConfig(StrictDataClass):
     """Generic configuration for optimizers
 
     Attributes
@@ -45,7 +46,7 @@ class OptimizerConfig:
 
 
 @dataclass
-class Config:
+class Config(StrictDataClass):
     """Base configuration for training
 
     Attributes

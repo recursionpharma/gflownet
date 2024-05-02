@@ -63,7 +63,7 @@ class Model(nn.Module):
         e_row, e_col = g.edge_index[:, ::2]
         cat = GraphActionCategorical(
             g,
-            logits=[
+            raw_logits=[
                 self.emb2stop(glob),
                 self.emb2add_node(o),
                 self.emb2add_node_attr(o),
@@ -95,10 +95,10 @@ def main(smi, n_steps):
     molg = ctx.obj_to_graph(mol)
     traj = generate_forward_trajectory(molg)
     for g, a in traj:
-        print(a.action, a.source, a.target, a.value, a.relabel)
+        print(a.action, a.source, a.target, a.value)
     graphs = [ctx.graph_to_Data(i) for i, _ in traj]
     traj_batch = ctx.collate(graphs)
-    actions = [ctx.GraphAction_to_aidx(g, a) for g, a in zip(graphs, [i[1] for i in traj])]
+    actions = [ctx.GraphAction_to_ActionIndex(g, a) for g, a in zip(graphs, [i[1] for i in traj])]
 
     # Train to overfit
     for i in tqdm(range(n_steps)):
@@ -129,7 +129,7 @@ def main(smi, n_steps):
             # some probability is left on unlikely (wrong) steps
             print("oops, starting step over")
             continue
-        graph_action = ctx.aidx_to_GraphAction(tg, action)
+        graph_action = ctx.ActionIndex_to_GraphAction(tg, action)
         print(graph_action.action, graph_action.source, graph_action.target, graph_action.value)
         if graph_action.action is GraphActionType.Stop:
             break

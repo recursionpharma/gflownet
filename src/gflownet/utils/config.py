@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+from gflownet.utils.misc import StrictDataClass
+
 
 @dataclass
-class TempCondConfig:
+class TempCondConfig(StrictDataClass):
     """Config for the temperature conditional.
 
     Attributes
@@ -28,13 +30,13 @@ class TempCondConfig:
 
 
 @dataclass
-class MultiObjectiveConfig:
+class MultiObjectiveConfig(StrictDataClass):
     num_objectives: int = 2  # TODO: Change that as it can conflict with cfg.task.seh_moo.num_objectives
     num_thermometer_dim: int = 16
 
 
 @dataclass
-class WeightedPreferencesConfig:
+class WeightedPreferencesConfig(StrictDataClass):
     """Config for the weighted preferences conditional.
 
     Attributes
@@ -51,7 +53,7 @@ class WeightedPreferencesConfig:
 
 
 @dataclass
-class FocusRegionConfig:
+class FocusRegionConfig(StrictDataClass):
     """Config for the focus region conditional.
 
     Attributes
@@ -71,7 +73,7 @@ class FocusRegionConfig:
 
 
 @dataclass
-class ConditionalsConfig:
+class ConditionalsConfig(StrictDataClass):
     valid_sample_cond_info: bool = True
     temperature: TempCondConfig = field(default_factory=TempCondConfig)
     moo: MultiObjectiveConfig = field(default_factory=MultiObjectiveConfig)

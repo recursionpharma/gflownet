@@ -4,7 +4,7 @@ import json
 import re
 from collections import defaultdict
 from functools import cached_property
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -81,15 +81,31 @@ class GraphActionType(enum.Enum):
         return self.name.startswith("Remove")
 
 
+class ActionIndex(NamedTuple):
+    """
+    Represents an index for an action in the GraphBuildingEnv.
+
+    Different types of actions lead to logit matrices of different shapes,
+    for exemple GraphActionType.Stop has a shape of (1, 1), while
+    GraphActionType.AddNode has a shape of (n, m) where n is the number of
+    nodes in the graph and m is the number of possible node types (idem for edge actions).
+    It is thus convenient to represent the action as a tuple of indices.
+    """
+
+    action_type: int  # Index of the action type according to GraphActionType
+    row_idx: int  # Index of the element the action applies to (e.g. node or edge)
+    col_idx: int  # Index of the action variant (e.g. which attribute to set)
+
+
 class GraphAction:
-    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, relabel=None):
+    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None):
         """A single graph-building action
 
         Parameters
         ----------
         action: GraphActionType
             the action type
-        source: int
+        source: int, optional (e.g. GraphActionType.Stop has no source)
             the source node this action is applied on
         target: int, optional
             the target node (i.e. if specified this is an edge action)
@@ -97,15 +113,12 @@ class GraphAction:
             the set attribute of a node/edge
         value: Any, optional
             the value (e.g. new node type) applied
-        relabel: int, optional
-            for AddNode actions, relabels the new node with that id
         """
-        self.action = action
-        self.source = source
-        self.target = target
-        self.attr = attr
-        self.value = value
-        self.relabel = relabel  # TODO: deprecate this?
+        self.action: GraphActionType = action
+        self.source: Optional[int] = source
+        self.target: Optional[int] = target
+        self.attr: Optional[str] = attr
+        self.value: Optional[Any] = value
 
     def __repr__(self):
         attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
@@ -184,8 +197,6 @@ class GraphBuildingEnv:
             else:
                 assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
-                if action.relabel is not None:
-                    raise ValueError("deprecated")
                 # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
                 assert not g.has_edge(*e)
@@ -459,11 +470,11 @@ class GraphActionCategorical:
     def __init__(
         self,
         graphs: gd.Batch,
-        logits: List[torch.Tensor],
+        raw_logits: List[torch.Tensor],
         keys: List[Union[str, None]],
         types: List[GraphActionType],
         deduplicate_edge_index=True,
-        masks: List[torch.Tensor] = None,
+        action_masks: List[torch.Tensor] = None,
         slice_dict: Optional[dict[str, torch.Tensor]] = None,
     ):
         """A multi-type Categorical compatible with generating structured actions.
@@ -477,12 +488,24 @@ class GraphActionCategorical:
         provides this convenient interaction between torch_geometric
         Batch objects and lists of logit tensors.
 
+        Note on action-masking:
+        Action masks depend on the environment logic (what are allowed v.s. prohibited actions).
+        Thus, the action_masks should be created by the EnvContext (e.g. FragMolBuildingEnvContext)
+        and passed to the GraphActionCategorical as a list of tensors. However, action masks
+        should be applied to the logits within this class only to allow proper masking
+        when computing log probabilities and sampling and avoid confusion about
+        the state of the logits (masked or not) for external members.
+        For this reason, the constructor takes as input the raw (unmasked) logits and the
+        masks separately. The (masked) logits are cached in the _masked_logits attribute.
+        Both the (masked) logits and the masks are private properties, and attempts to edit the masks or the logits will
+        apply the masks to the raw_logits again.
+
         Parameters
         ----------
         graphs: Batch
             A Batch of graphs to which the logits correspond
-        logits: List[Tensor]
-            A list of tensors of shape `(n, m)` representing logits
+        raw_logits: List[Tensor]
+            A list of tensors of shape `(n, m)` representing raw (unmasked) logits
             over a variable number of graph elements (e.g. nodes) for
             which there are `m` possible actions. `n` should thus be
             equal to the sum of the number of such elements for each
@@ -504,29 +527,30 @@ class GraphActionCategorical:
             If true, this means that the 'edge_index' keys have been reduced
             by e_i[::2] (presumably because the graphs are undirected)
         masks: List[Tensor], default=None
-            If not None, a list of broadcastable tensors that multiplicatively
+            If not None, a list of broadcastable tensors that
             mask out logits of invalid actions
         slice_dist: Optional[dict[str, Tensor]], default=None
             If not None, a map of tensors that indicate the start (and end) the graph index
             of each object keyed. If None, uses the `_slice_dict` attribute of the graphs.
         """
         self.num_graphs = graphs.num_graphs
-        assert all([i.ndim == 2 for i in logits])
-        assert len(logits) == len(types) == len(keys)
-        if masks is not None:
-            assert len(logits) == len(masks)
-            assert all([i.ndim == 2 for i in masks])
+        assert all([i.ndim == 2 for i in raw_logits])
+        assert len(raw_logits) == len(types) == len(keys)
+        if action_masks is not None:
+            assert len(raw_logits) == len(action_masks)
+            assert all([i.ndim == 2 for i in action_masks])
         # The logits
-        self.logits = logits
+        self.raw_logits = raw_logits
         self.types = types
         self.keys = keys
         self.dev = dev = graphs.x.device
         self._epsilon = 1e-38
         # TODO: mask is only used by graph_sampler, but maybe we should be more careful with it
         # (e.g. in a softmax and such)
-        # Can be set to indicate which logits are masked out (shape must match logits or have
+        # Can be set to indicate which raw_logits are masked out (shape must match raw_logits or have
         # broadcast dimensions already set)
-        self.masks: List[Any] = masks
+        self._action_masks: List[Any] = action_masks
+        self._apply_action_masks()
 
         # I'm extracting batches and slices in a slightly hackish way,
         # but I'm not aware of a proper API to torch_geometric that
@@ -562,9 +586,38 @@ class GraphActionCategorical:
                 self.batch[idx] = self.batch[idx][::2]
                 self.slice[idx] = self.slice[idx].div(2, rounding_mode="floor")
 
+    @property
+    def logits(self):
+        return self._masked_logits
+
+    @logits.setter
+    def logits(self, new_raw_logits):
+        self.raw_logits = new_raw_logits
+        self._apply_action_masks()
+
+    @property
+    def action_masks(self):
+        return self._action_masks
+
+    @action_masks.setter
+    def action_masks(self, new_action_masks):
+        self._action_masks = new_action_masks
+        self._apply_action_masks()
+
+    def _apply_action_masks(self):
+        self._masked_logits = (
+            [self._mask(logits, mask) for logits, mask in zip(self.raw_logits, self._action_masks)]
+            if self._action_masks is not None
+            else self.raw_logits
+        )
+
+    def _mask(self, x, m):
+        assert m.dtype == torch.float
+        return x.masked_fill(m == 0.0, -torch.inf)
+
     def detach(self):
         new = copy.copy(self)
-        new.logits = [i.detach() for i in new.logits]
+        new._masked_logits = [i.detach() for i in new._masked_logits]
         if new.logprobs is not None:
             new.logprobs = [i.detach() for i in new.logprobs]
         if new.log_n is not None:
@@ -573,15 +626,15 @@ class GraphActionCategorical:
 
     def to(self, device):
         self.dev = device
-        self.logits = [i.to(device) for i in self.logits]
+        self._masked_logits = [i.to(device) for i in self._masked_logits]
         self.batch = [i.to(device) for i in self.batch]
         self.slice = [i.to(device) for i in self.slice]
         if self.logprobs is not None:
             self.logprobs = [i.to(device) for i in self.logprobs]
         if self.log_n is not None:
             self.log_n = self.log_n.to(device)
-        if self.masks is not None:
-            self.masks = [i.to(device) for i in self.masks]
+        if self._action_masks is not None:
+            self._action_masks = [i.to(device) for i in self._action_masks]
         return self
 
     def log_n_actions(self):
@@ -590,7 +643,7 @@ class GraphActionCategorical:
                 sum(
                     [
                         scatter(m.broadcast_to(i.shape).int().sum(1), b, dim=0, dim_size=self.num_graphs, reduce="sum")
-                        for m, i, b in zip(self.masks, self.logits, self.batch)
+                        for m, i, b in zip(self._action_masks, self._masked_logits, self.batch)
                     ]
                 )
                 .clamp(1)
@@ -612,7 +665,7 @@ class GraphActionCategorical:
         Parameters
         ----------
         x: List[torch.Tensor]
-            A list of tensors of shape `(n, m)` (e.g. representing logits)
+            A list of tensors of shape `(n, m)` (e.g. representing _masked_logits)
         detach: bool, default=True
             If true, detach the tensors before computing the max
         batch: List[torch.Tensor], default=None
@@ -647,10 +700,10 @@ class GraphActionCategorical:
         if self.logprobs is not None:
             return self.logprobs
         # Use the `subtract by max` trick to avoid precision errors.
-        maxl = self._compute_batchwise_max(self.logits).values
+        maxl = self._compute_batchwise_max(self._masked_logits).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
-        corr_logits = [(i - maxl[b, None]) for i, b in zip(self.logits, self.batch)]
+        corr_logits = [(i - maxl[b, None]) for i, b in zip(self._masked_logits, self.batch)]
         exp_logits = [i.exp().clamp(self._epsilon) for i, b in zip(corr_logits, self.batch)]
         # sum corrected exponentiated logits, to get log(Z') = log(Z - max) = log(sum(exp(logits - max)))
         logZ = sum(
@@ -664,26 +717,26 @@ class GraphActionCategorical:
         return self.logprobs
 
     def logsumexp(self, x=None):
-        """Reduces `x` (the logits by default) to one scalar per graph"""
+        """Reduces `x` (the _masked_logits by default) to one scalar per graph"""
         if x is None:
-            x = self.logits
+            x = self._masked_logits
         # Use the `subtract by max` trick to avoid precision errors.
         maxl = self._compute_batchwise_max(x).values
         # substract by max then take exp
         # x[b, None] indexes by the batch to map back to each node/edge and adds a broadcast dim
         exp_vals = [(i - maxl[b, None]).exp().clamp(self._epsilon) for i, b in zip(x, self.batch)]
-        # sum corrected exponentiated logits, to get log(Z - max) = log(sum(exp(logits)) - max)
+        # sum corrected exponentiated _masked_logits, to get log(Z - max) = log(sum(exp(_masked_logits)) - max)
         reduction = sum(
             [scatter(i, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1) for i, b in zip(exp_vals, self.batch)]
         ).log()
         # Add back max
         return reduction + maxl
 
-    def sample(self) -> List[Tuple[int, int, int]]:
+    def sample(self) -> List[ActionIndex]:
         """Samples this categorical
         Returns
         -------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of indices representing [action type, element index, action index]. See constructor.
         """
         # Use the Gumbel trick to sample categoricals
@@ -695,35 +748,18 @@ class GraphActionCategorical:
         # mutually exclusive).
 
         # Uniform noise
-        u = [torch.rand(i.shape, device=self.dev) for i in self.logits]
+        u = [torch.rand(i.shape, device=self.dev) for i in self._masked_logits]
         # Gumbel noise
-        gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self.logits, u)]
-
-        if self.masks is not None:
-            gumbel_safe = [
-                torch.where(
-                    mask == 1,
-                    torch.maximum(
-                        x,
-                        torch.nextafter(
-                            torch.tensor(torch.finfo(x.dtype).min, dtype=x.dtype), torch.tensor(0.0, dtype=x.dtype)
-                        ).to(x.device),
-                    ),
-                    torch.finfo(x.dtype).min,
-                )
-                for x, mask in zip(gumbel, self.masks)
-            ]
-        else:
-            gumbel_safe = gumbel
+        gumbel = [logit - (-noise.log()).log() for logit, noise in zip(self._masked_logits, u)]
         # Take the argmax
-        return self.argmax(x=gumbel_safe)
+        return self.argmax(x=gumbel)
 
     def argmax(
         self,
         x: List[torch.Tensor],
         batch: List[torch.Tensor] = None,
         dim_size: int = None,
-    ) -> List[Tuple[int, int, int]]:
+    ) -> List[ActionIndex]:
         """Takes the argmax, i.e. if x are the logits, returns the most likely action.
 
         Parameters
@@ -736,7 +772,7 @@ class GraphActionCategorical:
             The reduction dimension, default `self.num_graphs`.
         Returns
         -------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of indices representing [action type, element index, action index]. See constructor.
         """
         # scatter_max and .max create a (values, indices) pair
@@ -769,18 +805,22 @@ class GraphActionCategorical:
             t = type_max_idx[i]
             # Subtract from the slice of that type and index, since the computed
             # row position is batch-wise rather graph-wise
-            argmaxes.append((int(t), int(row_pos[t][i] - self.slice[t][i]), int(col_max[t][1][i])))
+            argmaxes.append(
+                ActionIndex(
+                    action_type=int(t), row_idx=int(row_pos[t][i] - self.slice[t][i]), col_idx=int(col_max[t][1][i])
+                )
+            )
         # It's now up to the Context class to create GraphBuildingAction instances
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[Tuple[int, int, int]], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
         Parameters
         ----------
-        actions: List[Tuple[int, int, int]]
+        actions: List[ActionIndex]
             A list of n action tuples denoting indices
         logprobs: List[Tensor]
             [Optional] The log-probablities to be indexed (self.logsoftmax() by default) in order (i.e. this
@@ -803,7 +843,7 @@ class GraphActionCategorical:
         #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
         # but faster.
 
-        # each action is a 3-tuple, (type, row, column), where type is the index of the action type group.
+        # each action is a 3-tuple ActionIndex (type, row, column), where type is the index of the action type group.
         actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
@@ -862,13 +902,13 @@ class GraphBuildingEnvContext:
     action_type_order: List[GraphActionType]
     bck_action_type_order: List[GraphActionType]
 
-    def aidx_to_GraphAction(self, g: gd.Data, action_idx: Tuple[int, int, int], fwd: bool = True) -> GraphAction:
+    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
         Parameters
         ----------
         g: gd.Data
             The graph to which the action is being applied
-        action_idx: Tuple[int, int, int]
+        aidx: ActionIndex
             The tensor indices for the corresponding action
         fwd: bool
             If True (default) then this is a forward action
@@ -880,8 +920,8 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def GraphAction_to_aidx(self, g: gd.Data, action: GraphAction) -> Tuple[int, int, int]:
-        """Translate a GraphAction to an action index (e.g. from a GraphActionCategorical)
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+        """Translate a GraphAction to an ActionIndex (e.g. from a GraphActionCategorical)
         Parameters
         ----------
         g: gd.Data
@@ -891,13 +931,15 @@ class GraphBuildingEnvContext:
 
         Returns
         -------
-        action_idx: Tuple[int, int, int]
+        aidx: ActionIndex
             The tensor indices for the corresponding action
         """
         raise NotImplementedError()
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
+        The logic to build masks for prohibited actions can be implemented here,
+        packed in the data object and used in the GraphActionCategorical.
         Parameters
         ----------
         g: Graph
@@ -976,3 +1018,9 @@ class GraphBuildingEnvContext:
 
     def traj_log_n(self, traj):
         return [self.log_n(g) for g, _ in traj]
+
+
+def action_type_to_mask(t: GraphActionType, gbatch: gd.Batch, assert_mask_exists: bool = False):
+    if assert_mask_exists:
+        assert hasattr(gbatch, t.mask_name), f"Mask {t.mask_name} not found in graph data"
+    return getattr(gbatch, t.mask_name) if hasattr(gbatch, t.mask_name) else torch.ones((1, 1), device=gbatch.x.device)
