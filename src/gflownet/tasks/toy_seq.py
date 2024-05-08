@@ -45,6 +45,7 @@ class ToySeqTrainer(StandardOnlineTrainer):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
         cfg.num_workers = 8
+        cfg.num_validation_gen_steps = 1
         cfg.opt.learning_rate = 1e-4
         cfg.opt.weight_decay = 1e-8
         cfg.opt.momentum = 0.9

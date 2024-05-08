@@ -232,7 +232,6 @@ class SEHMOOFragTrainer(SEHFragTrainer):
     def setup_task(self):
         self.cfg.cond.moo.num_objectives = len(self.cfg.task.seh_moo.objectives)
         self.task = SEHMOOTask(
-            dataset=self.training_data,
             cfg=self.cfg,
             wrap_model=self._wrap_for_mp,
         )

@@ -1,5 +1,6 @@
 # This code is adapted from https://github.com/MJ10/mo_gfn
 import math
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -51,13 +52,19 @@ class SeqTransformerGFN(nn.Module):
         self.embedding = nn.Embedding(env_ctx.num_tokens, num_hid)
         encoder_layers = nn.TransformerEncoderLayer(num_hid, mc.seq_transformer.num_heads, num_hid, dropout=mc.dropout)
         self.encoder = nn.TransformerEncoder(encoder_layers, mc.num_layers)
-        self.logZ = nn.Linear(env_ctx.num_cond_dim, 1)
+        self._logZ = nn.Linear(env_ctx.num_cond_dim, 1)
         if self.use_cond:
             self.output = MLPWithDropout(num_hid + num_hid, num_outs, [4 * num_hid, 4 * num_hid], mc.dropout)
             self.cond_embed = nn.Linear(env_ctx.num_cond_dim, num_hid)
         else:
             self.output = MLPWithDropout(num_hid, num_outs, [2 * num_hid, 2 * num_hid], mc.dropout)
         self.num_hid = num_hid
+
+    def logZ(self, cond_info: Optional[torch.Tensor]):
+        if cond_info is None:
+            return self._logZ(torch.ones((1, 1), device=self._logZ.weight.device))
+        return self._logZ(cond_info)
+
 
     def forward(self, xs: SeqBatch, cond, batched=False):
         """Returns a GraphActionCategorical and a tensor of state predictions.
