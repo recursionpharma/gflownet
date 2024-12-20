@@ -79,18 +79,19 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    'bandit[toml]',
-    'black',
-    'isort',
-    'mypy',
-    'pip-compile-cross-platform',
-    'pre-commit',
-    'pytest',
-    'pytest-cov',
-    'ruff',
-    'tox',
-    'typeguard',
-    'gitpython>=3.1.30',
+    "bandit[toml]",
+    "black",
+    "isort",
+    "mypy",
+    "pip-compile-cross-platform",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "tox",
+    "typeguard",
+    # Security pin
+    "gitpython>=3.1.30",
 ]
 
 [[project.authors]]
