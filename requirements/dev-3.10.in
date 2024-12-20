@@ -9,5 +9,4 @@ pytest
 pytest-cov
 ruff
 tox
-types-pkg_resources
 gitpython>=3.1.30
