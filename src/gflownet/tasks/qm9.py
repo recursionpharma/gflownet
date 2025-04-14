@@ -70,7 +70,7 @@ class QM9GapTask(GFNTask):
                 "Could not load model.",
                 e,
                 "\nModel weights can be found at",
-                "https://storage.googleapis.com/emmanuel-data/models/mxmnet_gap_model.pt",
+                "https://storage.valencelabs.com/gflownet/models/mxmnet_gap_model.pt",
             )
         gap_model.load_state_dict(state_dict)
         gap_model.to(self.device)
