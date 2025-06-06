@@ -1,3 +1,5 @@
+[![scorecard-score](https://github.com/recursionpharma/octo-guard-badges/blob/trunk/badges/repo/gflownet/maturity_score.svg?raw=true)](https://infosec-docs.prod.rxrx.io/octoguard/scorecards/gflownet)
+[![scorecard-status](https://github.com/recursionpharma/octo-guard-badges/blob/trunk/badges/repo/gflownet/scorecard_status.svg?raw=true)](https://infosec-docs.prod.rxrx.io/octoguard/scorecards/gflownet)
 
 
 [![Build-and-Test](https://github.com/recursionpharma/gflownet/actions/workflows/build-and-test.yaml/badge.svg)](https://github.com/recursionpharma/gflownet/actions/workflows/build-and-test.yaml)
