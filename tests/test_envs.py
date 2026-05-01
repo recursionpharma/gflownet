@@ -3,11 +3,19 @@ import pickle
 
 import networkx as nx
 import pytest
+from rdkit.Chem.rdchem import BondType
 
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.config import Config
 from gflownet.envs.frag_mol_env import FragMolBuildingEnvContext
-from gflownet.envs.graph_building_env import ActionIndex, GraphBuildingEnv, GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import (
+    ActionIndex,
+    Graph,
+    GraphAction,
+    GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
+)
 from gflownet.envs.mol_building_env import MolBuildingEnvContext
 from gflownet.models import bengio2021flow
 
@@ -175,3 +183,28 @@ def test_backwards_action_mask_equivalence_atom(two_node_states_atoms):
 
 def test_backwards_action_mask_equivalence_ipa_atom(two_node_states_atoms):
     _test_backwards_action_mask_equivalence_ipa(two_node_states_atoms, get_atom_env_ctx())
+
+
+def test_atom_backwards_mask_disallows_removing_attributed_edges():
+    ctx = MolBuildingEnvContext(atoms=["C"], expl_H_range=[0], charges=[0], max_nodes=3)
+    env = GraphBuildingEnv()
+    g = Graph()
+    for i in range(3):
+        g.add_node(i, v="C")
+    g.add_edge(0, 1)
+    g.add_edge(1, 2, type=BondType.DOUBLE)
+    g.add_edge(0, 2)
+
+    gd = ctx.graph_to_Data(g)
+    remove_edge_idx = ctx.GraphAction_to_ActionIndex(
+        gd, GraphAction(GraphActionType.RemoveEdge, source=1, target=2)
+    )
+    remove_edge_attr_idx = ctx.GraphAction_to_ActionIndex(
+        gd, GraphAction(GraphActionType.RemoveEdgeAttr, source=1, target=2, attr="type")
+    )
+
+    assert gd.remove_edge_mask[remove_edge_idx.row_idx, remove_edge_idx.col_idx].item() == 0
+    assert gd.remove_edge_attr_mask[remove_edge_attr_idx.row_idx, remove_edge_attr_idx.col_idx].item() == 1
+    assert env.count_backward_transitions(g, check_idempotent=False) == sum(
+        getattr(gd, action_type.mask_name).sum().item() for action_type in ctx.bck_action_type_order
+    )
