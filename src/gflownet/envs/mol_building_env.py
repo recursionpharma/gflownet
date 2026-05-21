@@ -326,7 +326,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
         remove_edge_mask = np.zeros((len(g.edges), 1), dtype=np.float32)
         for i, e in enumerate(g.edges):
-            if e not in bridges:
+            if e not in bridges and len(g.edges[e]) == 0:
                 remove_edge_mask[i] = 1
 
         edge_attr = np.zeros((len(g.edges) * 2, self.num_edge_dim), dtype=np.float32)
