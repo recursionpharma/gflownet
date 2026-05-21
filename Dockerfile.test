@@ -1,4 +1,4 @@
-FROM gcr.io/eng-infrastructure/rxrx-pyenv as test
+FROM us-central1-docker.pkg.dev/eng-ops-b1bb36c9/container-images/rxrx-pyenv:v2025.03.01 as test
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 
