@@ -56,6 +56,7 @@ keywords = ["gflownet"]
 requires-python = ">=3.10,<3.11"
 dynamic = ["version"]
 dependencies = [
+    "numpy<2.0.0",
     "torch==2.1.2",
     "torch-geometric==2.4.0",
     "torch-scatter==2.1.2",

@@ -7,6 +7,7 @@ from gflownet.algo.config import AlgoConfig
 from gflownet.data.config import ReplayConfig
 from gflownet.models.config import ModelConfig
 from gflownet.tasks.config import TasksConfig
+from gflownet.utils.communication.config import CommunicationConfig
 from gflownet.utils.config import ConditionalsConfig
 from gflownet.utils.misc import StrictDataClass
 
@@ -108,6 +109,7 @@ class Config(StrictDataClass):
     replay: ReplayConfig = field(default_factory=ReplayConfig)
     task: TasksConfig = field(default_factory=TasksConfig)
     cond: ConditionalsConfig = field(default_factory=ConditionalsConfig)
+    communication: CommunicationConfig = field(default_factory=CommunicationConfig)
 
 
 def init_empty(cfg):
