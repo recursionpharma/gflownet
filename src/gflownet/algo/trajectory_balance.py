@@ -276,14 +276,17 @@ class TrajectoryBalance(GFNAlgorithm):
         lmask = getattr(gd, action.action.mask_name)
         nz = lmask.nonzero()  # Legal actions are those with a nonzero mask value
         actions = [iaction if return_aidx else action]
+        gp_n = len(gp)
+        gp_e = gp.number_of_edges()
         for i in nz:
             aidx = ActionIndex(action_type=iaction[0], row_idx=i[0].item(), col_idx=i[1].item())
             if aidx == iaction:
                 continue
             ga = self.ctx.ActionIndex_to_GraphAction(gd, aidx, fwd=not action.action.is_backward)
             child = self.env.step(g, ga)
-            if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
-                actions.append(aidx if return_aidx else ga)
+            if len(child) == gp_n and child.number_of_edges() == gp_e:
+                if nx.algorithms.is_isomorphic(child, gp, lambda a, b: a == b, lambda a, b: a == b):
+                    actions.append(aidx if return_aidx else ga)
         return actions
 
     def construct_batch(self, trajs, cond_info, log_rewards):
