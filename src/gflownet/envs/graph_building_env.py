@@ -249,7 +249,7 @@ class GraphBuildingEnv:
         parents: List[Pair(GraphAction, Graph)]
             The list of parent-action pairs that lead to `g`.
         """
-        parents: List[Tuple[GraphAction, Graph]] = []
+        parents: List[Tuple[GraphAction, Graph, int, int]] = []
         # Count node degrees
         degree: Dict[int, int] = defaultdict(int)
         for a, b in g.edges:
@@ -259,11 +259,14 @@ class GraphBuildingEnv:
         def add_parent(a, new_g):
             # Only add parent if the proposed parent `new_g` is not isomorphic
             # to already identified parents
-            for ap, gp in parents:
+            n_nodes = len(new_g)
+            n_edges = new_g.number_of_edges()
+            for ap, gp, gp_n, gp_e in parents:
                 # Here we are relying on the dict equality operator for nodes and edges
-                if is_isomorphic(new_g, gp, lambda a, b: a == b, lambda a, b: a == b):
-                    return
-            parents.append((a, new_g))
+                if n_nodes == gp_n and n_edges == gp_e:
+                    if is_isomorphic(new_g, gp, lambda a, b: a == b, lambda a, b: a == b):
+                        return
+            parents.append((a, new_g, n_nodes, n_edges))
 
         for a, b in g.edges:
             if degree[a] > 1 and degree[b] > 1 and len(g.edges[(a, b)]) == 0:
@@ -305,7 +308,7 @@ class GraphBuildingEnv:
                     GraphAction(GraphActionType.SetNodeAttr, source=i, attr=k, value=g.nodes[i][k]),
                     graph_without_node_attr(g, i, k),
                 )
-        return parents
+        return [(ap, gp) for ap, gp, _, _ in parents]
 
     def count_backward_transitions(self, g: Graph, check_idempotent: bool = False):
         """Counts the number of parents of g (by default, without checking for isomorphisms)"""
