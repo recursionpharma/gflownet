@@ -34,7 +34,8 @@ class MultiObjectiveReinforce(TrajectoryBalance):
         batch_idx = torch.arange(num_trajs, device=dev).repeat_interleave(batch.traj_lens)
 
         # Forward pass of the model, returns a GraphActionCategorical and the optional bootstrap predictions
-        fwd_cat, log_reward_preds = model(batch, cond_info[batch_idx])
+        batch.cond_info = cond_info[batch_idx]
+        fwd_cat, log_reward_preds = model(batch)
 
         # This is the log prob of each action in the trajectory
         log_prob = fwd_cat.log_prob(batch.actions)

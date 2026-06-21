@@ -4,13 +4,14 @@ import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter
 
+from gflownet import GFNAlgorithm
 from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 from gflownet.utils.misc import get_worker_device
 
 
-class SoftQLearning:
+class SoftQLearning(GFNAlgorithm):
     def __init__(
         self,
         env: GraphBuildingEnv,
@@ -33,6 +34,7 @@ class SoftQLearning:
         cfg: Config
             The experiment configuration
         """
+        self.global_cfg = cfg
         self.ctx = ctx
         self.env = env
         self.max_len = cfg.algo.max_len
@@ -147,7 +149,8 @@ class SoftQLearning:
 
         # Forward pass of the model, returns a GraphActionCategorical and per object predictions
         # Here we will interpret the logits of the fwd_cat as Q values
-        Q, per_state_preds = model(batch, cond_info[batch_idx])
+        batch.cond_info = cond_info[batch_idx]
+        Q, per_state_preds = model(batch)
 
         if self.do_q_prime_correction:
             # First we need to estimate V_soft. We will use q_a' = \pi

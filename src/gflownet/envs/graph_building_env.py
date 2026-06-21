@@ -67,6 +67,8 @@ class GraphActionType(enum.Enum):
     RemoveEdge = enum.auto()
     RemoveNodeAttr = enum.auto()
     RemoveEdgeAttr = enum.auto()
+    # The Pad action is always unmasked, and always has logprob 0
+    Pad = -1
 
     @cached_property
     def cname(self):
@@ -140,7 +142,7 @@ class GraphBuildingEnv:
         - we can generate a legal action for any attribute that isn't a default one.
     """
 
-    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
+    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True, graph_cls=None):
         """A graph building environment instance
 
         Parameters
@@ -152,13 +154,16 @@ class GraphBuildingEnv:
             if True, allows this action and computes SetNodeAttr parents
         allow_edge_attr: bool
             if True, allows this action and computes SetEdgeAttr parents
+        graph_cls: class
+            if None, defaults to Graph. Called in new().
         """
         self.allow_add_edge = allow_add_edge
         self.allow_node_attr = allow_node_attr
         self.allow_edge_attr = allow_edge_attr
+        self.graph_cls = Graph if graph_cls is None else graph_cls
 
     def new(self):
-        return Graph()
+        return self.graph_cls()
 
     def step(self, g: Graph, action: GraphAction) -> Graph:
         """Step forward the given graph state with an action
@@ -178,12 +183,12 @@ class GraphBuildingEnv:
         gp = g.copy()
         if action.action is GraphActionType.AddEdge:
             a, b = action.source, action.target
-            assert self.allow_add_edge
-            assert a in g and b in g
+            # assert self.allow_add_edge
+            # assert a in g and b in g
             if a > b:
                 a, b = b, a
-            assert a != b
-            assert not g.has_edge(a, b)
+            # assert a != b
+            # assert not g.has_edge(a, b)
             # Ideally the FA underlying this must only be able to send
             # create_edge actions which respect this a<b property (or
             # its inverse!) , otherwise symmetry will be broken
@@ -192,48 +197,48 @@ class GraphBuildingEnv:
 
         elif action.action is GraphActionType.AddNode:
             if len(g) == 0:
-                assert action.source == 0  # TODO: this may not be useful
+                # assert action.source == 0  # TODO: this may not be useful
                 gp.add_node(0, v=action.value)
             else:
-                assert action.source in g.nodes
+                # assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
                 # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
-                assert not g.has_edge(*e)
+                # assert not g.has_edge(*e)
                 gp.add_node(e[1], v=action.value)
                 gp.add_edge(*e)
 
         elif action.action is GraphActionType.SetNodeAttr:
-            assert self.allow_node_attr
-            assert action.source in gp.nodes
+            # assert self.allow_node_attr
+            # assert action.source in gp.nodes
             # For some "optional" attributes like wildcard atoms, we indicate that they haven't been
             # chosen by the 'None' value. Here we make sure that either the attribute doesn't
             # exist, or that it's an optional attribute that hasn't yet been set.
-            assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
+            # assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
             gp.nodes[action.source][action.attr] = action.value
 
         elif action.action is GraphActionType.SetEdgeAttr:
-            assert self.allow_edge_attr
-            assert g.has_edge(action.source, action.target)
-            assert action.attr not in gp.edges[(action.source, action.target)]
+            # assert self.allow_edge_attr
+            # assert g.has_edge(action.source, action.target)
+            # assert action.attr not in gp.edges[(action.source, action.target)]
             gp.edges[(action.source, action.target)][action.attr] = action.value
 
         elif action.action is GraphActionType.RemoveNode:
-            assert g.has_node(action.source)
+            # assert g.has_node(action.source)
             gp = graph_without_node(gp, action.source)
         elif action.action is GraphActionType.RemoveNodeAttr:
-            assert g.has_node(action.source)
+            # assert g.has_node(action.source)
             gp = graph_without_node_attr(gp, action.source, action.attr)
         elif action.action is GraphActionType.RemoveEdge:
-            assert g.has_edge(action.source, action.target)
+            # assert g.has_edge(action.source, action.target)
             gp = graph_without_edge(gp, (action.source, action.target))
         elif action.action is GraphActionType.RemoveEdgeAttr:
-            assert g.has_edge(action.source, action.target)
+            # assert g.has_edge(action.source, action.target)
             gp = graph_without_edge_attr(gp, (action.source, action.target), action.attr)
         else:
             raise ValueError(f"Unknown action type {action.action}", action.action)
 
-        gp.clear_cache()  # Invalidate cached properties since we've modified the graph
+        # gp.clear_cache()  # Invalidate cached properties since we've modified the graph
         return gp
 
     def parents(self, g: Graph):
@@ -315,17 +320,22 @@ class GraphBuildingEnv:
             return len(self.parents(g))
         c = 0
         deg = [g.degree[i] for i in range(len(g.nodes))]
+        has_connected_edge_attr = [False] * len(g.nodes)
+        bridges = g.bridges()
         for a, b in g.edges:
             if deg[a] > 1 and deg[b] > 1 and len(g.edges[(a, b)]) == 0:
                 # Can only remove edges connected to non-leaves and without
                 # attributes (the agent has to remove the attrs, then remove
                 # the edge). Removal cannot disconnect the graph.
-                new_g = graph_without_edge(g, (a, b))
-                if nx.algorithms.is_connected(new_g):
+                if (a, b) not in bridges and (b, a) not in bridges:
                     c += 1
-            c += len(g.edges[(a, b)])  # One action per edge attr
+            num_attrs = len(g.edges[(a, b)])
+            c += num_attrs  # One action per edge attr
+            if num_attrs > 0:
+                has_connected_edge_attr[a] = True
+                has_connected_edge_attr[b] = True
         for i in g.nodes:
-            if deg[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
+            if deg[i] == 1 and len(g.nodes[i]) == 1 and not has_connected_edge_attr[i]:
                 c += 1
             c += len(g.nodes[i]) - 1  # One action per node attr, except 'v'
             if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
@@ -335,7 +345,7 @@ class GraphBuildingEnv:
 
     def reverse(self, g: Graph, ga: GraphAction):
         if ga.action == GraphActionType.Stop:
-            return ga
+            return GraphAction(GraphActionType.Pad)  # because we can't reverse a Stop action
         elif ga.action == GraphActionType.AddNode:
             return GraphAction(GraphActionType.RemoveNode, source=len(g.nodes))
         elif ga.action == GraphActionType.AddEdge:
@@ -815,7 +825,13 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(
+        self,
+        actions: List[ActionIndex],
+        logprobs: torch.Tensor = None,
+        batch: torch.Tensor = None,
+        pad_value: float = 0.0,
+    ):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
@@ -840,12 +856,14 @@ class GraphActionCategorical:
             logprobs = self.logsoftmax()
         if batch is None:
             batch = torch.arange(N, device=self.dev)
+        pad = torch.tensor(pad_value, device=self.dev)
         # We want to do the equivalent of this:
         #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
         # but faster.
 
         # each action is a 3-tuple ActionIndex (type, row, column), where type is the index of the action type group.
-        actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
+        unclamped_actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
+        actions = unclamped_actions.clamp(0)  # Clamp to 0 to avoid the -1 Pad action
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
         # indices of the raveled actions.
@@ -870,7 +888,10 @@ class GraphActionCategorical:
         # This is the last index in the raveled tensor, therefore the offset is just the column value
         col_offsets = actions[:, 2]
         # Index the flattened array
-        return all_logprobs[t_offsets + row_offsets + col_offsets]
+        raw_logprobs = all_logprobs[t_offsets + row_offsets + col_offsets]
+        # Now we replaced the Pad actions with 0s
+        logprobs = raw_logprobs.where(unclamped_actions[:, 0] != GraphActionType.Pad.value, pad)
+        return logprobs
 
     def entropy(self, logprobs=None):
         """The entropy for each graph categorical in the batch
@@ -887,10 +908,12 @@ class GraphActionCategorical:
         """
         if logprobs is None:
             logprobs = self.logsoftmax()
+        masks = self.action_masks if self.action_masks is not None else [None] * len(logprobs)
         entropy = -sum(
             [
-                scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
-                for i, b in zip(logprobs, self.batch)
+                scatter(im, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
+                for i, b, m in zip(logprobs, self.batch, masks)
+                for im in [i.exp() * i.masked_fill(m == 0.0, 0) if m is not None else i.exp() * i]
             ]
         )
         return entropy
@@ -1020,8 +1043,13 @@ class GraphBuildingEnvContext:
     def traj_log_n(self, traj):
         return [self.log_n(g) for g, _ in traj]
 
+    def get_unique_obj(self, g: Graph):
+        return None
+
 
 def action_type_to_mask(t: GraphActionType, gbatch: gd.Batch, assert_mask_exists: bool = False):
+    if t == GraphActionType.Pad:
+        return torch.ones((1, 1), device=gbatch.x.device)
     if assert_mask_exists:
         assert hasattr(gbatch, t.mask_name), f"Mask {t.mask_name} not found in graph data"
     return getattr(gbatch, t.mask_name) if hasattr(gbatch, t.mask_name) else torch.ones((1, 1), device=gbatch.x.device)

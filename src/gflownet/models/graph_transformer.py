@@ -20,6 +20,61 @@ def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
     return nn.Sequential(*sum([[nn.Linear(n[i], n[i + 1]), act()] for i in range(n_layer + 1)], [])[:-1])
 
 
+class GTGENLayer(nn.Module):
+    def __init__(self, num_emb, num_heads, concat, num_mlp_layers, ln_type):
+        super().__init__()
+        assert ln_type in ["pre", "post"]
+        self.ln_type = ln_type
+        n_att = num_emb * num_heads if concat else num_emb
+        self.gen = gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None)
+        self.conv = gnn.TransformerConv(num_emb * 2, n_att // num_heads, edge_dim=num_emb, heads=num_heads)
+        self.linear = nn.Linear(n_att, num_emb)
+        self.norm1 = gnn.LayerNorm(num_emb, affine=False)
+        self.ff = mlp(num_emb, num_emb * 4, num_emb, num_mlp_layers)
+        self.norm2 = gnn.LayerNorm(num_emb, affine=False)
+        self.cscale = nn.Linear(num_emb, num_emb * 2)
+
+    def forward(self, x, edge_index, edge_attr, batch, c):
+        cs = self.cscale(c)
+        if self.ln_type == "post":
+            agg = self.gen(x, edge_index, edge_attr)
+            l_h = self.linear(self.conv(torch.cat([x, agg], 1), edge_index, edge_attr))
+            scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+            x = self.norm1(x + l_h * scale + shift, batch)
+            x = self.norm2(x + self.ff(x), batch)
+        else:
+            x_norm = self.norm1(x, batch)
+            agg = self.gen(x_norm, edge_index, edge_attr)
+            l_h = self.linear(self.conv(torch.cat([x, agg], 1), edge_index, edge_attr))
+            scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+            x = x + l_h * scale + shift
+            x = x + self.ff(self.norm2(x, batch))
+        return x
+
+
+class GPSLayer(nn.Module):
+    def __init__(self, num_emb, num_heads, num_mlp_layers, residual=False):
+        super().__init__()
+        self.conv = gnn.GPSConv(
+            num_emb,
+            gnn.GINEConv(mlp(num_emb, num_emb, num_emb, num_mlp_layers), edge_dim=num_emb),
+            num_heads,
+            norm="layer_norm",
+        )
+        self.cscale = nn.Linear(num_emb, num_emb * 2)
+        self.residual = residual
+
+    def forward(self, x, edge_index, edge_attr, batch, c):
+        cs = self.cscale(c)
+        l_h = self.conv(x, edge_index, batch, edge_attr=edge_attr)
+        scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+        if self.residual:
+            x = x + l_h * scale + shift
+        else:
+            x = l_h * scale + shift
+        return x
+
+
 class GraphTransformer(nn.Module):
     """An agnostic GraphTransformer class, and the main model used by other model classes
 
@@ -34,7 +89,18 @@ class GraphTransformer(nn.Module):
     """
 
     def __init__(
-        self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True
+        self,
+        x_dim,
+        e_dim,
+        g_dim,
+        num_emb=64,
+        num_layers=3,
+        num_heads=2,
+        num_noise=0,
+        ln_type="pre",
+        concat=True,
+        num_mlp_layers=1,
+        conv_type="Transformer",
     ):
         """
         Parameters
@@ -65,32 +131,20 @@ class GraphTransformer(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         self.num_noise = num_noise
-        assert ln_type in ["pre", "post"]
         self.ln_type = ln_type
+        self.conv_type = conv_type
 
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
         self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
-        n_att = num_emb * num_heads if concat else num_emb
-        self.graph2emb = nn.ModuleList(
-            sum(
-                [
-                    [
-                        gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None),
-                        gnn.TransformerConv(num_emb * 2, n_att // num_heads, edge_dim=num_emb, heads=num_heads),
-                        nn.Linear(n_att, num_emb),
-                        gnn.LayerNorm(num_emb, affine=False),
-                        mlp(num_emb, num_emb * 4, num_emb, 1),
-                        gnn.LayerNorm(num_emb, affine=False),
-                        nn.Linear(num_emb, num_emb * 2),
-                    ]
-                    for i in range(self.num_layers)
-                ],
-                [],
+        if conv_type == "Transformer":
+            self.gnn = nn.ModuleList(
+                [GTGENLayer(num_emb, num_heads, concat, num_mlp_layers, ln_type) for _ in range(num_layers)]
             )
-        )
+        elif conv_type == "GPS":
+            self.gnn = nn.ModuleList([GPSLayer(num_emb, num_heads, num_mlp_layers) for _ in range(num_layers)])
 
-    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
+    def forward(self, g: gd.Batch):
         """Forward pass
 
         Parameters
@@ -112,41 +166,37 @@ class GraphTransformer(nn.Module):
             x = g.x
         o = self.x2h(x)
         e = self.e2h(g.edge_attr)
-        c = self.c2h(cond if cond is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
+        c = self.c2h(g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
         num_total_nodes = g.x.shape[0]
-        # Augment the edges with a new edge to the conditioning
-        # information node. This new node is connected to every node
-        # within its graph.
-        u, v = torch.arange(num_total_nodes, device=o.device), g.batch + num_total_nodes
-        aug_edge_index = torch.cat([g.edge_index, torch.stack([u, v]), torch.stack([v, u])], 1)
-        e_p = torch.zeros((num_total_nodes * 2, e.shape[1]), device=g.x.device)
-        e_p[:, 0] = 1  # Manually create a bias term
-        aug_e = torch.cat([e, e_p], 0)
-        aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, "mean")
-        aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
+        if self.conv_type == "Transformer":
+            # Augment the edges with a new edge to the conditioning
+            # information node. This new node is connected to every node
+            # within its graph.
+            u, v = torch.arange(num_total_nodes, device=o.device), g.batch + num_total_nodes
+            aug_edge_index = torch.cat([g.edge_index, torch.stack([u, v]), torch.stack([v, u])], 1)
+            e_p = torch.zeros((num_total_nodes * 2, e.shape[1]), device=g.x.device)
+            e_p[:, 0] = 1  # Manually create a bias term
+            aug_e = torch.cat([e, e_p], 0)
+            aug_edge_index, aug_e = add_self_loops(aug_edge_index, aug_e, "mean")
+            aug_batch = torch.cat([g.batch, torch.arange(c.shape[0], device=o.device)], 0)
+            # Append the conditioning information node embedding to o
+            o = torch.cat([o, c], 0)
+        else:
+            # GPS doesn't really need a virtual node since it's doing global pairwise attention
+            o = o + c[g.batch]
+            aug_batch = g.batch
+            aug_edge_index, aug_e = g.edge_index, e
 
-        # Append the conditioning information node embedding to o
-        o = torch.cat([o, c], 0)
         for i in range(self.num_layers):
-            # Run the graph transformer forward
-            gen, trans, linear, norm1, ff, norm2, cscale = self.graph2emb[i * 7 : (i + 1) * 7]
-            cs = cscale(c[aug_batch])
-            if self.ln_type == "post":
-                agg = gen(o, aug_edge_index, aug_e)
-                l_h = linear(trans(torch.cat([o, agg], 1), aug_edge_index, aug_e))
-                scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
-                o = norm1(o + l_h * scale + shift, aug_batch)
-                o = norm2(o + ff(o), aug_batch)
-            else:
-                o_norm = norm1(o, aug_batch)
-                agg = gen(o_norm, aug_edge_index, aug_e)
-                l_h = linear(trans(torch.cat([o_norm, agg], 1), aug_edge_index, aug_e))
-                scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
-                o = o + l_h * scale + shift
-                o = o + ff(norm2(o, aug_batch))
+            o = self.gnn[i](o, aug_edge_index, aug_e, aug_batch, c[aug_batch])
 
-        o_final = o[: -c.shape[0]]
-        glob = torch.cat([gnn.global_mean_pool(o_final, g.batch), o[-c.shape[0] :]], 1)
+        if self.conv_type == "Transformer":
+            # Remove the conditioning information node embedding
+            o_final = o[: -c.shape[0]]
+            glob = torch.cat([gnn.global_mean_pool(o_final, g.batch), o[-c.shape[0] :]], 1)
+        else:
+            o_final = o
+            glob = gnn.global_mean_pool(o_final, g.batch)
         return o_final, glob
 
 
@@ -199,11 +249,13 @@ class GraphTransformerGFN(nn.Module):
             num_heads=cfg.model.graph_transformer.num_heads,
             ln_type=cfg.model.graph_transformer.ln_type,
             concat=cfg.model.graph_transformer.concat_heads,
+            num_mlp_layers=cfg.model.graph_transformer.num_mlp_layers,
+            conv_type=cfg.model.graph_transformer.conv_type,
         )
         self.env_ctx = env_ctx
         num_emb = cfg.model.num_emb
         num_final = num_emb
-        num_glob_final = num_emb * 2
+        num_glob_final = num_emb * 2 if cfg.model.graph_transformer.conv_type == "Transformer" else num_emb
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
@@ -240,6 +292,7 @@ class GraphTransformerGFN(nn.Module):
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
         self._logZ = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
+        self.logit_scaler = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
 
     def logZ(self, cond_info: Optional[torch.Tensor]):
         if cond_info is None:
@@ -247,16 +300,21 @@ class GraphTransformerGFN(nn.Module):
         return self._logZ(cond_info)
 
     def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType]):
-        return GraphActionCategorical(
+        cat = GraphActionCategorical(
             g,
             raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types],
             action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
+        sc = self.logit_scaler(
+            g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device)
+        )
+        cat.logits = [lg * sc[b] for lg, b in zip(cat.raw_logits, cat.batch)]  # Setting .logits masks them
+        return cat
 
-    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
-        node_embeddings, graph_embeddings = self.transf(g, cond)
+    def forward(self, g: gd.Batch):
+        node_embeddings, graph_embeddings = self.transf(g)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):
             ne_row, ne_col = g.non_edge_index

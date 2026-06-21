@@ -129,6 +129,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
+        cfg.mp_buffer_size = 32 * 1024**2  # 32 MB
         cfg.num_workers = 8
         cfg.opt.learning_rate = 1e-4
         cfg.opt.weight_decay = 1e-8

@@ -7,6 +7,7 @@ from gflownet.utils.misc import StrictDataClass
 @dataclass
 class SEHTaskConfig(StrictDataClass):
     reduced_frag: bool = False
+    qed_mul: bool = False
 
 
 @dataclass

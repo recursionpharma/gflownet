@@ -1,6 +1,6 @@
 import copy
-import os
 import pathlib
+from typing import Any
 
 import git
 import torch
@@ -9,6 +9,7 @@ from torch import Tensor
 
 from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.flow_matching import FlowMatching
+from gflownet.algo.local_search_tb import LocalSearchTB
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
@@ -38,6 +39,8 @@ class StandardOnlineTrainer(GFNTrainer):
         algo = self.cfg.algo.method
         if algo == "TB":
             algo = TrajectoryBalance
+        elif algo == "LSTB":
+            algo = LocalSearchTB
         elif algo == "FM":
             algo = FlowMatching
         elif algo == "A2C":
@@ -47,6 +50,9 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             raise ValueError(algo)
         self.algo = algo(self.env, self.ctx, self.cfg)
+
+        if self.algo.requires_task:
+            self.algo.set_task(self.task)
 
     def setup_data(self):
         self.training_data = []
@@ -59,6 +65,14 @@ class StandardOnlineTrainer(GFNTrainer):
             momentum = self.cfg.opt.momentum
         if self.cfg.opt.opt == "adam":
             return torch.optim.Adam(
+                params,
+                lr,
+                (momentum, 0.999),
+                weight_decay=self.cfg.opt.weight_decay,
+                eps=self.cfg.opt.adam_eps,
+            )
+        elif self.cfg.opt.opt == "adamW":
+            return torch.optim.AdamW(
                 params,
                 lr,
                 (momentum, 0.999),
@@ -82,12 +96,17 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             Z_params = []
             non_Z_params = list(self.model.parameters())
+
         self.opt = self._opt(non_Z_params)
-        self.opt_Z = self._opt(Z_params, self.cfg.algo.tb.Z_learning_rate, 0.9)
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
-        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
-            self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
-        )
+
+        if Z_params:
+            self.opt_Z = self._opt(Z_params, self.cfg.algo.tb.Z_learning_rate, 0.9)
+            self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
+                self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
+            )
+        else:
+            self.opt_Z = None
 
         self.sampling_tau = self.cfg.algo.sampling_tau
         if self.sampling_tau > 0:
@@ -112,26 +131,33 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.print_config:
             print("\n\nHyperparameters:\n")
             print(yaml_cfg)
-        os.makedirs(self.cfg.log_dir, exist_ok=True)
-        with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
-            f.write(yaml_cfg)
+        if self.cfg.log_dir is not None and self.rank == 0:
+            with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
+                f.write(yaml_cfg)
 
-    def step(self, loss: Tensor):
+    def step(self, loss: Tensor, train_it: int):
         loss.backward()
-        with torch.no_grad():
-            g0 = model_grad_norm(self.model)
-            self.clip_grad_callback(self.model.parameters())
-            g1 = model_grad_norm(self.model)
+        info: dict[str, Any] = {}
+        if train_it % self.cfg.algo.grad_acc_steps != 0:
+            return info
+        if self.cfg.opt.clip_grad_type is not None:
+            with torch.no_grad():
+                g0 = model_grad_norm(self.model)
+                self.clip_grad_callback(self.model.parameters())
+                g1 = model_grad_norm(self.model)
+                info["grad_norm"] = g0.item()
+                info["grad_norm_clip"] = g1.item()
         self.opt.step()
         self.opt.zero_grad()
-        self.opt_Z.step()
-        self.opt_Z.zero_grad()
         self.lr_sched.step()
-        self.lr_sched_Z.step()
+        if self.opt_Z is not None:
+            self.opt_Z.step()
+            self.opt_Z.zero_grad()
+            self.lr_sched_Z.step()
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
-        return {"grad_norm": g0, "grad_norm_clip": g1}
+        return info
 
 
 class AvgRewardHook:

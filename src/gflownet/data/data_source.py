@@ -1,15 +1,20 @@
+import traceback
 import warnings
 from typing import Callable, Generator, List, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
+from torch_geometric.data import Batch
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
-from gflownet.utils.misc import get_worker_rng
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext, action_type_to_mask
+from gflownet.envs.seq_building_env import SeqBatch
+from gflownet.models.graph_transformer import GraphTransformerGFN
+from gflownet.utils.misc import get_this_wid, get_worker_rng
+from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
 
 def cycle_call(it):
@@ -44,6 +49,8 @@ class DataSource(IterableDataset):
         self.global_step_count.share_memory_()
         self.global_step_count_lock = torch.multiprocessing.Lock()
         self.current_iter = start_at_step
+        self._err_tol = 10
+        self.setup_mp_buffers()
 
     def add_sampling_hook(self, hook: Callable):
         """Add a hook that is called when sampling new trajectories.
@@ -61,23 +68,57 @@ class DataSource(IterableDataset):
         its = [i() for i in self.iterators]
         self.algo.set_is_eval(self.is_algo_eval)
         while True:
-            with self.global_step_count_lock:
-                self.current_iter = self.global_step_count.item()
-                self.global_step_count += 1
-            iterator_outputs = [next(i, None) for i in its]
-            if any(i is None for i in iterator_outputs):
-                if not all(i is None for i in iterator_outputs):
-                    warnings.warn("Some iterators are done, but not all. You may be mixing incompatible iterators.")
-                    iterator_outputs = [i for i in iterator_outputs if i is not None]
-                else:
-                    break
-            traj_lists, batch_infos = zip(*iterator_outputs)
-            trajs = sum(traj_lists, [])
-            # Merge all the dicts into one
-            batch_info = {}
-            for d in batch_infos:
-                batch_info.update(d)
-            yield self.create_batch(trajs, batch_info)
+            try:
+                with self.global_step_count_lock:
+                    self.current_iter = self.global_step_count.item()
+                    self.global_step_count += 1
+                iterator_outputs = [next(i, None) for i in its]
+                if any(i is None for i in iterator_outputs):
+                    if not all(i is None for i in iterator_outputs):
+                        warnings.warn("Some iterators are done, but not all. You may be mixing incompatible iterators.")
+                        iterator_outputs = [i for i in iterator_outputs if i is not None]
+                    else:
+                        break
+                traj_lists, batch_infos = zip(*iterator_outputs)
+                trajs = sum(traj_lists, [])
+                # Merge all the dicts into one
+                batch_info = {}
+                for d in batch_infos:
+                    batch_info.update(d)
+                yield self.create_batch(trajs, batch_info)
+                self._err_tol = 10  # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+            except (Exception, RuntimeError) as e:
+                self._err_tol -= 1
+                if self._err_tol == 0:
+                    raise e
+                print(f"Error in DataSource: {e} [tol={self._err_tol}]")
+                # print full traceback
+
+                traceback.print_exc()
+                continue
+
+    def validate_batch(self, batch, trajs):
+        for actions, atypes in [(batch.actions, self.ctx.action_type_order)] + (
+            [(batch.bck_actions, self.ctx.bck_action_type_order)]
+            if hasattr(batch, "bck_actions") and hasattr(self.ctx, "bck_action_type_order")
+            else []
+        ):
+            mask_cat = GraphActionCategorical(
+                batch,
+                [action_type_to_mask(t, batch) for t in atypes],
+                [GraphTransformerGFN.action_type_to_key(t) for t in atypes],
+                [None for _ in atypes],
+            )
+            masked_action_is_used = 1 - mask_cat.log_prob(actions, logprobs=mask_cat.logits, pad_value=1.0)
+            num_trajs = len(trajs)
+            batch_idx = torch.arange(num_trajs, device=batch.x.device).repeat_interleave(batch.traj_lens)
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if masked_action_is_used.sum() != 0:
+                invalid_idx = masked_action_is_used.argmax().item()
+                traj_idx = batch_idx[invalid_idx].item()
+                timestep = invalid_idx - first_graph_idx[traj_idx].item()
+                raise ValueError("Found an action that was masked out", trajs[traj_idx]["traj"][timestep])
 
     def do_sample_model(self, model, num_from_policy, num_new_replay_samples=None):
         if num_new_replay_samples is not None:
@@ -93,8 +134,8 @@ class DataSource(IterableDataset):
                 t = self.current_iter
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
-                # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
-                trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info, p)
+                self.mark_all(trajs, source="sample")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -123,7 +164,8 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(n_this_time, t)
                 # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
-                trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info, p)
+                self.mark_all(trajs, source="sample")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -139,6 +181,7 @@ class DataSource(IterableDataset):
         def iterator():
             while self.active:
                 trajs, *_ = self.replay_buffer.sample(num_samples)
+                self.mark_all(trajs, source="replay")
                 self.relabel_in_hindsight(trajs)  # This is a no-op if the hindsight ratio is 0
                 yield trajs, {}
 
@@ -152,7 +195,8 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
-                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -170,7 +214,8 @@ class DataSource(IterableDataset):
                 # I'm also not a fan of encode_conditional_information, it assumes lots of things about what's passed to
                 # it and the state of the program (e.g. validation mode)
                 cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
-                trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info, p)
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -192,7 +237,8 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
-                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -200,6 +246,10 @@ class DataSource(IterableDataset):
 
         self.iterators.append(iterator)
         return self
+
+    def mark_all(self, trajs, **kw):
+        for t in trajs:
+            t.update(kw)
 
     def call_sampling_hooks(self, trajs):
         batch_info = {}
@@ -218,8 +268,7 @@ class DataSource(IterableDataset):
         ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
-        batch.num_online = sum(t.get("is_online", 0) for t in trajs)
-        batch.num_offline = len(trajs) - batch.num_online
+        batch.sources = [t.get("source", "unknown") for t in trajs]
         batch.extra_info = batch_info
         if "preferences" in trajs[0]["cond_info"].keys():
             batch.preferences = torch.stack([t["cond_info"]["preferences"] for t in trajs])
@@ -231,10 +280,13 @@ class DataSource(IterableDataset):
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
         batch.obj_props = torch.stack([t["obj_props"] for t in trajs])
-        return batch
+        # self.validate_batch(batch, trajs)
+        return self._maybe_put_in_mp_buffer(batch)
 
     def compute_properties(self, trajs, mark_as_online=False):
         """Sets trajs' obj_props and is_valid keys by querying the task."""
+        if all("obj_props" in t for t in trajs):
+            return
         # TODO: refactor obj_props into properties
         valid_idcs = torch.tensor([i for i in range(len(trajs)) if trajs[i].get("is_valid", True)]).long()
         # fetch the valid trajectories endpoints
@@ -250,13 +302,15 @@ class DataSource(IterableDataset):
         all_fr[valid_idcs] = obj_props
         for i in range(len(trajs)):
             trajs[i]["obj_props"] = all_fr[i]
-            trajs[i]["is_online"] = mark_as_online
+            trajs[i]["is_online"] = mark_as_online  # TODO: this is deprecated in favor of 'source'?
         # Override the is_valid key in case the task made some objs invalid
         for i in valid_idcs:
             trajs[i]["is_valid"] = True
 
     def compute_log_rewards(self, trajs):
         """Sets trajs' log_reward key by querying the task."""
+        if all("log_reward" in t for t in trajs):
+            return
         obj_props = torch.stack([t["obj_props"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         log_rewards = self.task.cond_info_to_logreward(cond_info, obj_props)
@@ -267,14 +321,26 @@ class DataSource(IterableDataset):
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_reward"], t["obj_props"], t["cond_info"], t["is_valid"])
+                self.replay_buffer.push(
+                    t,
+                    t["log_reward"],
+                    t["obj_props"],
+                    t["cond_info"],
+                    t["is_valid"],
+                    unique_obj=self.ctx.get_unique_obj(t["result"]),
+                    priority=t.get("priority", t["log_reward"].item()),
+                )
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
+            if "cond_info" in trajs[i]:
+                continue
             trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
 
     def set_traj_props(self, trajs, props):
         for i in range(len(trajs)):
+            if "obj_props" in trajs[i]:
+                continue
             trajs[i]["obj_props"] = props[i]  # TODO: refactor
 
     def relabel_in_hindsight(self, trajs):
@@ -300,16 +366,19 @@ class DataSource(IterableDataset):
 
     def iterate_indices(self, n, num_samples):
         worker_info = torch.utils.data.get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        if torch.distributed.is_initialized():
+            num_workers *= torch.distributed.get_world_size()
+        wid = get_this_wid()
         if n == 0:
             # Should we be raising an error here? warning?
             yield np.arange(0, 0)
             return
 
-        if worker_info is None:  # no multi-processing
+        if num_workers == 1:  # no multi-processing, no distributed
             start, end, wid = 0, n, -1
         else:  # split the data into chunks (per-worker)
-            nw = worker_info.num_workers
-            wid = worker_info.id
+            nw = num_workers
             start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
 
         if end - start <= num_samples:
@@ -319,3 +388,20 @@ class DataSource(IterableDataset):
             yield np.arange(i, i + num_samples)
         if i + num_samples < end:
             yield np.arange(i + num_samples, end)
+
+    def setup_mp_buffers(self):
+        if self.cfg.num_workers > 0:
+            self.mp_buffer_size = self.cfg.mp_buffer_size
+            if self.mp_buffer_size:
+                self.result_buffer = [SharedPinnedBuffer(self.mp_buffer_size) for _ in range(self.cfg.num_workers)]
+        else:
+            self.mp_buffer_size = None
+
+    def _maybe_put_in_mp_buffer(self, batch):
+        if self.mp_buffer_size:
+            if not (isinstance(batch, (Batch, SeqBatch))):
+                warnings.warn(f"Expected a Batch object, but got {type(batch)}. Not using mp buffers.")
+                return batch
+            return (BufferPickler(self.result_buffer[self._wid]).dumps(batch), self._wid)
+        else:
+            return batch

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch_geometric.data as gd
 from torch import Tensor
 
+from gflownet import GFNAlgorithm
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import GraphBuildingEnv, GraphBuildingEnvContext, generate_forward_trajectory
 from gflownet.utils.misc import get_worker_device
@@ -10,7 +11,7 @@ from gflownet.utils.misc import get_worker_device
 from .graph_sampling import GraphSampler
 
 
-class A2C:
+class A2C(GFNAlgorithm):
     def __init__(
         self,
         env: GraphBuildingEnv,
@@ -36,6 +37,7 @@ class A2C:
             The experiment configuration
 
         """
+        self.global_cfg = cfg  # TODO: this belongs in the base class
         self.ctx = ctx
         self.env = env
         self.max_len = cfg.algo.max_len
@@ -149,7 +151,8 @@ class A2C:
 
         # Forward pass of the model, returns a GraphActionCategorical and per graph predictions
         # Here we will interpret the logits of the fwd_cat as Q values
-        policy, per_state_preds = model(batch, cond_info[batch_idx])
+        batch.cond_info = cond_info[batch_idx]
+        policy, per_state_preds = model(batch)
         V = per_state_preds[:, 0]
         G = rewards[batch_idx]  # The return is the terminal reward everywhere, we're using gamma==1
         G = G + (1 - batch.is_valid[batch_idx]) * self.invalid_penalty  # Add in penalty for invalid object

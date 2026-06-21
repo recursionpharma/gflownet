@@ -4,10 +4,11 @@ import os
 import pathlib
 import shutil
 import time
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
@@ -16,6 +17,7 @@ from omegaconf import OmegaConf
 from rdkit import RDLogger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from torch_geometric.data import Batch
 
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.data.data_source import DataSource
@@ -23,7 +25,7 @@ from gflownet.data.replay_buffer import ReplayBuffer
 from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnv, GraphBuildingEnvContext
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger, set_main_process_device, set_worker_rng_seed
-from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
+from gflownet.utils.multiprocessing_proxy import BufferUnpickler, mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
 
 from .config import Config
@@ -71,7 +73,7 @@ class GFNTrainer:
         )  # make sure the config is a Config object, and not the Config class itself
         self.cfg: Config = OmegaConf.merge(self.default_cfg, config)
 
-        self.device = torch.device(self.cfg.device)
+        self.device = torch.device(self.cfg.rank or self.cfg.device)
         set_main_process_device(self.device)
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
@@ -80,6 +82,9 @@ class GFNTrainer:
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
+
+        self.world_size = self.cfg.world_size
+        self.rank = self.cfg.rank
 
         self.setup()
 
@@ -101,18 +106,19 @@ class GFNTrainer:
     def setup_data(self):
         pass
 
-    def step(self, loss: Tensor):
+    def step(self, loss: Tensor, train_it: int):
         raise NotImplementedError()
 
     def setup(self):
-        if os.path.exists(self.cfg.log_dir):
-            if self.cfg.overwrite_existing_exp:
-                shutil.rmtree(self.cfg.log_dir)
-            else:
-                raise ValueError(
-                    f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
-                )
-        os.makedirs(self.cfg.log_dir)
+        if self.cfg.log_dir and self.rank == 0:
+            if os.path.exists(self.cfg.log_dir):
+                if self.cfg.overwrite_existing_exp:
+                    shutil.rmtree(self.cfg.log_dir)
+                else:
+                    raise ValueError(
+                        f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
+                    )
+            os.makedirs(self.cfg.log_dir)
 
         RDLogger.DisableLog("rdApp.*")
         set_worker_rng_seed(self.cfg.seed)
@@ -122,6 +128,8 @@ class GFNTrainer:
         self.setup_env_context()
         self.setup_algo()
         self.setup_model()
+        if self.cfg.load_model_state is not None:
+            self.load_state(self.cfg.load_model_state)
 
     def _wrap_for_mp(self, obj):
         """Wraps an object in a placeholder whose reference can be sent to a
@@ -132,6 +140,7 @@ class GFNTrainer:
                 self.cfg.num_workers,
                 cast_types=(gd.Batch, GraphActionCategorical, SeqBatch),
                 pickle_messages=self.cfg.pickle_mp_messages,
+                sb_size=self.cfg.mp_buffer_size,
             )
             self.to_terminate.append(wrapper.terminate)
             return wrapper.placeholder
@@ -181,8 +190,6 @@ class GFNTrainer:
 
     def build_validation_data_loader(self) -> DataLoader:
         model = self._wrap_for_mp(self.model)
-        # TODO: we're changing the default, make sure anything that is using test data is adjusted
-        src = DataSource(self.cfg, self.ctx, self.algo, self.task, is_algo_eval=True)
         n_drawn = self.cfg.algo.valid_num_from_policy
         n_from_dataset = self.cfg.algo.valid_num_from_dataset
 
@@ -194,7 +201,7 @@ class GFNTrainer:
             # TODO: might be better to change total steps to total trajectories drawn
             src.do_sample_model_n_times(model, n_drawn, num_total=self.cfg.num_validation_gen_steps * n_drawn)
 
-        if self.cfg.log_dir:
+        if self.cfg.log_dir and n_drawn > 0:
             src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))
         for hook in self.valid_sampling_hooks:
             src.add_sampling_hook(hook)
@@ -219,13 +226,16 @@ class GFNTrainer:
         tick = time.time()
         self.model.train()
         try:
+            self.model.lock.acquire()
+            loss = info = None
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
-            step_info = self.step(loss)
+            step_info = self.step(loss, train_it)
             self.algo.step()  # This also isn't used anywhere?
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
+            self.model.lock.release()
         except ValueError as e:
             os.makedirs(self.cfg.log_dir, exist_ok=True)
             torch.save([self.model.state_dict(), batch, loss, info], open(self.cfg.log_dir + "/dump.pkl", "wb"))
@@ -241,20 +251,48 @@ class GFNTrainer:
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
         tick = time.time()
         self.model.eval()
-        loss, info = self.algo.compute_batch_losses(self.model, batch)
+        with torch.no_grad():
+            loss, info = self.algo.compute_batch_losses(self.model, batch)
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
         info["eval_time"] = time.time() - tick
         return {k: v.item() if hasattr(v, "item") else v for k, v in info.items()}
+
+    def _maybe_resolve_shared_buffer(
+        self, batch: Union[Batch, SeqBatch, tuple, list], dl: DataLoader
+    ) -> Union[Batch, SeqBatch]:
+        if dl.dataset.mp_buffer_size and isinstance(batch, (tuple, list)):
+            batch, wid = batch
+            batch = BufferUnpickler(dl.dataset.result_buffer[wid], batch, self.device).load()
+        elif isinstance(batch, (Batch, SeqBatch)):
+            batch = batch.to(self.device)
+        return batch
+
+    def _send_models_to_device(self):
+        self.model.to(self.device)
+        self.sampling_model.to(self.device)
+        if self.world_size > 1:
+            self.model = nn.parallel.DistributedDataParallel(
+                self.model.to(self.rank), device_ids=[self.rank], output_device=self.rank
+            )
+            if self.sampling_model is not self.model:
+                self.sampling_model = nn.parallel.DistributedDataParallel(
+                    self.sampling_model.to(self.rank), device_ids=[self.rank], output_device=self.rank
+                )
 
     def run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
         if logger is None:
-            logger = create_logger(logfile=self.cfg.log_dir + "/train.log")
+            logger = create_logger(logfile=self.cfg.log_dir + "/train.log" if self.cfg.log_dir else None)
         self.model.to(self.device)
         self.sampling_model.to(self.device)
+        import threading
+
+        self.model.lock = (
+            threading.Lock()
+        )  # This is created here because you can't pickle a lock, and model is deepcopied -> sampling_model
         epoch_length = max(len(self.training_data), 1)
         valid_freq = self.cfg.validate_every
         # If checkpoint_every is not specified, checkpoint at every validation epoch
@@ -275,6 +313,7 @@ class GFNTrainer:
             if it % 1024 == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
+            batch = self._maybe_resolve_shared_buffer(batch, train_dl)
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
@@ -282,18 +321,21 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
-            info = self.train_batch(batch.to(self.device), epoch_idx, batch_idx, it)
+
+            info = self.train_batch(batch, epoch_idx, batch_idx, it)
             info["time_spent"] = time.time() - start_time
             start_time = time.time()
-            self.log(info, it, "train")
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+            self.log(info, it, "train")
 
             if valid_freq > 0 and it % valid_freq == 0:
+                logger.info("Starting validation epoch")
                 for batch in valid_dl:
+                    batch = self._maybe_resolve_shared_buffer(batch, valid_dl)
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                    self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+                    self.log(info, it, "valid")
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
@@ -311,6 +353,7 @@ class GFNTrainer:
                 range(num_training_steps + 1, num_training_steps + num_final_gen_steps + 1),
                 cycle(final_dl),
             ):
+                batch = self._maybe_resolve_shared_buffer(batch, final_dl)
                 if hasattr(batch, "extra_info"):
                     for k, v in batch.extra_info.items():
                         if k not in final_info:
@@ -332,7 +375,7 @@ class GFNTrainer:
             del final_dl
 
     def terminate(self):
-        logger = logging.getLogger("logger")
+        logger = logging.getLogger("gflownet")
         for handler in logger.handlers:
             handler.close()
 
@@ -344,6 +387,8 @@ class GFNTrainer:
             terminate()
 
     def _save_state(self, it):
+        if self.rank != 0 or self.cfg.log_dir is None:
+            return
         state = {
             "models_state_dict": [self.model.state_dict()],
             "cfg": self.cfg,
@@ -360,7 +405,22 @@ class GFNTrainer:
         if self.cfg.store_all_checkpoints:
             shutil.copy(fn, pathlib.Path(self.cfg.log_dir) / f"model_state_{it}.pt")
 
+    def load_state(self, path):
+        state = torch.load(path)
+        self.model.load_state_dict(state["models_state_dict"][0])
+
     def log(self, info, index, key):
+        # First check if we need to reduce the info across processes
+        if self.world_size > 1:
+            all_info_vals = torch.zeros(len(info)).to(self.rank)
+            for i, k in enumerate(sorted(info.keys())):
+                all_info_vals[i] = info[k]
+            dist.all_reduce(all_info_vals, op=dist.ReduceOp.SUM)
+            for i, k in enumerate(sorted(info.keys())):
+                info[k] = all_info_vals[i].item() / self.world_size
+        if self.rank != 0:  # Only the master process logs
+            return
+
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():

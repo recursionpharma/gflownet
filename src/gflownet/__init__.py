@@ -19,9 +19,13 @@ class GFNAlgorithm:
     updates: int = 0
     global_cfg: Config
     is_eval: bool = False
+    requires_task: bool = False
 
     def step(self):
         self.updates += 1  # This isn't used anywhere?
+
+    def set_is_eval(self, is_eval: bool):
+        self.is_eval = is_eval
 
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
@@ -73,6 +77,9 @@ class GFNAlgorithm:
         if self.global_cfg.algo.train_det_after is None or it < self.global_cfg.algo.train_det_after:
             return self.global_cfg.algo.train_random_action_prob
         return 0
+
+    def set_task(self, task):
+        raise NotImplementedError()
 
 
 class GFNTask:

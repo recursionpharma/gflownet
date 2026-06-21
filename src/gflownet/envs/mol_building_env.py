@@ -13,6 +13,18 @@ from gflownet.utils.graphs import random_walk_probs
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
 
+try:
+    from gflownet._C import Data_collate
+    from gflownet._C import Graph as C_Graph
+    from gflownet._C import GraphDef, mol_graph_to_Data
+
+    C_Graph_available = True
+except ImportError:
+    import warnings
+
+    warnings.warn("Could not import mol_graph_to_Data, Graph, GraphDef from _C, using pure python implementation")
+    C_Graph_available = False
+
 
 class MolBuildingEnvContext(GraphBuildingEnvContext):
     """A specification of what is being generated for a GraphBuildingEnv
@@ -61,12 +73,12 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         """
         # idx 0 has to coincide with the default value
         self.atom_attr_values = {
-            "v": atoms + ["*"],
+            "v": atoms,
             "chi": chiral_types,
             "charge": charges,
             "expl_H": expl_H_range,
             "no_impl": [False, True],
-            "fill_wildcard": [None] + atoms,  # default is, there is nothing
+            # "fill_wildcard": [None] + atoms,  # default is, there is nothing
         }
         self.num_rw_feat = num_rw_feat
         self.max_nodes = max_nodes
@@ -157,13 +169,29 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             GraphActionType.RemoveEdge,
             GraphActionType.RemoveEdgeAttr,
         ]
+        if C_Graph_available:
+            self.graph_def = GraphDef(self.atom_attr_values, self.bond_attr_values)
+            self.graph_cls = self._make_C_graph
+            assert charges == [0, 1, -1], "C impl quirk: charges must be [0, 1, -1]"
+        else:
+            self.graph_cls = Graph
+
+    def _make_C_graph(self):
+        return C_Graph(self.graph_def)
 
     def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
+        if aidx.action_type == -1:
+            # Pad action
+            return GraphAction(GraphActionType.Pad)
         if fwd:
             t = self.action_type_order[aidx.action_type]
         else:
             t = self.bck_action_type_order[aidx.action_type]
+
+        if self.graph_cls is not Graph:
+            return g.mol_aidx_to_GraphAction((aidx.action_type, aidx.row_idx, aidx.col_idx), t)
+
         if t is GraphActionType.Stop:
             return GraphAction(t)
         elif t is GraphActionType.AddNode:
@@ -196,12 +224,17 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
         """Translate a GraphAction to an index tuple"""
+        if action.action is GraphActionType.Pad:
+            return ActionIndex(action_type=-1, row_idx=0, col_idx=0)
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:
                 type_idx = u.index(action.action)
                 break
         else:
             raise ValueError(f"Unknown action type {action.action}")
+
+        if self.graph_cls is not Graph:
+            return (type_idx,) + g.mol_GraphAction_to_aidx(action)
 
         if action.action is GraphActionType.Stop:
             row = col = 0
@@ -255,6 +288,10 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
+        if self.graph_cls is not Graph:
+            cond_info = None  # Todo: Implement this
+            return mol_graph_to_Data(g, self, torch, cond_info)
+
         x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat), dtype=np.float32)
         x[0, -1] = len(g.nodes) == 0
         add_node_mask = np.ones((x.shape[0], self.num_new_node_values), dtype=np.float32)
@@ -394,11 +431,13 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def collate(self, graphs: List[gd.Data]):
         """Batch Data instances"""
+        if self.graph_cls is not Graph:
+            return Data_collate(graphs, ["edge_index", "non_edge_index"])
         return gd.Batch.from_data_list(graphs, follow_batch=["edge_index", "non_edge_index"])
 
     def obj_to_graph(self, mol: Mol) -> Graph:
         """Convert an RDMol to a Graph"""
-        g = Graph()
+        g = self.graph_cls()
         mol = Mol(mol)  # Make a copy
         if not self.allow_explicitly_aromatic:
             # If we disallow aromatic bonds, ask rdkit to Kekulize mol and remove aromatic bond flags
@@ -468,5 +507,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             mol = self.graph_to_obj(g)
             assert mol is not None
             return Chem.MolToSmiles(mol)
+        except Exception:
+            return ""
+
+    def get_unique_obj(self, g: Graph):
+        """Convert a Graph to a canonical SMILES representation"""
+        try:
+            mol = self.graph_to_obj(g)
+            assert mol is not None
+            return Chem.CanonSmiles(Chem.MolToSmiles(mol))
         except Exception:
             return ""

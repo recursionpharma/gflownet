@@ -123,4 +123,24 @@ def test_log_prob():
 
 def test_entropy():
     cat = make_test_cat()
-    cat.entropy()
+    entropy = cat.entropy()
+    assert torch.isfinite(entropy).all() and entropy.shape == (3,) and (entropy > 0).all()
+
+    cat.action_masks = [
+        torch.tensor([[0], [1], [1.0]]),
+        ((torch.arange(cat.logits[1].numel()) % 2) == 0).float().reshape(cat.logits[1].shape),
+        torch.tensor([[1, 0, 1], [0, 1, 1.0]]),
+    ]
+    entropy = cat.entropy()
+    assert torch.isfinite(entropy).all() and entropy.shape == (3,) and (entropy > 0).all()
+
+
+def test_entropy_grad():
+    # Purposefully large values to test extremal behaviors
+    logits = torch.tensor([[100, 101, -102, 95, 10, 20, 72]]).float()
+    logits.requires_grad_(True)
+    batch = Batch.from_data_list([Data(x=torch.ones((1, 10)), y=torch.ones((2, 6)))], follow_batch=["y"])
+    cat = GraphActionCategorical(batch, [logits[:, :3], logits[:, 3:].reshape(2, 2)], [None, "y"], [None, None])
+    cat._epsilon = 0
+    (grad_gac,) = torch.autograd.grad(cat.entropy(), logits, retain_graph=True)
+    assert torch.isfinite(grad_gac).all()

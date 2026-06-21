@@ -8,8 +8,9 @@ from gflownet.utils.misc import StrictDataClass
 class GraphTransformerConfig(StrictDataClass):
     num_heads: int = 2
     ln_type: str = "pre"
-    num_mlp_layers: int = 0
+    num_mlp_layers: int = 1
     concat_heads: bool = True
+    conv_type: str = "Transformer"
 
 
 class SeqPosEnc(int, Enum):

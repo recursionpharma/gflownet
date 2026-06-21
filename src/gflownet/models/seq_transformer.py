@@ -65,7 +65,7 @@ class SeqTransformerGFN(nn.Module):
             return self._logZ(torch.ones((1, 1), device=self._logZ.weight.device))
         return self._logZ(cond_info)
 
-    def forward(self, xs: SeqBatch, cond, batched=False):
+    def forward(self, xs: SeqBatch, batched=False):
         """Returns a GraphActionCategorical and a tensor of state predictions.
 
         Parameters
@@ -83,6 +83,7 @@ class SeqTransformerGFN(nn.Module):
         x = self.encoder(x, src_key_padding_mask=xs.mask, mask=generate_square_subsequent_mask(x.shape[0]).to(x.device))
         pooled_x = x[xs.lens - 1, torch.arange(x.shape[1])]  # (batch, nemb)
 
+        cond = xs.cond_info
         if self.use_cond:
             cond_var = self.cond_embed(cond)  # (batch, nemb)
             cond_var = torch.tile(cond_var, (x.shape[0], 1, 1)) if batched else cond_var

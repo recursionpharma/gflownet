@@ -80,6 +80,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         self.edges_are_duplicated = True
         self.edges_are_unordered = False
         self.fail_on_missing_attr = True
+        self.use_strict_edge_filling = False
 
         # Order in which models have to output logits
         self.action_type_order = [GraphActionType.Stop, GraphActionType.AddNode, GraphActionType.SetEdgeAttr]
@@ -105,6 +106,9 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         action: GraphAction
             A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
         """
+        if aidx.action_type == -1:
+            # Pad action
+            return GraphAction(GraphActionType.Pad)
         if fwd:
             t = self.action_type_order[aidx.action_type]
         else:
@@ -147,6 +151,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
              A triple describing the type of action, and the corresponding row and column index for
              the corresponding Categorical matrix.
         """
+        if action.action is GraphActionType.Pad:
+            return ActionIndex(action_type=-1, row_idx=0, col_idx=0)
         # Find the index of the action type, privileging the forward actions
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:
@@ -222,6 +228,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         # If there are unspecified attachment points, we will disallow the agent from using the stop
         # action.
         has_unfilled_attach = False
+        first_unfilled_attach = True
+        has_fully_unfilled_attach = False
         for i, e in enumerate(g.edges):
             ed = g.edges[e]
             if len(ed):
@@ -229,22 +237,45 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 node_is_connected_to_edge_with_attr[e[1]] = 1
             a = ed.get("src_attach", -1)
             b = ed.get("dst_attach", -1)
+            if a < 0 or b < 0:
+                has_unfilled_attach = True
+                if self.use_strict_edge_filling:
+                    remove_edge_attr_mask *= 0
+                    if a < 0 and b < 0:
+                        has_fully_unfilled_attach = True
             if a >= 0:
                 attached[e[0]].append(a)
-                remove_edge_attr_mask[i, 0] = 1
-            else:
-                has_unfilled_attach = True
+                if self.use_strict_edge_filling:
+                    # Since the agent has to fill in the attachment points before adding a new node, or stopping, the
+                    # reverse is that if there is a half-filled edge attachment, the only valid move is to unset the
+                    # other half (i.e. whichever is the first edge we find like that)
+                    # We also will only end up being able to do that to leaf nodes (degree 1)
+                    if degrees[e[0]] == 1 or degrees[e[1]] == 1:
+                        remove_edge_attr_mask[i, 0] = (
+                            1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        )
+                else:
+                    remove_edge_attr_mask[i, 0] = 1
             if b >= 0:
                 attached[e[1]].append(b)
-                remove_edge_attr_mask[i, 1] = 1
-            else:
-                has_unfilled_attach = True
+                if self.use_strict_edge_filling:
+                    if degrees[e[0]] == 1 or degrees[e[1]] == 1:
+                        remove_edge_attr_mask[i, 1] = (
+                            1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        )
+                else:
+                    remove_edge_attr_mask[i, 1] = 1
+
+            if has_unfilled_attach:
+                first_unfilled_attach = False
 
         # The node must be connected to at most 1 other node and in the case where it is
         # connected to exactly one other node, the edge connecting them must not have any
         # attributes.
         if len(g):
             remove_node_mask = (node_is_connected * (1 - node_is_connected_to_edge_with_attr)).reshape((-1, 1))
+            if self.use_strict_edge_filling:
+                remove_node_mask = remove_node_mask * (1 - (has_unfilled_attach and not has_fully_unfilled_attach))
 
         # Here we encode the attached atoms in the edge features, as well as mask out attached
         # atoms.
@@ -271,6 +302,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 else np.ones((1, 1), np.float32)
             )
             add_node_mask = add_node_mask * np.ones((x.shape[0], self.num_new_node_values), np.float32)
+            if self.use_strict_edge_filling:
+                add_node_mask = add_node_mask * (1 - has_unfilled_attach)
         stop_mask = zeros((1, 1)) if has_unfilled_attach or not len(g) else ones((1, 1))
 
         data = gd.Data(

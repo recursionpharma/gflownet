@@ -34,3 +34,5 @@ class ReplayConfig(StrictDataClass):
     hindsight_ratio: float = 0
     num_from_replay: Optional[int] = None
     num_new_samples: Optional[int] = None
+    keep_highest_rewards: bool = False
+    keep_only_uniques: bool = False

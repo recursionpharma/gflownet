@@ -8,7 +8,8 @@ universal = "true"
 [tool.bandit]
 # B101 tests the use of assert
 # B301 and B403 test the use of pickle
-skips = ["B101", "B301", "B403"]
+# B614 tests the use of torch.load/save
+skips = ["B101", "B301", "B403", "B614"]
 exclude_dirs = ["tests", ".tox", ".venv"]
 
 [tool.pytest.ini_options]
