@@ -90,7 +90,7 @@ class GraphTransformer(nn.Module):
             )
         )
 
-    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
+    def forward(self, g: gd.Batch):
         """Forward pass
 
         Parameters
@@ -112,7 +112,7 @@ class GraphTransformer(nn.Module):
             x = g.x
         o = self.x2h(x)
         e = self.e2h(g.edge_attr)
-        c = self.c2h(cond if cond is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
+        c = self.c2h(g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
         num_total_nodes = g.x.shape[0]
         # Augment the edges with a new edge to the conditioning
         # information node. This new node is connected to every node
@@ -255,8 +255,8 @@ class GraphTransformerGFN(nn.Module):
             types=action_types,
         )
 
-    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
-        node_embeddings, graph_embeddings = self.transf(g, cond)
+    def forward(self, g: gd.Batch):
+        node_embeddings, graph_embeddings = self.transf(g)
         # "Non-edges" are edges not currently in the graph that we could add
         if hasattr(g, "non_edge_index"):
             ne_row, ne_col = g.non_edge_index

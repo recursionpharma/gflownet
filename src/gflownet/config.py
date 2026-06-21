@@ -79,6 +79,10 @@ class Config(StrictDataClass):
         The hostname of the machine on which the experiment is run
     pickle_mp_messages : bool
         Whether to pickle messages sent between processes (only relevant if num_workers > 0)
+    mp_buffer_size : Optional[int]
+        If specified, use a buffer of this size in bytes for passing tensors between processes.
+        Note that this is only relevant if num_workers > 0.
+        Also note that this will allocate `num_workers + 2 * number of wrapped objects` buffers.
     git_hash : Optional[str]
         The git hash of the current commit
     overwrite_existing_exp : bool
@@ -102,6 +106,7 @@ class Config(StrictDataClass):
     pickle_mp_messages: bool = False
     git_hash: Optional[str] = None
     overwrite_existing_exp: bool = False
+    mp_buffer_size: Optional[int] = None
     algo: AlgoConfig = field(default_factory=AlgoConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     opt: OptimizerConfig = field(default_factory=OptimizerConfig)

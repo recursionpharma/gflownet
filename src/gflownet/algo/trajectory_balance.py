@@ -109,7 +109,7 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         self.ctx = ctx
         self.env = env
-        self.global_cfg = cfg
+        self.global_cfg = cfg  # TODO: this belongs in the base class
         self.cfg = cfg.algo.tb
         self.max_len = cfg.algo.max_len
         self.max_nodes = cfg.algo.max_nodes
@@ -146,9 +146,6 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(get_worker_device())
-
-    def set_is_eval(self, is_eval: bool):
-        self.is_eval = is_eval
 
     def create_training_data_from_own_samples(
         self,
@@ -402,12 +399,14 @@ class TrajectoryBalance(GFNAlgorithm):
         # Forward pass of the model, returns a GraphActionCategorical representing the forward
         # policy P_F, optionally a backward policy P_B, and per-graph outputs (e.g. F(s) in SubTB).
         if self.cfg.do_parameterize_p_b:
-            fwd_cat, bck_cat, per_graph_out = model(batch, batched_cond_info)
+            batch.cond_info = batched_cond_info
+            fwd_cat, bck_cat, per_graph_out = model(batch)
         else:
             if self.model_is_autoregressive:
-                fwd_cat, per_graph_out = model(batch, cond_info, batched=True)
+                fwd_cat, per_graph_out = model(batch, batched=True)
             else:
-                fwd_cat, per_graph_out = model(batch, batched_cond_info)
+                batch.cond_info = batched_cond_info
+                fwd_cat, per_graph_out = model(batch)
         # Retreive the reward predictions for the full graphs,
         # i.e. the final graph of each trajectory
         log_reward_preds = per_graph_out[final_graph_idx, 0]

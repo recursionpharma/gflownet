@@ -5,6 +5,7 @@ import torch_geometric.data as gd
 from torch import Tensor
 from torch_scatter import scatter
 
+from gflownet import GFNAlgorithm
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import (
     GraphActionCategorical,
@@ -39,24 +40,24 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
             num_layers=num_layers,
             num_heads=num_heads,
         )
-        num_final = num_emb * 2
+        num_final = num_emb
         num_mlp_layers = 0
         self.emb2add_node = mlp(num_final, num_emb, env_ctx.num_new_node_values * num_objectives, num_mlp_layers)
         # Edge attr logits are "sided", so we will compute both sides independently
         self.emb2set_edge_attr = mlp(
             num_emb + num_final, num_emb, env_ctx.num_edge_attr_logits // 2 * num_objectives, num_mlp_layers
         )
-        self.emb2stop = mlp(num_emb * 3, num_emb, num_objectives, num_mlp_layers)
-        self.emb2reward = mlp(num_emb * 3, num_emb, 1, num_mlp_layers)
+        self.emb2stop = mlp(num_emb * 2, num_emb, num_objectives, num_mlp_layers)
+        self.emb2reward = mlp(num_emb * 2, num_emb, 1, num_mlp_layers)
         self.edge2emb = mlp(num_final, num_emb, num_emb, num_mlp_layers)
         self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
         self.action_type_order = env_ctx.action_type_order
         self.mask_value = -10
         self.num_objectives = num_objectives
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor, output_Qs=False):
+    def forward(self, g: gd.Batch, output_Qs=False):
         """See `GraphTransformer` for argument values"""
-        node_embeddings, graph_embeddings = self.transf(g, cond)
+        node_embeddings, graph_embeddings = self.transf(g)
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
         e_row, e_col = g.edge_index[:, ::2]
         edge_emb = self.edge2emb(node_embeddings[e_row] + node_embeddings[e_col])
@@ -86,7 +87,7 @@ class GraphTransformerFragEnvelopeQL(nn.Module):
             # Compute the greedy policy
             # See algo.envelope_q_learning.EnvelopeQLearning.compute_batch_losses for further explanations
             # TODO: this makes assumptions about how conditional vectors are created! Not robust to upstream changes
-            w = cond[:, -self.num_objectives :]
+            w = g.cond_info[:, -self.num_objectives :]
             w_dot_Q = [
                 (qi.reshape((qi.shape[0], qi.shape[1] // w.shape[1], w.shape[1])) * w[b][:, None, :]).sum(2)
                 for qi, b in zip(cat.logits, cat.batch)
@@ -122,8 +123,9 @@ class GraphTransformerEnvelopeQL(nn.Module):
         self.action_type_order = env_ctx.action_type_order
         self.num_objectives = num_objectives
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor, output_Qs=False):
-        node_embeddings, graph_embeddings = self.transf(g, cond)
+    def forward(self, g: gd.Batch, output_Qs=False):
+        cond = g.cond_info
+        node_embeddings, graph_embeddings = self.transf(g)
         ne_row, ne_col = g.non_edge_index
         # On `::2`, edges are duplicated to make graphs undirected, only take the even ones
         e_row, e_col = g.edge_index[:, ::2]
@@ -156,7 +158,7 @@ class GraphTransformerEnvelopeQL(nn.Module):
         return cat, r_pred
 
 
-class EnvelopeQLearning:
+class EnvelopeQLearning(GFNAlgorithm):
     def __init__(
         self,
         env: GraphBuildingEnv,
@@ -182,6 +184,7 @@ class EnvelopeQLearning:
         cfg: Config
             The experiment configuration
         """
+        self.global_cfg = cfg
         self.ctx = ctx
         self.env = env
         self.task = task
@@ -314,7 +317,8 @@ class EnvelopeQLearning:
         # Forward pass of the model, returns a GraphActionCategorical and per graph predictions
         # Here we will interpret the logits of the fwd_cat as Q values
         # Q(s,a,omega)
-        fwd_cat, per_state_preds = model(batch, cond_info[batch_idx], output_Qs=True)
+        batch.cond_info = cond_info[batch_idx]
+        fwd_cat, per_state_preds = model(batch, output_Qs=True)
         Q_omega = fwd_cat.logits
         # reshape to List[shape: (num <T> in all graphs, num actions on T, num_objectives) | for all types T]
         Q_omega = [i.reshape((i.shape[0], i.shape[1] // num_objectives, num_objectives)) for i in Q_omega]
@@ -323,7 +327,8 @@ class EnvelopeQLearning:
         batchp = batch.batch_prime
         batchp_num_trajs = int(batchp.traj_lens.shape[0])
         batchp_batch_idx = torch.arange(batchp_num_trajs, device=dev).repeat_interleave(batchp.traj_lens)
-        fwd_cat_prime, per_state_preds = model(batchp, batchp.cond_info[batchp_batch_idx], output_Qs=True)
+        batchp.cond_info = batchp.cond_info[batchp_batch_idx]
+        fwd_cat_prime, per_state_preds = model(batchp, output_Qs=True)
         Q_omega_prime = fwd_cat_prime.logits
         # We've repeated everything N_omega times, so we can reshape the same way as above but with
         # an extra N_omega first dimension

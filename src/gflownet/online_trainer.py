@@ -82,12 +82,17 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             Z_params = []
             non_Z_params = list(self.model.parameters())
+
         self.opt = self._opt(non_Z_params)
-        self.opt_Z = self._opt(Z_params, self.cfg.algo.tb.Z_learning_rate, 0.9)
         self.lr_sched = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda steps: 2 ** (-steps / self.cfg.opt.lr_decay))
-        self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
-            self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
-        )
+
+        if Z_params:
+            self.opt_Z = self._opt(Z_params, self.cfg.algo.tb.Z_learning_rate, 0.9)
+            self.lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(
+                self.opt_Z, lambda steps: 2 ** (-steps / self.cfg.algo.tb.Z_lr_decay)
+            )
+        else:
+            self.opt_Z = None
 
         self.sampling_tau = self.cfg.algo.sampling_tau
         if self.sampling_tau > 0:
@@ -124,10 +129,11 @@ class StandardOnlineTrainer(GFNTrainer):
             g1 = model_grad_norm(self.model)
         self.opt.step()
         self.opt.zero_grad()
-        self.opt_Z.step()
-        self.opt_Z.zero_grad()
         self.lr_sched.step()
-        self.lr_sched_Z.step()
+        if self.opt_Z is not None:
+            self.opt_Z.step()
+            self.opt_Z.zero_grad()
+            self.lr_sched_Z.step()
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))

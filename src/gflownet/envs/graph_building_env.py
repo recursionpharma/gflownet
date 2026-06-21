@@ -887,10 +887,12 @@ class GraphActionCategorical:
         """
         if logprobs is None:
             logprobs = self.logsoftmax()
+        masks = self.action_masks if self.action_masks is not None else [None] * len(logprobs)
         entropy = -sum(
             [
-                scatter(i * i.exp(), b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
-                for i, b in zip(logprobs, self.batch)
+                scatter(im, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
+                for i, b, m in zip(logprobs, self.batch, masks)
+                for im in [i.masked_fill(m == 0.0, 0) if m is not None else i]
             ]
         )
         return entropy

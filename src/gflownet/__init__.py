@@ -23,6 +23,9 @@ class GFNAlgorithm:
     def step(self):
         self.updates += 1  # This isn't used anywhere?
 
+    def set_is_eval(self, is_eval: bool):
+        self.is_eval = is_eval
+
     def compute_batch_losses(
         self, model: nn.Module, batch: gd.Batch, num_bootstrap: Optional[int] = 0
     ) -> Tuple[Tensor, Dict[str, Tensor]]:

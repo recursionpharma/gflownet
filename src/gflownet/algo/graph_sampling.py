@@ -119,8 +119,9 @@ class GraphSampler:
             # Forward pass to get GraphActionCategorical
             # Note about `*_`, the model may be outputting its own bck_cat, but we ignore it if it does.
             # TODO: compute bck_cat.log_prob(bck_a) when relevant
-            ci = cond_info[not_done_mask] if cond_info is not None else None
-            fwd_cat, *_, log_reward_preds = model(self.ctx.collate(torch_graphs).to(dev), ci)
+            batch = self.ctx.collate(torch_graphs)
+            batch.cond_info = cond_info[not_done_mask] if cond_info is not None else None
+            fwd_cat, *_, log_reward_preds = model(batch.to(dev))
             if random_action_prob > 0:
                 # Device which graphs in the minibatch will get their action randomized
                 is_random_action = torch.tensor(

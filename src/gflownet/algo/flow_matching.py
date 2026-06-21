@@ -46,7 +46,7 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # in a number of settings the regular loss is more stable.
         self.fm_balanced_loss = cfg.algo.fm.balanced_loss
         self.fm_leaf_coef = cfg.algo.fm.leaf_coef
-        self.correct_idempotent: bool = self.correct_idempotent or cfg.algo.fm.correct_idempotent
+        self.correct_idempotent: bool = cfg.algo.fm.correct_idempotent
 
     def construct_batch(self, trajs, cond_info, log_rewards):
         """Construct a batch from a list of trajectories and their information
@@ -149,7 +149,8 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # Query the model for Fsa. The model will output a GraphActionCategorical, but we will
         # simply interpret the logits as F(s, a). Conveniently the policy of a GFN is the softmax of
         # log F(s,a) so we don't have to change anything in the sampling routines.
-        cat, graph_out = model(batch, batch.cond_info[torch.cat([parents_traj_idx, states_traj_idx], 0)])
+        batch.cond_info = batch.cond_info[torch.cat([parents_traj_idx, states_traj_idx], 0)]
+        cat, graph_out = model(batch)
         # We compute \sum_{s,a : T(s,a)=s'} F(s,a), first we index all the parent's outputs by the
         # parent actions. To do so we reuse the log_prob mechanism, but specify that the logprobs
         # tensor is actually just the logits (which we chose to interpret as edge flows F(s,a). We
